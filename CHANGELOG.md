@@ -5,6 +5,54 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## 0.1.6 — 2026-09-20
+
+Masking and provability: a misspelled setting can no longer produce an unmasked
+copy, `coverage` answers what the jobs don't cover at all, and masking itself is
+faster without any mask changing.
+
+### Breaking
+- **An unknown field in `jobs.yaml` or `database.yaml` is now an error.** It used to be ignored, so a misspelled key was silently dropped — and `maskng:` instead of `masking:` produced a job that looked masked in the file and copied every column as it stood, with `validate`, `run --dry-run` and `audit --connect --strict` all reporting success. Fix any misspelled setting a run was quietly ignoring; `bauta validate` names each one, offline. A top-level key beginning with `x-` is still allowed, for YAML anchors.
+- **`audit` reports every unmasked job.** It used to say nothing unless another job masked the same source, so the first table copied from a new source, and any single-job configuration, went unreported. An unmasked job is now a warning, an **error** when its columns look like personal data, and `--strict` exits 1 on either. A job that copies as it stands declares [`unmasked: true`](docs/configuration.md#copying-without-masking) and is recorded rather than flagged.
+- **`--accept-key-change` is refused for an upsert job whose policy masks the target's primary key.** An upsert matches rows on the primary key, so a new masking key gave those rows new keys: the run inserted a second generation of rows beside the first instead of updating it, and where a new key landed on an existing one it overwrote a different row. `verify-references` reported the result clean, because every foreign key still pointed at some row. Empty those targets with `bauta clear` and run again; see [rotating the masking key](docs/operations.md#rotating-the-masking-key).
+- **`BoundMasking.apply` refuses rows whose width doesn't match the policy it was bound to.** Too-wide rows used to have their extra columns ignored in silence, which is at odds with every column having to be covered. No job the runner builds can reach it, since `bind()` settles the width; a library caller applying a plan to other rows now hears about it.
+
+### Added
+- **`bauta coverage`** lists every table in a source database and what the jobs do with each: copied and masked, copied as it stands, not copied and declared, or **NOT COVERED**. It exits 1 on anything uncovered, so it can follow `run` in CI and fail when production grows a table the copy doesn't account for. `audit` checks the jobs that exist and cannot see a table nobody wrote a job for. See [coverage](docs/masking.md#coverage-what-the-jobs-do-not-cover).
+- **`acknowledged` in `jobs.yaml`** records the tables no job copies and why, so leaving one out is a decision on the page rather than an omission. `coverage` also reports a declaration for a table the database no longer has. See [acknowledged](docs/configuration.md#acknowledged).
+- **`requireMasking` on a `database.yaml` alias** refuses any job that reads from or writes to it without a masking policy, at `validate`, before anything connects. The line a reviewer signs: this copy can only ever hold masked data. Nothing overrides it, including a job's own `unmasked`. See [requiring masking](docs/configuration.md#requiring-masking).
+- **`unmasked: true` on a job** says it was reviewed and copies its rows as they stand, as `keep` says it of a single column.
+- **`defaults` in `jobs.yaml`** supplies what every job would otherwise repeat: `sourceDatabase`, `targetDatabase`, `insertStrategy`, `chunkSize`, `active`, `refresh`, `retries`, `retryDelaySeconds`, `timeoutSeconds` and `masking.key`. A masking policy's `columns` stays with its job, and a job with no `masking` block does not grow one. See [defaults](docs/configuration.md#defaults).
+- **`discover --all-tables`** proposes a policy for every table in a database, with `--schema NAME` for another schema, instead of naming each with a repeated `--table`.
+- **`discover --mask-keys` and `subset --mask --mask-keys`** propose `key` for numeric surrogate keys too, in the domain each foreign key already shares, instead of `keep`. Both ends move together, so the copy's references still match, and a generated policy needs no hand-editing to mask its ids. See [proposing a policy](docs/masking.md#proposing-a-policy-discover).
+- `Database.listTables()` lists a database's base tables on all six databases, excluding views and anything the server ships.
+- Three runbooks that were missing: [rotating the masking key](docs/operations.md#rotating-the-masking-key), [after a failed cycle](docs/operations.md#after-a-failed-cycle) — which documents `refresh` as the resume mechanism — and [one production, several environments](docs/operations.md#one-production-several-environments), which already worked and was written down nowhere.
+
+### Changed
+- **`active`, `chunkSize` and `workers` have defaults** (`true`, `5000` and `1`), so a job says only what is particular to it. `insertStrategy` stays required: it is the one setting where a wrong value gives wrong data rather than an error.
+- **`run --dry-run` compares the column counts it already printed.** A target that had gained or lost a column, against a query that hadn't, passed the dry run and failed the next real run — at whatever hour it was scheduled for.
+- **A connection error names what it tried to reach**, resolved: `cannot connect to sqlite file /srv/copy.db`, rather than a driver message naming neither the path nor the directory it resolved against. Never the password.
+- `audit --connect` resolves every job's columns, not only a masked job's, so an unmasked job's can be checked for personal data.
+- The starter configuration in `example/starter/` shows `defaults:`, and drops the empty keys and Oracle-only fields it carried on every job and connection.
+
+### Performance
+Masks are unchanged by all of this: the reference vectors pass unaltered, in pure Python and with the native masker.
+
+- **A job with no transforms no longer copies every chunk twice.** `sourceQueryColumnTransforms` is unset on most jobs, and each chunk was still converted to lists and back to tuples to change nothing: 3.5 ms per 10,000-row chunk, on every job in the product. A job with one transform now walks one column rather than all of them.
+- **A masking policy reads and rewrites only the columns it masks.** A realistic policy keeps far more columns than it masks, and all of them were extracted, copied and reassembled. Per 10,000-row × 30-column chunk: 5 masked columns 29.9 → 19.2 ms (−36%), 1 masked column 18.3 → 6.1 ms (−66%), all 30 masked 106.3 → 96.3 ms (−9%).
+- **`dateShift` derives each day's shift once** rather than once per row: 32.0 → 4.3 ms per 10,000 rows spread over two years (−87%). The shift was already per day; only the work is new.
+- **The per-value scans each dialect made before a load are now one walk**: a clean 10,000-row chunk into SQL Server 35.5 → 19.7 ms (−45%).
+- **Run state in a table reuses one connection per process** instead of opening one per read and write, which also ran `passwordCommand` again each time for cloud IAM tokens.
+- **`bauta history` reads backwards from the end of the file** instead of parsing all of it to show the last 20 records.
+
+### Fixed
+- **Run state, history and manifest tables whose names need quoting** were written correctly and read back unquoted, so a table called `order` worked until something read it.
+- `bauta/masking.py` and `bauta/builtinMasking.py` no longer import each other: a strategy declares `PASSTHROUGH` rather than the core naming a built-in strategy to recognise one.
+
+### Removed
+- `proposeTable`'s `primaryKeys` parameter, which nothing ever passed. The primary keys it would have supplied are read through the database's own cache.
+
+
 ## 0.1.5 — 2026-09-20
 
 ### Breaking

@@ -3,6 +3,17 @@
 # database.yaml beside this file.
 workers: 2
 cycleSleepSeconds: 0.5
+# What every job would otherwise repeat. A job that names any of these itself
+# keeps its own value. A masking policy's `columns` stays with its job, so what
+# a job does to its data can be read in one place; only the key is shared.
+defaults:
+  sourceDatabase: sourceDb
+  targetDatabase: targetDb
+  insertStrategy: upsert
+  chunkSize: 5000
+  refresh: 60
+  masking:
+    key: ${MASKING_KEY}
 # What runs write, relative to this file: kept out of the configuration, in a
 # transaction/ folder beside it. Run state (last runs, watermarks); a line per
 # job per cycle, for `bauta history`; and a sealed record of what was masked,
@@ -13,39 +24,26 @@ memory: ../transaction/memory.yaml
 history: ../transaction/history.jsonl
 manifest: ../transaction/manifest.json
 jobs:
+  # Only what is particular to this job: everything else comes from `defaults`
+  # above. `active` is true and `chunkSize` is 5000 unless a job says otherwise.
+  # The optional fields a job can also set are targetColumns, targetTableStage,
+  # predecessors, retries, timeoutSeconds, preTargetAdhocQueries and
+  # postTargetAdhocQueries.
   loadTable1:
-    active: true
-    refresh: 60
-    predecessors:
-    sourceDatabase: sourceDb
     sourceQuery: select id, name, amount from sourceTable1
-    targetColumns:
+    targetTableFinal: table1
     sourceQueryColumnTransforms:
       amount:
       - bauta.builtinTransforms:currency
-    targetDatabase: targetDb
-    targetTableStage:
-    targetTableFinal: table1
-    insertStrategy: upsert
-    chunkSize: 500
-    preTargetAdhocQueries:
-    postTargetAdhocQueries:
+    unmasked: true              # reviewed: these rows carry nothing personal
   loadTable2:
-    active: true
-    refresh: 60
     predecessors:
     - loadTable1
-    sourceDatabase: sourceDb
     sourceQuery: select id, table1Id, value from sourceTable2
-    targetColumns:
-    sourceQueryColumnTransforms:
-    targetDatabase: targetDb
     targetTableStage: table2Stage
     targetTableFinal: table2
-    insertStrategy: swap
-    chunkSize: 500
-    preTargetAdhocQueries:
-    postTargetAdhocQueries:
+    insertStrategy: swap        # overrides the default
+    unmasked: true
   # An incremental job: instead of re-copying the whole table every run, it
   # extracts only the rows whose watermarkColumn is past where the last
   # successful run got to, and the library stores that high-water mark in
@@ -73,24 +71,14 @@ jobs:
   # `- numtodsinterval(5, 'minute')`, sqlite `datetime({{ watermark }}, '-5 minutes')`,
   # or plain `- 5` if your watermark is a numeric id rather than a timestamp.
   loadOrdersIncrementally:
-    active: true
     refresh: 5
-    predecessors:
-    sourceDatabase: sourceDb
     sourceQuery: select id, customerId, amount, updatedAt from orders where updatedAt > {{ watermark }} - interval 5 minute
-    targetColumns:
-    sourceQueryColumnTransforms:
-    targetDatabase: targetDb
-    targetTableStage:
     targetTableFinal: orders
-    insertStrategy: upsert
+    unmasked: true
     watermarkColumn: updatedAt
     # Unquoted, so YAML reads it as a timestamp: quoted it is text, which
     # PostgreSQL and Oracle refuse to subtract an interval from.
     watermarkInitial: 1970-01-01 00:00:00
-    chunkSize: 5000
-    preTargetAdhocQueries:
-    postTargetAdhocQueries:
   # A masked job: rows are masked between the extract and the load, so the
   # target never sees a real value. See docs/masking.md.
   #
@@ -102,17 +90,11 @@ jobs:
   # the two still join after masking. The key comes from the environment and
   # has no default: rotating it changes every mask.
   loadOrdersMasked:
-    active: true
     predecessors:
     - loadCustomersMasked
-    sourceDatabase: sourceDb
     sourceQuery: select id, customerId, amount, shippingPhone, notes from orders
-    targetDatabase: targetDb
     targetTableFinal: ordersMasked
-    insertStrategy: upsert
-    chunkSize: 5000
-    masking:
-      key: ${MASKING_KEY}
+    masking:                    # the key comes from `defaults`
       columns:
         id: keep
         customerId: {strategy: key, domain: customer}
@@ -120,21 +102,22 @@ jobs:
         shippingPhone: digits
         notes: 'null'
   loadCustomersMasked:
-    active: true
-    sourceDatabase: sourceDb
     sourceQuery: select id, email, fullName, birthDate from customers
     sourceQueryColumnTransforms:
       email:
       - bauta.builtinTransforms:strip
       - bauta.builtinTransforms:lower
-    targetDatabase: targetDb
     targetTableFinal: customersMasked
-    insertStrategy: upsert
-    chunkSize: 5000
     masking:
-      key: ${MASKING_KEY}
       columns:
         id: {strategy: key, domain: customer}
         email: email
         fullName: fakeName
         birthDate: {strategy: dateShift, maxDays: 30}
+
+# Tables no job copies, on purpose. `bauta coverage` lists every table in a
+# source database and fails on any that is neither copied nor declared here, so
+# a table added to production later can't go unnoticed.
+# acknowledged:
+#   sourceDb:
+#     auditLog: internal audit trail, never leaves production

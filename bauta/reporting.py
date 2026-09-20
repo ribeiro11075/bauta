@@ -15,7 +15,7 @@ import urllib.request
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 from .configuration import DatabaseConnectionConfig
 from .database import Database
@@ -49,6 +49,35 @@ def historyRecords(result: RunResult, runId: str) -> List[Dict[str, Any]]:
         'durationSeconds': round(outcome.durationSeconds, 3),
         'error': (outcome.error or None) and outcome.error[:ERROR_TEXT_LIMIT],
         } for outcome in result.outcomes]
+
+
+# How much of the history file is read at a time when reading it backwards.
+TAIL_BLOCK_BYTES = 64 * 1024
+
+
+def _linesBackwards(path: Path, blockSize: int = TAIL_BLOCK_BYTES) -> Iterator[bytes]:
+    """The file's lines, last one first, reading a block at a time from the end
+    and never more of the file than the caller asks for.
+
+    A line may straddle a block boundary, so the first piece of each block is
+    held back and joined to the block before it.
+    """
+
+    with open(path, 'rb') as file:
+        file.seek(0, os.SEEK_END)
+        position = file.tell()
+        remainder = b''
+
+        while position > 0:
+            size = min(blockSize, position)
+            position -= size
+            file.seek(position)
+            pieces = (file.read(size) + remainder).split(b'\n')
+            remainder = pieces[0]
+            for piece in reversed(pieces[1:]):
+                yield piece
+
+        yield remainder
 
 
 class RunHistory(ABC):
@@ -87,16 +116,30 @@ class FileHistory(RunHistory):
 
 
     def read(self, limit: int = 20, job: Optional[str] = None) -> List[Dict[str, Any]]:
+        """The newest records first, reading back from the end of the file
+        until it has `limit` of them.
+
+        History is append-only and never rotated, so a run of any age has a
+        file with millions of lines in it; parsing all of them to show twenty
+        made `bauta history` slower every day it ran.
+        """
 
         if not self.historyFile.exists():
             return []
 
-        with exclusiveLock(self._lockFile), open(self.historyFile) as file:
-            records = [json.loads(line) for line in file if line.strip()]
+        records: List[Dict[str, Any]] = []
 
-        matching = [record for record in records if job is None or record['job'] == job]
+        with exclusiveLock(self._lockFile):
+            for line in _linesBackwards(self.historyFile):
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if job is None or record['job'] == job:
+                    records.append(record)
+                    if len(records) >= limit:
+                        break
 
-        return list(reversed(matching))[:limit]
+        return records
 
 
 DATABASE_HISTORY_SCHEMA = """CREATE TABLE bauta_history (
@@ -140,7 +183,10 @@ class DatabaseHistory(RunHistory):
     def read(self, limit: int = 20, job: Optional[str] = None) -> List[Dict[str, Any]]:
 
         with Database(connectionSettings=self.connectionSettings) as database:
-            query = 'SELECT {} FROM {}'.format(', '.join(_HISTORY_COLUMNS), self.table)
+            # The table quoted as a load already writes it; the columns bare,
+            # since the catalog's own spelling of them is what a server folds
+            # an unquoted name to.
+            query = 'SELECT {} FROM {}'.format(', '.join(_HISTORY_COLUMNS), database.statementName(self.table))
             parameters = None
             if job is not None:
                 query += ' WHERE job = {}'.format(database.dialect.placeholders(1)[0])
@@ -228,7 +274,8 @@ class DatabaseManifests:
             placeholder = database.dialect.placeholders(1)[0]
 
             if runId is None:
-                _, chunks = database.stream(query='SELECT run_id FROM {} ORDER BY written_at DESC'.format(self.table), chunkSize=1)
+                _, chunks = database.stream(query='SELECT run_id FROM {} ORDER BY written_at DESC'.format(database.statementName(self.table)),
+                                            chunkSize=1)
                 with chunks:
                     latest = next(chunks, [])
                 if not latest:

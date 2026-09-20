@@ -59,7 +59,9 @@ def test_the_sample_masked_jobs_share_a_domain_and_read_their_key_from_the_envir
     assert customers.columns['id']['domain'] == orders.columns['customerId']['domain']
 
     raw = yaml.load(open(CONFIGURATION_DIRECTORY / 'jobs.yaml'), Loader=yaml.FullLoader)
-    keys = [job['masking']['key'] for job in raw['jobs'].values() if job.get('masking')]
+    # Wherever the key is written: on a job, or once in `defaults` for all of them.
+    declared = [job.get('masking') for job in raw['jobs'].values()] + [raw.get('defaults', {}).get('masking')]
+    keys = [masking['key'] for masking in declared if masking and 'key' in masking]
 
     assert keys
     for key in keys:

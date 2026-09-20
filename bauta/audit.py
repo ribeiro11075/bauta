@@ -413,6 +413,44 @@ def _auditMaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence[s
         }
 
 
+def _auditUnmaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence[str]], maskedSources: Set[str],
+                      findings: List[Finding], rules: DiscoveryRules) -> None:
+    """A job with no masking policy.
+
+    Copying unmasked is a choice a reviewer has to see, so it is a finding
+    unless the job declares it with `unmasked`, which the report records
+    instead. A column that looks like personal data is still called out even
+    then -- declared, as a warning; undeclared, as an error.
+
+    Nothing here depends on another job masking the same source: the first
+    table copied from a new source is exactly the case that matters.
+    """
+
+    personal = [(column, personalDataHint(column, rules)) for column in (returned or [])]
+    personal = [(column, hint) for column, hint in personal if hint]
+
+    if personal:
+        findings.append(Finding('warning' if job.unmasked else 'error', name,
+                                'copies from {} without masking, and {} it returns {} like personal data: {}. '
+                                'Add a masking policy naming every column -- `keep` for the ones that need no masking'.format(
+                                    job.sourceDatabase, 'a column' if len(personal) == 1 else 'columns',
+                                    'looks' if len(personal) == 1 else 'look',
+                                    ', '.join('{} ({})'.format(column, hint) for column, hint in personal))))
+        return
+
+    if job.unmasked:
+        return
+
+    if job.sourceDatabase in maskedSources and job.sourceDatabase != job.targetDatabase:
+        findings.append(Finding('warning', name, 'copies from {} without masking, though other jobs mask what they read from it'.format(
+            job.sourceDatabase)))
+        return
+
+    findings.append(Finding('warning', name, 'copies from {} to {} without masking, so every column it returns is written as it stands. '
+                            'Add a masking policy, or declare the choice with `unmasked: true`'.format(
+                                job.sourceDatabase, job.targetDatabase)))
+
+
 def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mapping[str, Sequence[str]]] = None,
               encryption: Optional[Mapping[str, Optional[bool]]] = None, unreachable: Optional[Mapping[str, str]] = None,
               targetColumns: Optional[Mapping[str, Sequence[str]]] = None, foreignKeys: Optional[Mapping[str, Sequence[ForeignKey]]] = None,
@@ -443,7 +481,8 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
 
     for name, job in sorted(jobs.items()):
         entry: Dict[str, Any] = {'job': name, 'active': job.active, 'sourceDatabase': job.sourceDatabase, 'targetDatabase': job.targetDatabase,
-                                 'targetTable': job.targetTableFinal, 'masked': job.masking is not None}
+                                 'targetTable': job.targetTableFinal, 'masked': job.masking is not None,
+                                 'unmasked': job.unmasked}
 
         if name in unreachable:
             findings.append(Finding('error', name, 'sourceQuery could not be checked: {}'.format(unreachable[name])))
@@ -452,9 +491,8 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
             entry.update(_auditMaskedJob(name, job, returnedColumns.get(name), findings, usages, rules))
             if encryption.get(job.sourceDatabase) is False:
                 findings.append(Finding('warning', name, 'reads unmasked data from {} over a connection that is not encrypted'.format(job.sourceDatabase)))
-        elif job.sourceDatabase in maskedSources and job.sourceDatabase != job.targetDatabase:
-            findings.append(Finding('warning', name, 'copies from {} without masking, though other jobs mask what they read from it'.format(
-                job.sourceDatabase)))
+        else:
+            _auditUnmaskedJob(name, job, returnedColumns.get(name), maskedSources, findings, rules)
 
         report.append(entry)
 
@@ -493,7 +531,7 @@ def renderAudit(report: Mapping[str, Any]) -> str:
         lines.append('{}{}: {} -> {}.{}'.format(job['job'], state, job['sourceDatabase'], job['targetDatabase'], job['targetTable']))
 
         if not job['masked']:
-            lines.append('  not masked')
+            lines.append('  not masked, declared with `unmasked`' if job.get('unmasked') else '  not masked')
             lines.append('')
             continue
 

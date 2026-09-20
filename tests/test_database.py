@@ -399,3 +399,109 @@ def test_a_query_that_fails_closes_its_stream():
 
     streamCursor.close.assert_called_once()
     assert database._streams == set()
+
+
+# listTables --------------------------------------------------------------------
+
+def _sqliteWithTables(tmp_path, name='tables.db'):
+    import sqlite3
+
+    from bauta.configuration import DatabaseConnectionConfig
+
+    path = tmp_path / name
+    connection = sqlite3.connect(path)
+    connection.execute('CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)')
+    connection.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, customerId INTEGER REFERENCES customers(id))')
+    connection.execute('CREATE VIEW recentOrders AS SELECT * FROM orders')
+    connection.commit()
+    connection.close()
+
+    return DatabaseConnectionConfig(type='sqlite', database=str(path))
+
+
+def test_list_tables_returns_base_tables_sorted_without_views(tmp_path):
+    from bauta.database import Database
+
+    with Database(connectionSettings=_sqliteWithTables(tmp_path)) as database:
+        assert database.listTables() == ['customers', 'orders']
+
+
+def test_list_tables_leaves_out_sqlites_own_tables(tmp_path):
+    import sqlite3
+
+    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.database import Database
+
+    path = tmp_path / 'sequence.db'
+    connection = sqlite3.connect(path)
+    # AUTOINCREMENT is what makes SQLite create its sqlite_sequence table.
+    connection.execute('CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT)')
+    connection.execute('INSERT INTO items DEFAULT VALUES')
+    connection.commit()
+    connection.close()
+
+    with Database(connectionSettings=DatabaseConnectionConfig(type='sqlite', database=str(path))) as database:
+        assert database.listTables() == ['items']
+
+
+def test_listed_tables_can_be_used_to_read_their_own_columns(tmp_path):
+    """The point of the shape: what listTables returns goes straight back into
+    catalogColumns and getPrimaryColumnNames.
+    """
+    from bauta.database import Database
+
+    with Database(connectionSettings=_sqliteWithTables(tmp_path)) as database:
+        for table in database.listTables():
+            assert database.catalogColumns(table)
+            assert database.getPrimaryColumnNames(table) == ['id']
+
+
+def test_a_listed_name_that_needs_quoting_still_reads_back_as_itself(tmp_path):
+    """A reserved word, a name with a space and a name with a dot in it: each
+    has to come back in a spelling that means that same table.
+    """
+    import sqlite3
+
+    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.database import Database
+
+    path = tmp_path / 'awkward.db'
+    connection = sqlite3.connect(path)
+    for name in ('"order"', '"two words"', '"dotted.name"'):
+        connection.execute('CREATE TABLE {} (id INTEGER PRIMARY KEY, value TEXT)'.format(name))
+    connection.commit()
+    connection.close()
+
+    with Database(connectionSettings=DatabaseConnectionConfig(type='sqlite', database=str(path))) as database:
+        listed = database.listTables()
+        assert listed == ['"dotted.name"', 'order', 'two words']
+        for table in listed:
+            assert database.catalogColumns(table) == ['id', 'value']
+
+
+def test_list_tables_qualifies_names_only_when_a_schema_was_asked_for(tmp_path):
+    from bauta.database import Database
+
+    settings = _sqliteWithTables(tmp_path)
+    other = _sqliteWithTables(tmp_path, name='other.db')
+
+    with Database(connectionSettings=settings) as database:
+        database.cursor.execute("ATTACH DATABASE '{}' AS extra".format(other.database))
+
+        assert database.listTables() == ['customers', 'orders']
+        assert database.listTables(schema='extra') == ['extra.customers', 'extra.orders']
+        # And a qualified name still reads its own columns.
+        assert database.catalogColumns('extra.orders') == ['id', 'customerId']
+
+
+def test_sqlite_foreign_keys_and_list_tables_agree_on_which_tables_exist(tmp_path):
+    """foreignKeys walks the tables listTables returns, so the two must not
+    drift apart -- SQLite's own tables have no foreign keys to read.
+    """
+    from bauta.database import Database
+
+    with Database(connectionSettings=_sqliteWithTables(tmp_path)) as database:
+        keys = database.getForeignKeys()
+
+        assert [key.table for key in keys] == ['orders']
+        assert set(key.table for key in keys) <= set(database.listTables())

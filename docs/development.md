@@ -33,6 +33,14 @@ cd py && maturin build --release
 pip install ../target/wheels/bauta_rs-*.whl
 ```
 
+**Rebuild it after changing `mask-rs/`, before running the tests.** A locally installed `bauta-rs` is whatever was last built, not what the source says now, and the tests will run against the stale one:
+
+```
+cd mask-rs/py && maturin develop --release
+```
+
+Releases build every wheel from source on CI, so this is a local trap only. The version pin means a genuinely mismatched pair is refused rather than masking two different ways, so it fails loudly — but it does need doing.
+
 `--release` matters: two tests measure SHA-256 and AES throughput to catch a backend that fell back to software, which a debug build is indistinguishable from. `cargo test` covers `bauta-core`; the extension crate needs a Python interpreter to link, so it's tested from Python, by `tests/test_nativeMasking.py`.
 
 **Python is the reference.** Change masking in Python first, port it, then regenerate the vectors with `python3 mask-rs/generate_vectors.py`. `tests/test_maskVectors.py` fails if Python drifts from the recorded file, so regenerating it is deliberate: it means every masked value has changed. Run the suite both ways, as CI does:

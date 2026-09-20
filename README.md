@@ -5,6 +5,7 @@
 - **Masking:** consistent across tables and runs, one-to-one for keys (NIST FF1 where policy requires it), applied before anything reaches the target, and every column must be covered.
 - **Discovery, subsets and synthetic data:** propose a masking policy from a live schema, copy a referentially complete slice of production, create the copy's tables in whichever database it goes to, and fill tables that can't be copied with generated rows.
 - **Audit:** report what every job does with data and what a reviewer should question, and seal each run's masking manifest so it can be verified later.
+- **Provable coverage:** list every table in production and what the jobs do with each, so a table nobody wrote a job for fails the build rather than going unnoticed. A database can require that nothing reaches it unmasked.
 - **Six databases:** Oracle, SQL Server, PostgreSQL, MySQL, MariaDB and SQLite, as source or target in any combination.
 - **Streaming:** memory stays flat however large the table, and PostgreSQL and SQL Server targets load in bulk.
 - **Fast:** a million rows of six masked columns in under 7 seconds on one core with the optional native masker, and a minute without; more cores for wide tables. Either way the masks are the same.
@@ -83,6 +84,7 @@ bauta synthesize         fill tables with generated rows, for data that can't be
 bauta clear              empty the jobs' target tables, children first
 
 bauta audit              report what each job does with data, and what to question
+bauta coverage           list a source database's tables and what the jobs do with each
 bauta verify-manifest    check a masking manifest is unaltered, and who signed it
 bauta verify-references  count rows in the copy whose foreign key points at nothing
 
@@ -117,7 +119,7 @@ Every command takes these.
 | `--force` | off | Ignore every job's `refresh` window. |
 | `--forever` | off | Keep running cycles instead of exiting after one. For freshness under cron's one-minute floor. |
 | `--dry-run` | off | Check connections, target tables, primary keys and masking coverage, moving no rows. |
-| `--accept-key-change` | off | Run upsert jobs whose masking key changed since their last run. |
+| `--accept-key-change` | off | Run upsert jobs whose masking key changed since their last run. Refused where the policy masks the target's primary key; see [rotating the masking key](docs/operations.md#rotating-the-masking-key). |
 | `--notify-url URL` | `$BAUTA_NOTIFY_URL` | Post a JSON summary to this webhook when a cycle doesn't succeed. |
 
 ### Run state, history and the manifest
@@ -132,6 +134,40 @@ Each is kept in a file or in a database table, set in [`jobs.yaml`](docs/configu
 
 Tables default to `bauta_memory`, `bauta_history` and `bauta_manifest`, and must exist first; [operations.md](docs/operations.md#tables) has their definitions. A manifest is signed when `$BAUTA_MANIFEST_KEY` is set.
 
+### Saying less, and saying it once
+
+A `defaults:` block in [`jobs.yaml`](docs/configuration.md#defaults) supplies what every job would otherwise repeat, so a job says only what is particular to it:
+
+```yaml
+defaults:
+  sourceDatabase: prod
+  targetDatabase: staging
+  insertStrategy: upsert
+  masking:
+    key: ${MASKING_KEY}
+
+jobs:
+  maskCustomers:
+    sourceQuery: select id, email from customers
+    targetTableFinal: customers
+    masking:
+      columns: {id: keep, email: email}
+```
+
+A masking policy's `columns` stays with its job, so what a job does to its data can be read in one place. Any field a file doesn't recognise is an error, so a misspelling stops `bauta validate` rather than being quietly ignored.
+
+### Proving the copy is safe
+
+| What | Where |
+| --- | --- |
+| Every column of every job is covered, and references still match once masked | `bauta audit --connect --strict` |
+| Every table in production is copied, declared, or fails the build | `bauta coverage` |
+| Nothing can ever reach this database unmasked | [`requireMasking`](docs/configuration.md#requiring-masking) on the alias |
+| This job copies as it stands, and somebody decided so | [`unmasked: true`](docs/configuration.md#copying-without-masking) on the job |
+| This table is deliberately not copied, and why | [`acknowledged`](docs/configuration.md#acknowledged) in `jobs.yaml` |
+| What was masked, how, and under which key, sealed | `bauta verify-manifest` |
+| No row in the copy points at a row that isn't there | `bauta verify-references` |
+
 ### Proposing and reviewing policies
 
 `discover`, `subset --mask`, `audit` and `synthesize` recognise personal data by built-in rules, and by rules of your own:
@@ -139,6 +175,8 @@ Tables default to `bauta_memory`, `bauta_history` and `bauta_manifest`, and must
 | Flag | Default | Effect |
 | --- | --- | --- |
 | `--rules FILE` | `discovery.yaml` in the configuration directory, if there is one | Check these rules before the built-in ones. See [your own rules](docs/masking.md#your-own-rules-discoveryyaml). |
+
+`discover` takes `--all-tables` for a whole database instead of a repeated `--table`, and `discover`/`subset` take `--mask-keys` to mask numeric surrogate keys as well as text ones, in the domain each foreign key already shares.
 
 ### Environment variables
 
@@ -170,7 +208,7 @@ The ones you'd set in a deployment; [operations.md](docs/operations.md#environme
 
 | Path | What it is |
 | --- | --- |
-| `bauta/` | the package; `runner.py` runs jobs, `masking.py` masks with the strategies in `builtinMasking.py` and their lists in `fakeData.py`, `databaseDialects.py` holds per-database SQL |
+| `bauta/` | the package; `runner.py` runs jobs, `masking.py` masks with the strategies in `builtinMasking.py` and their lists in `fakeData.py`, `databaseDialects.py` holds per-database SQL, `audit.py` and `coverage.py` review what the jobs do |
 | `mask-rs/` | the optional native masker, in Rust — see [its README](mask-rs/README.md) |
 | `example/` | runnable demos, each with its `configuration/`, and a starter configuration — see [its README](example/README.md) |
 | `docs/` | the documentation above |

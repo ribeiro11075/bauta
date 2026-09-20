@@ -1103,3 +1103,124 @@ def test_digits_refuses_a_policy_that_would_keep_every_digit():
 
     with pytest.raises(MaskingError, match='keepLeading 3 and keepTrailing 4 cover all 7 of them'):
         mask('555-0100')
+
+
+# The passthrough flag, and the splice it enables -------------------------------
+
+def test_only_keep_declares_itself_passthrough():
+    """PASSTHROUGH is what lets BoundMasking carry a column through untouched,
+    so a strategy that rewrites anything must not claim it. `null` and
+    `constant` ignore their input but still write every row.
+    """
+    from bauta.builtinMasking import STRATEGIES as BUILTIN
+
+    passthrough = sorted(name for name, strategyType in BUILTIN.items() if strategyType.PASSTHROUGH)
+
+    assert passthrough == ['keep']
+
+
+def test_masking_a_mix_of_kept_and_masked_columns_matches_masking_every_column():
+    """The spliced path and the all-columns path must agree value for value:
+    only which columns are read and rewritten differs.
+    """
+    columns = ['id', 'name', 'note', 'email', 'city']
+    rows = [(index, 'name{}'.format(index), 'note{}'.format(index), 'user{}@example.com'.format(index), 'city{}'.format(index))
+            for index in range(50)]
+
+    policy = {'id': 'keep', 'name': 'hash', 'note': 'keep', 'email': 'email', 'city': 'keep'}
+    spliced = MaskingPlan(key=KEY, columns=policy).bind(columns).apply(rows, chunkIndex=0)
+
+    everyColumn = MaskingPlan(key=KEY, columns=dict(policy, id='hash', note='hash', city='hash')).bind(columns).apply(rows, chunkIndex=0)
+
+    # The masked columns agree; the kept ones are the originals.
+    assert [row[1] for row in spliced] == [row[1] for row in everyColumn]
+    assert [row[3] for row in spliced] == [row[3] for row in everyColumn]
+    assert [(row[0], row[2], row[4]) for row in spliced] == [(row[0], row[2], row[4]) for row in rows]
+
+
+def test_kept_columns_carry_through_as_the_objects_that_were_read():
+    columns = ['id', 'note']
+    rows = [(1, 'a note'), (2, 'another')]
+
+    masked = MaskingPlan(key=KEY, columns={'id': 'hash', 'note': 'keep'}).bind(columns).apply(rows, chunkIndex=0)
+
+    assert masked[0][1] is rows[0][1]
+
+
+def test_every_column_kept_returns_the_rows_unchanged():
+    columns = ['id', 'note']
+    rows = [(1, 'a'), (2, 'b')]
+
+    masked = MaskingPlan(key=KEY, columns={'id': 'keep', 'note': 'keep'}).bind(columns).apply(rows, chunkIndex=0)
+
+    assert masked == rows
+    assert masked[0] is rows[0]
+
+
+def test_shuffle_beside_kept_columns_still_keys_on_the_chunk():
+    """shuffle is the one strategy whose result depends on the chunk's position
+    rather than the value, so the spliced path must pass it through unchanged.
+    """
+    columns = ['id', 'amount']
+    rows = [(index, index * 10) for index in range(40)]
+    plan = MaskingPlan(key=KEY, columns={'id': 'keep', 'amount': 'shuffle'})
+
+    first = plan.bind(columns).apply(rows, chunkIndex=0)
+    again = plan.bind(columns).apply(rows, chunkIndex=0)
+    other = plan.bind(columns).apply(rows, chunkIndex=1)
+
+    assert [row[1] for row in first] == [row[1] for row in again]
+    assert [row[1] for row in first] != [row[1] for row in other]
+    assert sorted(row[1] for row in first) == sorted(row[1] for row in rows)
+    assert [row[0] for row in first] == [row[0] for row in rows]
+
+
+def test_a_masking_error_names_its_column_on_the_spliced_path():
+    columns = ['id', 'when']
+    rows = [(1, 'not a date')]
+
+    with pytest.raises(MaskingError, match='column "when"'):
+        MaskingPlan(key=KEY, columns={'id': 'keep', 'when': 'dateShift'}).bind(columns).apply(rows, chunkIndex=0)
+
+
+def test_rows_that_do_not_match_the_bound_columns_are_refused():
+    """A bound plan applies to the rows of the query it was bound to. This used
+    to raise IndexError, or silently ignore the extra columns.
+    """
+    bound = MaskingPlan(key=KEY, columns={'id': 'hash', 'name': 'hash'}).bind(['id', 'name'])
+
+    with pytest.raises(MaskingError, match='covers 2 column'):
+        bound.apply([(1,)], chunkIndex=0)
+
+    with pytest.raises(MaskingError, match='covers 2 column'):
+        bound.apply([(1, 'a', 'extra')], chunkIndex=0)
+
+
+# dateShift's per-day cache ------------------------------------------------------
+
+def test_date_shift_gives_one_day_one_shift_however_many_rows_share_it():
+    """The shift is derived once per day and reused. Same answer, whether the
+    value is a date, a timestamp on that day, or the day as ISO text.
+    """
+    day = datetime.date(2026, 3, 17)
+    shifter = strategy('dateShift')
+
+    shiftedDate = shifter.mask(day)
+    offset = shiftedDate.toordinal() - day.toordinal()
+
+    assert shifter.mask(datetime.datetime(2026, 3, 17, 9, 30)).date().toordinal() - day.toordinal() == offset
+    assert datetime.date.fromisoformat(shifter.mask(day.isoformat())).toordinal() - day.toordinal() == offset
+    # Reused across many rows of the same day without changing.
+    assert all(shifter.mask(day) == shiftedDate for _ in range(100))
+
+
+def test_date_shift_caches_per_day_without_growing_without_bound():
+    from bauta.masking import MASK_CACHE_SIZE
+
+    shifter = strategy('dateShift')
+    start = datetime.date(1800, 1, 1)
+
+    for offset in range(MASK_CACHE_SIZE + 50):
+        shifter.mask(start + datetime.timedelta(days=offset))
+
+    assert len(shifter._offsets) <= MASK_CACHE_SIZE

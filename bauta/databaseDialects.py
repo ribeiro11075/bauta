@@ -483,6 +483,29 @@ class DatabaseDialect(ABC):
 
         return bool(self._catalog(cursor, self.tableExistsQuery(), table)[0][0])
 
+    def listTablesQuery(self) -> str:
+        """Every base table of the bound schema, or of the connection's own
+        where the bound value is NULL, as rows of (name), ordered by name.
+
+        Base tables only: a view is derived from them, and a system or catalog
+        table is the server's own, so neither is something a job would copy.
+        """
+
+        raise NotImplementedError('{} cannot list tables'.format(type(self).__name__))
+
+    def listTables(self, cursor: Any, schema: Optional[str] = None) -> List[str]:
+        """The schema's base tables, named as the catalog holds them.
+
+        `schema` is bound the way every other catalog lookup binds one --
+        unquoted, and folded as this database folds a name written without
+        quotes -- so it means the same schema a job's `schema.table` would.
+        """
+
+        cursor.execute(self.listTablesQuery().format(*self.placeholders(1)),
+                       (catalogName(self.databaseType, schema) if schema is not None else None,))
+
+        return [row[0] for row in cursor.fetchall()]
+
     def foreignKeysQuery(self) -> str:
         """Every foreign key in the connection's current schema, as rows of
         (table, column, referencedTable, referencedColumn, constraintName),
@@ -659,6 +682,12 @@ class MySQLDialect(DatabaseDialect):
         return "SELECT count(*) FROM information_schema.tables WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {}"
 
 
+    def listTablesQuery(self) -> str:
+
+        return ("SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = COALESCE({}, DATABASE()) AND table_type = 'BASE TABLE' ORDER BY table_name")
+
+
     @staticmethod
     def _onDuplicateKey(table: str, primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
         """A key-only table gets a no-op assignment of its key, since an empty
@@ -697,8 +726,59 @@ class _Unencodable(Exception):
 _COPY_ESCAPES = str.maketrans({'\\': '\\\\', '\t': '\\t', '\n': '\\n', '\r': '\\r'})
 
 
+def _copyFloat(value: float) -> str:
+    """A float as COPY spells it, NaN and the infinities included."""
+
+    if math.isnan(value):
+        return 'NaN'
+    if math.isinf(value):
+        return 'Infinity' if value > 0 else '-Infinity'
+
+    return repr(value)
+
+
+def _copyBytes(value: bytes) -> str:
+    """bytea's hex input, with its backslash escaped for the text format."""
+
+    return '\\\\x' + value.hex()
+
+
+# The exact types a chunk is almost entirely made of, each with the spelling
+# _copyFieldUnusual would reach for it. Keyed on the type itself, not matched
+# with isinstance: a subclass is not in here, so it falls through to the chain
+# below and keeps whatever that makes of it. bool before int is therefore not
+# a concern -- `type(True)` is `bool`, never `int`.
+_COPY_FIELDS: Dict[type, Callable[[Any], str]] = {
+    type(None): lambda value: '\\N',
+    bool: lambda value: 't' if value else 'f',
+    int: str,
+    float: _copyFloat,
+    decimal.Decimal: str,
+    str: lambda value: value.translate(_COPY_ESCAPES),
+    datetime.datetime: lambda value: value.isoformat(sep=' '),
+    datetime.date: lambda value: value.isoformat(),
+    datetime.time: lambda value: value.isoformat(),
+    uuid.UUID: str,
+    bytes: _copyBytes,
+    }
+
+
 def _copyField(value: Any) -> str:
     """One value in PostgreSQL's COPY text format.
+
+    A load's every row crosses this, so the types a chunk is actually made of
+    are answered by one dictionary lookup rather than by a chain of up to nine
+    isinstance checks. Anything the lookup misses -- a subclass, a bytearray,
+    a memoryview -- takes the chain, which is what decides it as before.
+    """
+
+    handler = _COPY_FIELDS.get(type(value))
+
+    return handler(value) if handler is not None else _copyFieldUnusual(value)
+
+
+def _copyFieldUnusual(value: Any) -> str:
+    """_copyField for anything not of an exact type it knows.
 
     Only types whose text form PostgreSQL parses back exactly are handled;
     anything else -- a list, a dict, a timedelta -- raises _Unencodable, and
@@ -908,6 +988,16 @@ class PostgreSQLDialect(_OnConflictDialect):
                 "WHERE table_schema = COALESCE({}::text, current_schema()) AND table_name = {}::text")
 
 
+    def listTablesQuery(self) -> str:
+        """information_schema shows only what this login may read, which is the
+        right set for a copy: a table it cannot select from is not one it can
+        copy either.
+        """
+
+        return ("SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = COALESCE({}::text, current_schema()) AND table_type = 'BASE TABLE' ORDER BY table_name")
+
+
     def prepareValues(self, rows: List[Tuple[Any, ...]]) -> List[Tuple[Any, ...]]:
         """Dictionaries as JSON, which is what they came from.
 
@@ -917,16 +1007,24 @@ class PostgreSQLDialect(_OnConflictDialect):
         writes one as an array, which is what a `text[]` column needs, and it
         can't be told apart from a JSON array here. A `jsonb` column holding
         one has to be selected as text.
+
+        Dictionaries and durations are looked for in one pass rather than the
+        base's and then this one's, for the reason given on MSSQLDialect's.
         """
 
-        rows = super().prepareValues(rows)
-
-        if not any(isinstance(value, dict) for row in rows for value in row):
+        if not any(isinstance(value, (dict, datetime.timedelta)) for row in rows for value in row):
             return rows
 
         from psycopg.types.json import Jsonb
 
-        return [tuple(Jsonb(value) if isinstance(value, dict) else value for value in row) for row in rows]
+        def prepared(value: Any) -> Any:
+            if isinstance(value, dict):
+                return Jsonb(value)
+            if isinstance(value, datetime.timedelta):
+                return durationText(value)
+            return value
+
+        return [tuple(prepared(value) for value in row) for row in rows]
 
 
     def swapQueries(self, targetTable: str, stageTable: str, tempTable: str) -> List[str]:
@@ -1150,6 +1248,20 @@ class OracleDialect(DatabaseDialect):
         return "SELECT count(*) FROM all_tables WHERE owner = " + self.OWNER + " AND table_name = {}"
 
 
+    def listTablesQuery(self) -> str:
+        """all_tables, not dba_tables, which needs a privilege a copy job has no
+        other use for; all_tables is what this login may already read.
+
+        A nested table, an index-organized table's overflow segment and a
+        secondary table belong to another table rather than standing on their
+        own, and a BIN$ name is a dropped table still in the recycle bin.
+        """
+
+        return ("SELECT table_name FROM all_tables WHERE owner = " + self.OWNER + " "
+                "AND nested = 'NO' AND secondary = 'N' AND (iot_type IS NULL OR iot_type = 'IOT') "
+                "AND table_name NOT LIKE 'BIN$%' ORDER BY table_name")
+
+
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
 
         bindColumns = ', '.join('{} {}'.format(placeholder, column) for placeholder, column in zip(self.placeholders(len(allColumns)), allColumns))
@@ -1200,6 +1312,29 @@ class OracleDialect(DatabaseDialect):
                                        'as the failure left them'.format(undoFrom, undoTo))
                 raise
             undo.append((fromTable, toTable))
+
+
+# Everything MSSQLDialect sends as text, looked for in one pass. A plain date
+# is not among them: only a datetime carries the time pymssql rounds off.
+_MSSQL_AS_TEXT = (datetime.timedelta, datetime.datetime, datetime.time)
+
+
+def _mssqlText(value: Any) -> Any:
+    """A duration or a time as text for SQL Server, anything else as it is.
+
+    A free function, and bound to a local before the loop that calls it once
+    per value: an attribute lookup per value cost more than the pass it saved.
+    timedelta is checked first, being none of the others.
+    """
+
+    if isinstance(value, datetime.timedelta):
+        return durationText(value)
+    if isinstance(value, datetime.datetime):
+        return value.isoformat(sep=' ')
+    if isinstance(value, datetime.time):
+        return value.isoformat()
+
+    return value
 
 
 class MSSQLDialect(DatabaseDialect):
@@ -1279,6 +1414,18 @@ class MSSQLDialect(DatabaseDialect):
         return "SELECT count(*) FROM information_schema.tables WHERE table_schema = COALESCE({}, SCHEMA_NAME()) AND table_name = {}"
 
 
+    def listTablesQuery(self) -> str:
+        """sys.tables rather than information_schema, for is_ms_shipped: a
+        database carries tables SQL Server installed in it -- `master` has
+        MSreplication_options and the spt_ ones -- and information_schema
+        reports those as ordinary base tables of dbo. sys.tables also holds no
+        views, which live in sys.views.
+        """
+
+        return ("SELECT t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                "WHERE s.name = COALESCE({}, SCHEMA_NAME()) AND t.is_ms_shipped = 0 ORDER BY t.name")
+
+
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str], rowCount: int = 1) -> str:
 
         rowValues = ', '.join(['({})'.format(', '.join(self.placeholders(len(allColumns))))] * rowCount)
@@ -1298,19 +1445,16 @@ class MSSQLDialect(DatabaseDialect):
         """Times as ISO text, which SQL Server converts exactly: pymssql renders
         a bound datetime with milliseconds only, so the microseconds a
         DATETIME2 column holds were silently lost.
+
+        One pass rather than the base's and then this one's: a chunk holds a
+        value for every row of every column, and walking it twice to find
+        nothing cost more than masking it did.
         """
 
-        def text(value: Any) -> Any:
-            if isinstance(value, datetime.datetime):
-                return value.isoformat(sep=' ')
-            if isinstance(value, datetime.time):
-                return value.isoformat()
-            return value
-
-        rows = super().prepareValues(rows)
-
-        if not any(isinstance(value, (datetime.datetime, datetime.time)) for row in rows for value in row):
+        if not any(isinstance(value, _MSSQL_AS_TEXT) for row in rows for value in row):
             return rows
+
+        text = _mssqlText
 
         return [tuple(text(value) for value in row) for row in rows]
 
@@ -1521,14 +1665,27 @@ class SQLiteDialect(_OnConflictDialect):
         return bool(cursor.fetchone()[0])
 
 
+    def listTables(self, cursor: Any, schema: Optional[str] = None) -> List[str]:
+        """SQLite has no catalog to bind a name against: its schema is an
+        attached database, which names the sqlite_master to read rather than a
+        value in one, so it is quoted into the statement as tableExists does.
+
+        `sqlite_%` is reserved for SQLite's own tables, which are not a copy's.
+        """
+
+        attached = quoteIdentifier(self.databaseType, catalogName(self.databaseType, schema)) if schema else 'main'
+        cursor.execute("SELECT name FROM {}.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name".format(attached))
+
+        return [row[0] for row in cursor.fetchall()]
+
+
     def foreignKeys(self, cursor: Any) -> List[ForeignKey]:
         """SQLite keeps foreign keys per table, behind a pragma, so this lists
         the tables and asks each. A reference that omits its columns means the
         referenced table's primary key, which is resolved here.
         """
 
-        cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
-        tables = [row[0] for row in cursor.fetchall()]
+        tables = self.listTables(cursor)
         rows = []
 
         for table in tables:

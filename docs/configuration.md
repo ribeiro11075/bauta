@@ -79,7 +79,31 @@ warehouse:
 | `port` | optional | The driver's standard port when omitted. |
 | `serviceName` / `sid` | oracle only | Exactly one is required for `type: oracle`. |
 | `currentSchema` | optional, postgresql and oracle only | The schema unqualified table names, and every key and column lookup, resolve in. PostgreSQL sets `search_path` to this schema alone; Oracle sets `CURRENT_SCHEMA`. On the other databases, qualify names as `schema.table` instead. |
+| `requireMasking` | optional, `false` | No job may read from or write to this database without a masking policy. See [requiring masking](#requiring-masking). |
 | `options` | optional | Extra keyword arguments for the driver's `connect()`, for anything the fields above don't cover. See below. |
+
+Any other field is an error, so a misspelled setting stops `validate` rather than leaving the connection to behave in some way nobody configured.
+
+### Requiring masking
+
+`requireMasking: true` on an alias makes a job that names it as `sourceDatabase` or `targetDatabase` without a `masking` policy fail `bauta validate`, before anything connects:
+
+```yaml
+staging:
+  type: postgresql
+  database: staging
+  host: ${STAGING_HOST}
+  user: etl
+  password: ${STAGING_PASSWORD}
+  requireMasking: true
+```
+
+```
+copyCountries: targetDatabase "staging" is configured with requireMasking, and this job has no masking
+policy. Add one naming every column sourceQuery returns -- `keep` for the ones that need no masking
+```
+
+Set it on a target to say that the copy can only ever hold masked data, and on a source to say that nothing reads from it unmasked. Nothing overrides it: a job's own [`unmasked: true`](#copying-without-masking) records a decision about that job, but `requireMasking` is the database's, and it wins.
 
 ### Passwords that expire
 
@@ -164,9 +188,62 @@ jobs:
 | `history` | optional | Where `run` records each job's outcome after every cycle, for `bauta history`. A JSON-lines file, or a [table](#tables). Not recorded when unset. `--history FILE` or `--history-database ALIAS` overrides it. See [run history](operations.md#run-history). |
 | `manifest` | optional | Where `run` writes its [masking manifest](masking.md#the-manifest), for `bauta verify-manifest`. A file, replaced each run, or a [table](#tables), which keeps every run's. Not written when unset. `--manifest FILE` or `--manifest-database ALIAS` overrides it. |
 | `maskingThreads` | optional, `1` | Threads the [native masker](masking.md#the-native-masker) masks each job with: `1`, a number up to the cores available, or `auto` to divide the cores between the jobs running. Results are the same for any count. `BAUTA_MASKING_THREADS` overrides it. See [masking threads](masking.md#masking-threads). |
+| `defaults` | optional | Settings every job takes unless it names its own. See [defaults](#defaults). |
+| `acknowledged` | optional | Tables no job copies, on purpose: database alias, then table, then why. What [`bauta coverage`](masking.md#coverage-what-the-jobs-do-not-cover) reads. |
 | `jobs` | required | A map of job name to job definition. |
 
 `validate` prints where all three resolve, and how many masking threads a run would use.
+
+Any other field is an error, so a misspelled setting stops `validate` rather than being ignored. The one exception is a key beginning with `x-`, which is left alone for YAML anchors, as docker-compose uses them.
+
+#### `acknowledged`
+
+A table nobody wrote a job for is invisible to `audit`, which checks the jobs that exist. `bauta coverage` lists a source database's tables instead and fails on any that no job covers — so leaving one out has to be said out loud, with the reason:
+
+```yaml
+acknowledged:
+  prod:
+    audit_log: internal audit trail, never leaves production
+    employees: HR data, out of scope for this copy
+```
+
+A reason is required, since the point is the recorded decision rather than the silence. `coverage` also reports a table declared here that the database no longer has, so a stale declaration doesn't quietly cover a table that was dropped and recreated under another name.
+
+#### `defaults`
+
+What every job would otherwise repeat. A job that names any of these itself keeps its own value.
+
+| Field | Meaning |
+| --- | --- |
+| `active`, `refresh` | As in [scheduling](#scheduling). |
+| `sourceDatabase`, `targetDatabase` | As in [extract](#extract) and [load](#load). |
+| `insertStrategy`, `chunkSize` | As in [load](#load) and [extract](#extract). |
+| `retries`, `retryDelaySeconds`, `timeoutSeconds` | As in [scheduling](#scheduling). |
+| `masking.key` | The key a masked job uses when it gives none of its own. |
+
+`defaults` may set nothing else. A **masking policy stays with its job**: `columns` names what happens to each column, and a reviewer should be able to read that in one place without holding the whole file in their head. `masking.key` is a reference to a secret, not a policy, so it may be shared.
+
+A job with no `masking` block of its own does not grow one from `defaults`. An unmasked job stays visibly unmasked.
+
+```yaml
+defaults:
+  active: true
+  sourceDatabase: sourceDb
+  targetDatabase: targetDb
+  insertStrategy: upsert
+  chunkSize: 5000
+  masking:
+    key: ${MASKING_KEY}
+
+jobs:
+  maskCustomers:
+    sourceQuery: select id, email from customers
+    targetTableFinal: customers
+    masking:
+      columns:
+        id: keep
+        email: email
+```
 
 #### Tables
 
@@ -278,6 +355,7 @@ Transforms apply to **`sourceQuery`'s own result columns**, not the target's. Na
 | Field | Required or default | Meaning |
 | --- | --- | --- |
 | `masking` | optional | Masks rows between the extract and the load. Its fields are `key`, `columns` and `defaultStrategy`, all documented in [masking.md](masking.md#a-masked-job). |
+| `unmasked` | optional, `false` | Says this job copies its rows as they stand, and that somebody decided so. Cannot be set beside `masking`. |
 
 ```yaml
 masking:
@@ -289,6 +367,15 @@ masking:
 ```
 
 Masking runs after transforms, on `sourceQuery`'s result columns. **Every column the query returns must be listed**, or the job fails before writing anything. See [masking.md](masking.md) for the strategies, domains and the key.
+
+#### Copying without masking
+
+A job with no `masking` block copies every column as it stands, which `bauta audit` reports, since it is a choice a reviewer has to see:
+
+- a column whose name suggests personal data is an **error**, naming the columns and why;
+- otherwise it is a **warning**.
+
+`unmasked: true` says the job was reviewed and copies as it stands, the way `keep` says it of a single column. The warning then goes, the audit report shows the job as `not masked, declared with \`unmasked\``, and a column that still looks like personal data is reported as a warning rather than an error.
 
 ### Load details
 

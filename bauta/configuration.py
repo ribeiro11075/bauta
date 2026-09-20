@@ -11,6 +11,34 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, V
 
 from .masking import validateColumnPolicy, validateKey
 
+# A job's rows per batch when it names none. What `discover` and `subset`
+# generate, so a hand-written job behaves like a generated one.
+DEFAULT_CHUNK_SIZE = 5000
+
+# Worker processes when jobs.yaml names none. One: jobs run in order, which is
+# what a first configuration wants and what a single-job file needs.
+DEFAULT_WORKERS = 1
+
+# Top-level keys a file keeps only to hang YAML anchors from, as docker-compose
+# uses them: `x-defaults: &defaults` above, `<<: *defaults` in each job. They
+# are dropped before validation rather than read as configuration.
+ANCHOR_KEY_PREFIX = 'x-'
+
+
+def isAnchorKey(name: Any) -> bool:
+    """Whether a top-level key only holds a YAML anchor."""
+
+    return isinstance(name, str) and name.startswith(ANCHOR_KEY_PREFIX)
+
+
+def _withoutAnchorKeys(value: Any) -> Any:
+    """The mapping without the keys that only hold anchors."""
+
+    if isinstance(value, dict):
+        return {key: item for key, item in value.items() if not isAnchorKey(key)}
+
+    return value
+
 
 def _dropNoneListItems(value: Any) -> Any:
     """YAML's "key:\\n-\\n" idiom (an empty list item) parses to [None] -- treat
@@ -205,7 +233,12 @@ class DatabaseConnectionConfig(BaseModel):
     extra driver arguments, TLS above all -- are left out of the repr, since
     they can hold secrets too. `passwordCommand` runs at every connect, for
     expiring credentials such as IAM tokens.
+
+    An unknown key is an error: a misspelled setting that was quietly ignored
+    would leave the connection behaving in some way nobody configured.
     """
+
+    model_config = ConfigDict(extra='forbid')
 
     type: DatabaseType
     database: str
@@ -217,7 +250,33 @@ class DatabaseConnectionConfig(BaseModel):
     sid: Optional[str] = None
     passwordCommand: Optional[Union[str, List[str]]] = None
     currentSchema: Optional[str] = None
+    # No job may read from or write to this database without masking. The line
+    # a reviewer signs: "this copy can only ever hold masked data." Unlike a
+    # job's own `unmasked`, nothing overrides it.
+    requireMasking: bool = False
     options: CleanedMapping = Field(default_factory=dict, repr=False)
+
+    def describeTarget(self) -> str:
+        """What this connection points at, for an error that has to say so.
+
+        A driver's own message names nothing: SQLite's "unable to open database
+        file" leaves a relative path and the working directory it resolved
+        against both unsaid, which is the hard part of the failure. Never the
+        password, and never `options`, which can carry one.
+        """
+
+        if self.type == DatabaseType.SQLITE:
+            if self.database == ':memory:':
+                return 'sqlite :memory:'
+
+            return 'sqlite file {}'.format(os.path.abspath(self.database))
+
+        where = self.host or '?'
+        if self.port:
+            where = '{}:{}'.format(where, self.port)
+
+        return '{} {} on {}'.format(self.type.value, self.serviceName or self.sid or self.database, where)
+
 
     @model_validator(mode='after')
     def _checkCurrentSchema(self) -> 'DatabaseConnectionConfig':
@@ -274,15 +333,26 @@ class DatabaseConnectionConfig(BaseModel):
 
 
 class BaseJobConfig(BaseModel):
-    active: bool
+    """An unknown key is an error, inherited by every kind of job: a misspelled
+    `masking` block that was quietly ignored would copy the source unmasked.
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
+    # A job written down is a job meant to run; `active: false` is the case
+    # worth saying out loud.
+    active: bool = True
     refresh: Optional[int] = None
     predecessors: CleanedStringList = Field(default_factory=list)
 
 
 class MaskingConfig(BaseModel):
     """A job's masking policy, normalized here so a bad strategy or option
-    fails `bauta validate` rather than a run.
+    fails `bauta validate` rather than a run. An unknown key is an error, so a
+    misspelled option can't leave a column masked some other way in silence.
     """
+
+    model_config = ConfigDict(extra='forbid')
 
     key: SecretStr
     columns: Dict[str, Any]
@@ -352,15 +422,32 @@ class DataJobConfig(BaseJobConfig):
     targetTableStage: Optional[str] = None
     targetTableFinal: str
     insertStrategy: InsertStrategy
-    chunkSize: int = Field(ge=1)
+    chunkSize: int = Field(default=DEFAULT_CHUNK_SIZE, ge=1)
     watermarkColumn: Optional[str] = None
     watermarkInitial: Optional[Any] = None
     retries: int = 0
     retryDelaySeconds: float = 5.0
     timeoutSeconds: Optional[float] = Field(default=None, gt=0)
     masking: Optional[MaskingConfig] = None
+    # The explicit way to say a job was reviewed and copies as it stands, as
+    # `keep` says it of a column. Without it, `audit` reports every unmasked
+    # job, since copying unmasked is a choice a reviewer has to see.
+    unmasked: bool = False
     preTargetAdhocQueries: CleanedStringList = Field(default_factory=list)
     postTargetAdhocQueries: CleanedStringList = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def _rejectUnmaskedWithMasking(self) -> 'DataJobConfig':
+        """`unmasked` says the job copies as it stands, so a masking policy
+        beside it says two different things about the same rows.
+        """
+
+        if self.unmasked and self.masking is not None:
+            raise ValueError('unmasked is set on a job that also has a masking policy; unmasked says the job copies its rows as they '
+                             'stand, so remove one of the two')
+
+        return self
+
 
     @model_validator(mode='after')
     def _requireSeparateStageTable(self) -> 'DataJobConfig':
@@ -554,8 +641,80 @@ class TableLocation(BaseModel):
 StorageLocation = Union[Annotated[str, Field(min_length=1)], TableLocation]
 
 
+# What a file-level `defaults:` block may supply to every job. The plumbing
+# only: which databases, how rows are written, and the retry and timeout
+# settings. A job that names any of these itself keeps its own value.
+DEFAULTABLE_JOB_FIELDS = frozenset({
+    'active', 'refresh', 'sourceDatabase', 'targetDatabase', 'insertStrategy',
+    'chunkSize', 'retries', 'retryDelaySeconds', 'timeoutSeconds',
+    })
+
+# Within `masking`, the key alone. A key reference is not a policy: `columns`
+# stays with its job, so a reviewer can read what one job does to its data
+# without holding the whole file in their head.
+DEFAULTABLE_MASKING_FIELDS = frozenset({'key'})
+
+DEFAULTS_KEY = 'defaults'
+MASKING_KEY = 'masking'
+
+
+def _checkDefaultsKeys(defaults: Mapping[str, Any]) -> None:
+    """Rejects a setting `defaults:` may not supply, naming what it may."""
+
+    unknown = sorted(set(defaults) - DEFAULTABLE_JOB_FIELDS - {MASKING_KEY})
+    if unknown:
+        raise ValueError('{} cannot be set in defaults: {}. defaults may set {}, and masking.key'.format(
+            'these settings' if len(unknown) > 1 else 'this setting', ', '.join(unknown),
+            ', '.join(sorted(DEFAULTABLE_JOB_FIELDS))))
+
+    masking = defaults.get(MASKING_KEY)
+    if masking is None:
+        return
+    if not isinstance(masking, Mapping):
+        raise ValueError('defaults.masking must be a mapping holding a key')
+
+    unknown = sorted(set(masking) - DEFAULTABLE_MASKING_FIELDS)
+    if unknown:
+        raise ValueError('defaults.masking may only set {}, not {}. A masking policy stays with its job, '
+                         'so that what a job does to its data can be read in one place'.format(
+                             ', '.join(sorted(DEFAULTABLE_MASKING_FIELDS)), ', '.join(unknown)))
+
+
+def _jobWithDefaults(job: Any, defaults: Mapping[str, Any]) -> Any:
+    """One job's settings, with anything it doesn't name taken from `defaults`.
+
+    A job that masks takes the default key when it doesn't give one. A job with
+    no `masking` block doesn't grow one: an unmasked job must stay visibly
+    unmasked, rather than becoming a key with no policy.
+    """
+
+    if not isinstance(job, Mapping):
+        return job
+
+    merged = {name: value for name, value in defaults.items() if name in DEFAULTABLE_JOB_FIELDS}
+    merged.update(job)
+
+    defaultMasking = defaults.get(MASKING_KEY)
+    jobMasking = job.get(MASKING_KEY)
+    if isinstance(defaultMasking, Mapping) and isinstance(jobMasking, Mapping):
+        combined = {name: value for name, value in defaultMasking.items() if name in DEFAULTABLE_MASKING_FIELDS}
+        combined.update(jobMasking)
+        merged[MASKING_KEY] = combined
+
+    return merged
+
+
 class DataJobsFile(BaseModel):
-    workers: int = Field(ge=1)
+    """An unknown key is an error, apart from the `x-` keys that hold nothing
+    but YAML anchors.
+
+    `defaults:` supplies what every job would otherwise repeat; see
+    DEFAULTABLE_JOB_FIELDS.
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
+    workers: int = Field(default=DEFAULT_WORKERS, ge=1)
     cycleSleepSeconds: float = 0.5
     # Where the CLI keeps run state, records history and writes the masking
     # manifest; command-line flags override each. See cli._resolveLocation.
@@ -567,7 +726,35 @@ class DataJobsFile(BaseModel):
     # each job starts with the jobs running alongside it. See
     # masking.maskingThreadsFor and runner._runCycle.
     maskingThreads: Union[Literal['auto'], Annotated[int, Field(ge=1)]] = 1
+    # Tables no job copies, on purpose: database alias -> table -> why. What
+    # `bauta coverage` reads, so a table left out is a decision on the page
+    # rather than something nobody noticed.
+    acknowledged: Dict[str, Dict[str, Annotated[str, Field(min_length=1)]]] = Field(default_factory=dict)
     jobs: Dict[str, DataJobConfig]
+
+    @model_validator(mode='before')
+    @classmethod
+    def _applyFileLevelKeys(cls, value: Any) -> Any:
+        """Drops the `x-` keys that hold nothing but YAML anchors, then spreads
+        `defaults:` over the jobs, so what follows validates whole jobs.
+        """
+
+        value = _withoutAnchorKeys(value)
+        if not isinstance(value, Mapping):
+            return value
+
+        settings = dict(value)
+        defaults = settings.pop(DEFAULTS_KEY, None) or {}
+        if not isinstance(defaults, Mapping):
+            raise ValueError('defaults must be a mapping of job settings')
+        _checkDefaultsKeys(defaults)
+
+        jobs = settings.get('jobs')
+        if defaults and isinstance(jobs, Mapping):
+            settings['jobs'] = {name: _jobWithDefaults(job, defaults) for name, job in jobs.items()}
+
+        return settings
+
 
     def tableLocations(self) -> Dict[str, TableLocation]:
         """The settings that name a table, by setting."""
@@ -632,7 +819,7 @@ class Configuration:
 
         return {
             alias: Configuration._validate(DatabaseConnectionConfig, connectionSettings, f'database configuration -> {alias}')
-            for alias, connectionSettings in (rawConfiguration or {}).items()
+            for alias, connectionSettings in (rawConfiguration or {}).items() if not isAnchorKey(alias)
             }
 
 
@@ -650,11 +837,28 @@ class Configuration:
 
 
     @staticmethod
-    def validateJobGraph(jobs: Mapping[str, BaseJobConfig], databaseAliases: Optional[Set[str]] = None) -> None:
+    def validateJobGraph(jobs: Mapping[str, BaseJobConfig], databaseAliases: Optional[Set[str]] = None,
+                         databases: Optional[Mapping[str, DatabaseConnectionConfig]] = None) -> None:
+        """`databases` gives the aliases and their settings, so a database that
+        requires masking can refuse a job that doesn't mask. `databaseAliases`
+        is the names alone, for a caller that has nothing more.
+        """
+
+        if databases is not None and databaseAliases is None:
+            databaseAliases = set(databases)
 
         problems: List[str] = []
 
         for jobName, job in jobs.items():
+
+            if databases is not None and isinstance(job, DataJobConfig) and job.masking is None:
+                for setting in ('sourceDatabase', 'targetDatabase'):
+                    alias = getattr(job, setting)
+                    connection = databases.get(alias)
+                    if connection is not None and connection.requireMasking:
+                        problems.append('{}: {} "{}" is configured with requireMasking, and this job has no masking policy. '
+                                        'Add one naming every column sourceQuery returns -- `keep` for the ones that need no '
+                                        'masking'.format(jobName, setting, alias))
 
             for predecessor in job.predecessors:
                 if predecessor not in jobs:

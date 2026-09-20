@@ -21,7 +21,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Type
 
 from .fakeData import COMPANY_WORDS, DEFAULT_LOCALE, LOCALES, Locale
-from .masking import MAXIMUM_KEY_LENGTH, KeyedHash, MaskingError, Strategy, _canonical
+from .masking import MASK_CACHE_SIZE, MAXIMUM_KEY_LENGTH, KeyedHash, MaskingError, Strategy, _canonical
 
 
 def _asciiDigits(text: str) -> str:
@@ -148,6 +148,11 @@ class KeepStrategy(Strategy):
 
     NAME = 'keep'
     KEYED = False
+    # The only strategy that returns what it was given, so BoundMasking can
+    # carry these columns through untouched. `null` and `constant` below ignore
+    # their input too, but still have to write a value into every row, so they
+    # are masked like any other column.
+    PASSTHROUGH = True
 
     def maskColumn(self, values: Sequence[Any], chunkIndex: int) -> List[Any]:
 
@@ -410,6 +415,15 @@ class DateShiftStrategy(Strategy):
     NAME = 'dateShift'
     OPTIONS = {'maxDays': _integerOption(1, 36500)}
 
+    def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
+        super().__init__(keyedHash, options)
+        # Shifts already derived, by the day's ordinal. Strategy's own cache
+        # can't hold these: a date and a timestamp are not among the types it
+        # remembers (equal values can differ in time zone), yet the shift
+        # itself depends on nothing but the day.
+        self._offsets: Dict[int, datetime.timedelta] = {}
+
+
     def _offset(self, value: Any) -> datetime.timedelta:
         """Keyed on the day alone, never the time of day, so everything that
         happened on one day moves to one day.
@@ -417,13 +431,30 @@ class DateShiftStrategy(Strategy):
         Keyed on the whole value, two timestamps hours apart landed days apart,
         a day's rows scattered across the month, and a DATE column and a
         TIMESTAMP column holding the same day disagreed about where it went.
+
+        Derived once per day: a date column holds a few thousand distinct days
+        and as many rows as the table has. The ordinal stands in for the day
+        the hash is keyed on, which is that day's ISO text, and the two agree
+        one for one -- so the shift is the one it always was.
         """
 
-        maxDays = self.options.get('maxDays', 30)
         day = value.date() if isinstance(value, datetime.datetime) else value
-        days = self.keyedHash.below(_canonical(day), 2 * maxDays) - maxDays
+        ordinal = day.toordinal()
 
-        return datetime.timedelta(days=days + 1 if days >= 0 else days)
+        offset = self._offsets.get(ordinal)
+        if offset is not None:
+            return offset
+
+        maxDays = self.options.get('maxDays', 30)
+        days = self.keyedHash.below(_canonical(day), 2 * maxDays) - maxDays
+        offset = datetime.timedelta(days=days + 1 if days >= 0 else days)
+
+        if len(self._offsets) >= MASK_CACHE_SIZE:
+            # Emptied, not evicted, as Strategy's own cache is.
+            self._offsets.clear()
+        self._offsets[ordinal] = offset
+
+        return offset
 
 
     def _shift(self, value: Any) -> Any:

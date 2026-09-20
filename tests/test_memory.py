@@ -291,3 +291,125 @@ def test_a_watermark_written_as_a_float_by_an_older_version_still_reads(tmp_path
     memoryFile.write_text('lastRun: {}\nmaskingKeys: {}\nwatermarks:\n  loadEvents: 1.2345678901234568e+16\n')
 
     assert FileMemory(memoryFile=memoryFile).readWatermarks() == {'loadEvents': 1.2345678901234568e+16}
+
+
+# DatabaseMemory's held connection ----------------------------------------------
+
+def _databaseMemory(tmp_path, name='memory.db'):
+    import sqlite3
+
+    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.memory import DATABASE_MEMORY_SCHEMA, DatabaseMemory
+
+    path = tmp_path / name
+    connection = sqlite3.connect(path)
+    connection.execute(DATABASE_MEMORY_SCHEMA)
+    connection.close()
+
+    return DatabaseMemory(DatabaseConnectionConfig(type='sqlite', database=str(path)))
+
+
+def test_database_memory_opens_one_connection_and_keeps_it(tmp_path):
+    """A completed masked incremental job reads a watermark and records three
+    things; each of those used to open its own connection -- and its own
+    passwordCommand subprocess wherever one supplies a cloud IAM token.
+    """
+    memory = _databaseMemory(tmp_path)
+
+    memory.recordRun('loadOrders')
+    first = memory._database
+    memory.recordWatermark('loadOrders', 7)
+    memory.readWatermarks()
+    memory.read()
+
+    assert first is not None
+    assert memory._database is first
+
+
+def test_database_memory_opens_nothing_until_it_is_used(tmp_path):
+    memory = _databaseMemory(tmp_path)
+
+    assert memory._database is None
+
+
+def test_database_memory_does_not_carry_its_connection_across_a_pickle(tmp_path):
+    """Every job's process gets a copy of the backend. A connection can't be
+    pickled, and must not be shared if it could.
+    """
+    import pickle
+
+    memory = _databaseMemory(tmp_path)
+    memory.recordRun('loadOrders')
+    assert memory._database is not None
+
+    copy = pickle.loads(pickle.dumps(memory))
+
+    assert copy._database is None and copy._pid is None
+    assert copy.read() == memory.read()
+
+
+def test_database_memory_reopens_a_connection_that_died(tmp_path):
+    """Held rather than reopened per call, the backend now meets a server
+    restart, an idle timeout or an expired token, which reopening used to hide.
+    """
+    memory = _databaseMemory(tmp_path)
+
+    memory.recordWatermark('loadOrders', 7)
+    stale = memory._database
+    stale.connection.close()          # as a server hanging up would leave it
+
+    assert memory.readWatermarks() == {'loadOrders': 7}
+    assert memory._database is not stale
+
+
+def test_database_memory_does_not_retry_a_statement_that_was_simply_wrong(tmp_path):
+    """Only a reused connection is retried. A failure on one opened in the same
+    call is the statement's fault, and running it twice would hide that.
+    """
+    import sqlite3
+
+    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.memory import DatabaseMemory
+
+    path = tmp_path / 'no-such-table.db'
+    sqlite3.connect(path).close()
+    memory = DatabaseMemory(DatabaseConnectionConfig(type='sqlite', database=str(path)))
+
+    with pytest.raises(Exception):
+        memory.read()
+
+
+def test_database_memory_close_is_idempotent_and_reopens_on_next_use(tmp_path):
+    memory = _databaseMemory(tmp_path)
+
+    memory.recordRun('loadOrders')
+    memory.close()
+    memory.close()
+
+    assert memory._database is None
+    assert 'loadOrders' in memory.read()
+    assert memory._database is not None
+
+
+def test_database_memory_reads_a_table_whose_name_needs_quoting(tmp_path):
+    """The table goes into every statement the way a load already writes it, so
+    a name that has to be quoted is read as well as written.
+    """
+    import sqlite3
+
+    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.memory import DATABASE_MEMORY_SCHEMA, DatabaseMemory
+
+    path = tmp_path / 'reserved.db'
+    connection = sqlite3.connect(path)
+    connection.execute(DATABASE_MEMORY_SCHEMA.replace('bauta_memory', '"order"'))
+    connection.close()
+    memory = DatabaseMemory(DatabaseConnectionConfig(type='sqlite', database=str(path)), table='order')
+
+    memory.recordWatermark('loadOrders', 7)
+    memory.recordKeyFingerprint('maskCustomers', 'abc123')
+    memory.recordRun('loadOrders')
+
+    assert memory.readWatermarks() == {'loadOrders': 7}
+    assert memory.readKeyFingerprints() == {'maskCustomers': 'abc123'}
+    assert 'loadOrders' in memory.read()

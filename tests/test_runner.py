@@ -1282,8 +1282,8 @@ def test_worker_log_records_reach_the_parents_handlers_in_its_format(tmp_path, s
     assert 'no such table' in failure['exception']
 
 
-def _maskedSqliteJob(databases, key='an-original-masking-key', **overrides):
-    return _sqliteJob(databases, masking={'key': key, 'columns': {'id': 'key', 'name': 'fakeName'}}, **overrides)
+def _maskedSqliteJob(databases, key='an-original-masking-key', idStrategy='key', **overrides):
+    return _sqliteJob(databases, masking={'key': key, 'columns': {'id': idStrategy, 'name': 'fakeName'}}, **overrides)
 
 
 def test_a_masked_job_records_the_key_it_completed_under(tmp_path, sqliteDatabase):
@@ -1307,11 +1307,15 @@ def test_a_changed_key_stops_an_upsert_job_before_anything_runs(tmp_path, sqlite
 
 
 def test_a_changed_key_is_accepted_when_acknowledged_and_then_recorded(tmp_path, sqliteDatabase):
+    """The target's primary key is kept, so re-loading under the new key
+    rewrites each row in place and the acknowledgement is all that is needed.
+    """
     from bauta.masking import keyFingerprint, splitMaskingIdentity
 
-    _runJobs({'masked': _maskedSqliteJob(sqliteDatabase)}, sqliteDatabase, tmp_path)
+    _runJobs({'masked': _maskedSqliteJob(sqliteDatabase, idStrategy='keep')}, sqliteDatabase, tmp_path)
     jobsFile = Configuration.validateJobConfiguration(
-        {'workers': 1, 'jobs': {'masked': _maskedSqliteJob(sqliteDatabase, key='a-rotated-masking-key')}}, DataJobsFile)
+        {'workers': 1, 'jobs': {'masked': _maskedSqliteJob(sqliteDatabase, key='a-rotated-masking-key', idStrategy='keep')}},
+        DataJobsFile)
 
     result = runDataJobs(jobsFile=jobsFile, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'),
                          acceptKeyChange=True)
@@ -1319,6 +1323,28 @@ def test_a_changed_key_is_accepted_when_acknowledged_and_then_recorded(tmp_path,
     assert result.succeeded
     recorded = FileMemory(tmp_path / 'memory.yaml').readKeyFingerprints()
     assert splitMaskingIdentity(recorded['masked'])[0] == keyFingerprint('a-rotated-masking-key')
+
+
+def test_a_changed_key_is_refused_even_when_acknowledged_if_it_masks_the_primary_key(tmp_path, sqliteDatabase):
+    """An upsert matches on the primary key. Masking it means a new key gives
+    new keys, so the rows are inserted beside the old ones rather than updating
+    them -- and a collision overwrites a different row. No flag makes that safe.
+    """
+    def targetRows():
+        with sqlite3.connect(sqliteDatabase['lite'].database) as connection:
+            return sorted(connection.execute('select id, name from target'))
+
+    _runJobs({'masked': _maskedSqliteJob(sqliteDatabase)}, sqliteDatabase, tmp_path)
+    before = targetRows()
+    jobsFile = Configuration.validateJobConfiguration(
+        {'workers': 1, 'jobs': {'masked': _maskedSqliteJob(sqliteDatabase, key='a-rotated-masking-key')}}, DataJobsFile)
+
+    with pytest.raises(ConfigurationError) as error:
+        runDataJobs(jobsFile=jobsFile, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'),
+                    acceptKeyChange=True)
+
+    assert 'masks the primary key' in str(error.value) and 'bauta clear' in str(error.value)
+    assert targetRows() == before, 'nothing may be written before the run is refused'
 
 
 @contextlib.contextmanager

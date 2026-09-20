@@ -156,3 +156,36 @@ def test_a_failing_transformer_with_arguments_is_named_with_them():
 
     with pytest.raises(TransformError, match=r'transformer "truncate\(-1\)" failed on column "name"'):
         transform.transform()
+
+
+def test_apply_with_no_transforms_returns_the_rows_untouched():
+    """Every chunk of every job goes through apply(), and most jobs configure
+    no transforms: this used to copy each row to a list and back to a tuple to
+    change nothing.
+    """
+    rows = [(1, 'a'), (2, 'b')]
+
+    result = Transform(columns=['id', 'name'], columnTransforms={}).apply(rows)
+
+    assert result == rows
+    assert result[0] is rows[0]
+
+
+def test_apply_transforms_one_column_and_leaves_the_others_as_they_were():
+    rows = [(1, 'a', 'keep me'), (2, 'b', 'me too')]
+
+    result = Transform(columns=['id', 'name', 'note'], columnTransforms={'name': [str.upper]}).apply(rows)
+
+    assert result == [(1, 'A', 'keep me'), (2, 'B', 'me too')]
+    # The untouched columns carry through as the very objects that were read.
+    assert result[0][2] is rows[0][2]
+
+
+def test_a_column_whose_transform_list_is_empty_costs_nothing():
+    """An empty list for a column is the same as not naming it at all."""
+    rows = [(1, 'a')]
+
+    transform = Transform(columns=['id', 'name'], columnTransforms={'name': []})
+
+    assert transform.apply(rows) == rows
+    assert transform.apply(rows)[0] is rows[0]

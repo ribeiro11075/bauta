@@ -8,6 +8,7 @@ What Bauta protects, how, and what it does not. Written for the security or priv
 - [The masking constructions](#the-masking-constructions)
 - [Two implementations](#two-implementations)
 - [What masking does not hide](#what-masking-does-not-hide)
+- [What stops a copy going out unmasked](#what-stops-a-copy-going-out-unmasked)
 - [Keys](#keys)
 - [The manifest](#the-manifest)
 - [Credentials and transport](#credentials-and-transport)
@@ -109,6 +110,31 @@ These follow from masking being deterministic and shape-preserving. They are why
 - **Structure.** Row counts, NULL patterns, relationships and timing are all kept.
 
 
+## What stops a copy going out unmasked
+
+Masking a column correctly is one problem. Not masking a table at all is the other, and it fails differently: nothing raises, and the copy looks finished.
+
+Four checks stand between production and an unmasked copy, from the narrowest to the widest.
+
+| Check | What it catches | When |
+| --- | --- | --- |
+| **Every column must be covered** | A column the query returns that the policy doesn't name — including one production gained since the policy was written | The job fails before writing anything |
+| **`audit --connect --strict`** | A job with no masking policy, a kept column that looks personal, references that stop matching once masked | Offline in CI, exit 1 |
+| **[`bauta coverage`](masking.md#coverage-what-the-jobs-do-not-cover)** | A table in production that **no job reads at all**, which `audit` cannot see, because a table with no job has nothing to audit | Exit 1 on anything uncovered |
+| **[`requireMasking`](configuration.md#requiring-masking)** | Any job reading from or writing to that database without a masking policy | `bauta validate`, before anything connects |
+
+The first three can be argued with; the fourth cannot. `requireMasking: true` on a target alias is the statement that **this database can only ever hold masked data**, and nothing overrides it — not a job's own `unmasked: true`, which records a reviewed decision about one job, and not a declaration in `acknowledged`.
+
+Both of those exist so that a deliberate exception is written down rather than inferred from silence:
+
+- **[`unmasked: true`](configuration.md#copying-without-masking)** on a job says its rows were reviewed and are copied as they stand. Without it, `audit` reports every unmasked job. A column that still looks like personal data is reported either way.
+- **[`acknowledged`](configuration.md#acknowledged)** in `jobs.yaml` says a table is deliberately not copied, and why. `coverage` fails on any table that is neither copied nor declared, and reports a declaration for a table the database no longer has.
+
+**A misspelled key is not an exception.** An unknown field in `jobs.yaml` or `database.yaml` is an error: `maskng:` instead of `masking:` used to be dropped in silence, leaving a job that read as masked in the file and copied every column as it stood.
+
+What none of this checks: whether the *strategy* chosen for a column is strong enough for the data in it. That is what [what masking does not hide](#what-masking-does-not-hide) is about, and it is a review, not a check.
+
+
 ## Keys
 
 - **Strength.** Keys must be at least 16 characters; that's a floor, not a recommendation. The key is used as HMAC key material directly, with no password-stretching, so **a guessable key can be found offline** by anyone holding one real/masked pair or a key fingerprint. Use a random key of 32 bytes or more: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
@@ -163,9 +189,11 @@ Keep the configuration directory writable only by the people who may run jobs ag
 1. A random masking key of 32+ bytes, from a secret store, different per audience whose copies must not be linkable.
 2. `fpe` with `strict: true` wherever policy requires a published algorithm.
 3. No `keep` on quasi-identifiers without a documented reason; `audit --connect --strict` in CI.
-4. `null` for free text that may hold names; `redact` only where the text is needed and names are acceptable.
-5. Encrypted connections, confirmed by `run --dry-run`.
-6. Manifests signed with a key held apart from the operators, and checked with `verify-manifest`.
-7. Webhook notifications and run history treated as sensitive: driver error text is scrubbed of the values it quotes in known formats, not all formats.
-8. The configuration directory, run state and history writable only by the operators.
-9. Masked copies handled as personal data: pseudonymized, not anonymized.
+4. `bauta coverage` in CI, so a table added to production later fails the build; every exception recorded in `acknowledged` with its reason.
+5. `requireMasking: true` on every non-production target, so nothing can reach it unmasked whatever a job says.
+6. `null` for free text that may hold names; `redact` only where the text is needed and names are acceptable.
+7. Encrypted connections, confirmed by `run --dry-run`.
+8. Manifests signed with a key held apart from the operators, and checked with `verify-manifest`.
+9. Webhook notifications and run history treated as sensitive: driver error text is scrubbed of the values it quotes in known formats, not all formats.
+10. The configuration directory, run state and history writable only by the operators.
+11. Masked copies handled as personal data: pseudonymized, not anonymized.

@@ -4,6 +4,9 @@ Running `bauta` unattended: where its state lives, and how to know what it did. 
 
 - [Run state](#run-state)
 - [Run history](#run-history)
+- [After a failed cycle](#after-a-failed-cycle)
+- [One production, several environments](#one-production-several-environments)
+- [Rotating the masking key](#rotating-the-masking-key)
 - [Masking manifest](#masking-manifest)
 - [Tables](#tables)
 - [Throughput](#throughput)
@@ -63,6 +66,79 @@ WHERE status = 'completed'
 GROUP BY job
 HAVING max(finished_at) < <now, in seconds since 1970> - 3 * 3600
 ```
+
+
+## After a failed cycle
+
+A job that fails doesn't take its dependents with it: they are skipped, so nothing loads rows whose parents are missing, and every skip is recorded with its cause.
+
+```
+Cycle finished: 14 completed, 1 failed, 1 skipped, 1374 row(s) moved
+```
+
+**`refresh` is the resume mechanism**, and the reason a plain `bauta run` is the right thing to do next. A job that completed is inside its `refresh` window and is skipped; the job that failed is not, so it runs again, and its dependents follow once it succeeds. Nothing re-copies what already arrived.
+
+| What you want | Command |
+| --- | --- |
+| Retry what failed, leave the rest | `bauta run` |
+| Re-run everything, ignoring `refresh` | `bauta run --force` |
+| Re-run one job and nothing else | `bauta run --job NAME` (its predecessors don't run; `run` warns about each) |
+
+Without `refresh` set, a plain `run` re-runs every job, which is correct but does more work than it needs to. `bauta history` shows what happened, and a failed job's error is recorded with it.
+
+
+## One production, several environments
+
+The same `jobs.yaml` can fill dev, staging and UAT from one production database. Two ways, which combine:
+
+**A database file per environment.** `--databases` names it, so the jobs never change:
+
+```
+bauta run --databases environments/staging.yaml
+bauta run --databases environments/uat.yaml
+```
+
+**An alias from the environment.** `${NAME}` expands anywhere in `jobs.yaml`, including in `targetDatabase`, and the alias is checked offline:
+
+```yaml
+defaults:
+  sourceDatabase: prod
+  targetDatabase: ${TARGET_ALIAS:-staging}
+```
+
+```
+$ TARGET_ALIAS=nosuchalias bauta validate
+Invalid job graph:
+maskCountries: targetDatabase "nosuchalias" is not a known database alias
+```
+
+Give each environment its own masking key, and its copies cannot be joined to each other's — which is usually what you want, since a UAT copy and a staging copy of the same customer should not be recognisably the same person. Give them the same key where a tester needs to follow a record across environments. Either way, [`requireMasking`](configuration.md#requiring-masking) on each target says that none of them can ever receive unmasked rows.
+
+
+## Rotating the masking key
+
+The masking key is a credential, so a security policy usually says to change it on a schedule. Changing it changes every mask, so what a run does next depends on how the copy is loaded.
+
+`run` refuses to start when the key of an **upsert** job changed since that job last completed, because the target still holds rows masked under the old key. A **swap** job replaces its whole target every run, so it is never affected and needs nothing here.
+
+| The job's policy | What to do |
+| --- | --- |
+| Does not mask the target's primary key | `bauta run --accept-key-change`. Each row is matched on its unchanged key and rewritten under the new one. |
+| Masks the target's primary key | `bauta clear`, then `bauta run --force`. |
+
+**The second case cannot be acknowledged away, and `run` refuses it whatever flags are given.** An upsert matches rows on the primary key. When the key is masked, a new masking key gives every row a new primary key, so the run inserts a second generation of rows beside the first rather than updating it — and where a new key lands on one already there, it overwrites a different row's data. The result is a target holding two key generations at once, whose foreign keys still all resolve, so [`bauta verify-references`](masking.md#verify-references-checking-the-copys-references) reports it clean.
+
+`bauta clear` empties the targets children-first and forgets the recorded key, so the next `run` starts from nothing:
+
+```
+export MASKING_KEY=<the new key>
+bauta clear --yes           # empties the jobs' targets, children first
+bauta run --force           # reloads everything under the new key
+```
+
+Use `--force` on that run: `clear` leaves the targets empty, and a job still inside its `refresh` window would otherwise be skipped and leave them that way. Run the jobs together rather than one at a time, so that columns sharing a domain are reloaded under the same key and still join.
+
+Rotating the key does not change [`BAUTA_MANIFEST_KEY`](masking.md#the-manifest), which signs manifests. Manifests written under the old masking key stay verifiable, and record the old key's fingerprint.
 
 
 ## Masking manifest

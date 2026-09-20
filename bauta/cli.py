@@ -20,7 +20,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import yaml
 
@@ -216,7 +216,7 @@ def _loadDataJobs(arguments: argparse.Namespace) -> Tuple[DataJobsFile, Dict[str
     jobsPath, databasesPath = _resolveConfigurationPaths(arguments)
     databaseConfiguration = Configuration.validateDatabaseConfiguration(_loadYaml(databasesPath))
     jobsFile = Configuration.validateJobConfiguration(_loadYaml(jobsPath), DataJobsFile)
-    Configuration.validateJobGraph(jobsFile.jobs, databaseAliases=set(databaseConfiguration))
+    Configuration.validateJobGraph(jobsFile.jobs, databases=databaseConfiguration)
 
     unknown = ['{}: database "{}" is not a known database alias'.format(setting, location.database)
                for setting, location in jobsFile.tableLocations().items() if location.database not in databaseConfiguration]
@@ -514,7 +514,8 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, Dat
                 encrypted = {True: 'encrypted', False: 'NOT encrypted', None: 'encryption unknown'}[database.isEncrypted()]
                 log.logging.info('{}: connected ({}, {})'.format(alias, databaseConfiguration[alias].type.value, encrypted))
         except Exception as error:
-            problems.append('{}: cannot connect -- {}'.format(alias, describeError(error)))
+            problems.append('{}: cannot connect to {} -- {}'.format(
+                alias, databaseConfiguration[alias].describeTarget(), describeError(error)))
 
     for name, job in jobsFile.jobs.items():
         if any(problem.startswith(job.targetDatabase + ':') for problem in problems):
@@ -547,8 +548,23 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, Dat
             except Exception as error:
                 problems.append('{}: stage table {} is not readable -- {}'.format(name, job.targetTableStage, describeError(error)))
 
-        if job.masking is not None and not any(problem.startswith(job.sourceDatabase + ':') for problem in problems):
-            problem = _checkMaskingCoverage(name, job, databaseConfiguration, log)
+        if any(problem.startswith(job.sourceDatabase + ':') for problem in problems):
+            continue
+
+        try:
+            returned = _sourceQueryColumns(job, databaseConfiguration)
+        except Exception as error:
+            problems.append('{}: sourceQuery could not be checked -- {}'.format(name, describeError(error)))
+            continue
+
+        # The same comparison the load makes, made before it writes: a target
+        # that gained or lost a column against a query that didn't is the
+        # ordinary way a working job stops working, and a run finds it at 03:00.
+        problem = _checkColumnCounts(name, job, returned, columns)
+        if problem:
+            problems.append(problem)
+        elif job.masking is not None:
+            problem = _checkMaskingCoverage(name, job, databaseConfiguration, log, returned)
             if problem:
                 problems.append(problem)
 
@@ -586,13 +602,31 @@ def _targetColumns(job: DataJobConfig, databaseConfiguration: Dict[str, Database
         return database.getAllColumnNames(table=job.targetTableFinal)
 
 
-def _checkMaskingCoverage(name: str, job: Any, databaseConfiguration: Dict[str, DatabaseConnectionConfig], log: Log) -> Optional[str]:
+def _checkColumnCounts(name: str, job: DataJobConfig, returned: Sequence[str], targetColumns: Sequence[str]) -> Optional[str]:
+    """Whether sourceQuery returns as many columns as the load fills.
+
+    `targetColumns` on the job names the ones it fills; without it the load
+    fills every column the target has.
+    """
+
+    filled = list(job.targetColumns) if job.targetColumns else list(targetColumns)
+
+    if len(returned) == len(filled):
+        return None
+
+    return ('{}: sourceQuery returns {} column(s) {} and the load fills {} in {} ({}). '
+            'List the ones the query fills in targetColumns, in the query\'s order'.format(
+                name, len(returned), list(returned), len(filled), job.targetTableFinal, ', '.join(filled)))
+
+
+def _checkMaskingCoverage(name: str, job: Any, databaseConfiguration: Dict[str, DatabaseConnectionConfig], log: Log,
+                          returned: Optional[Sequence[str]] = None) -> Optional[str]:
     """Whether the job's masking policy covers every column its query returns."""
 
     from .masking import MaskingPlan
 
     try:
-        columns = _sourceQueryColumns(job, databaseConfiguration)
+        columns = list(returned) if returned is not None else _sourceQueryColumns(job, databaseConfiguration)
         plan = MaskingPlan(key=job.masking.key.get_secret_value(), columns=job.masking.columns, defaultStrategy=job.masking.defaultStrategy)
         plan.bind(columns)
         log.logging.info('{}: masking policy covers all {} column(s), key {}'.format(name, len(columns), plan.fingerprint))
@@ -685,6 +719,15 @@ def _nextSteps(source: str, target: str, tables: Sequence[str], related: bool = 
         ]
 
 
+def _requireTableSelection(arguments: argparse.Namespace) -> None:
+    """Either the tables are named, or every one of them is asked for."""
+
+    if arguments.all_tables and arguments.table:
+        raise UsageError('--all-tables and --table name two different sets of tables; give one or the other')
+    if not arguments.all_tables and not arguments.table:
+        raise UsageError('name the tables with --table, repeated, or take every one with --all-tables')
+
+
 def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
     """Proposes a masking policy for each table from its schema and a sample,
     writing nothing to any database.
@@ -692,6 +735,7 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
 
     from .discovery import JobDraft, proposeTable, renderJobs
 
+    _requireTableSelection(arguments)
     databaseConfiguration = _loadDatabases(arguments)
     rules = _discoveryRules(arguments)
     target = arguments.target or arguments.database
@@ -707,11 +751,16 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
         # Named as the catalog holds them, so a table written in quotes -- the
         # only way to name a reserved word -- matches its own foreign keys, and
         # gives a job and a key domain the same name a bare one would.
-        tables = [catalogTable(database.type, table) for table in arguments.table]
+        requestedTables = database.listTables(schema=arguments.schema) if arguments.all_tables else arguments.table
+        if not requestedTables:
+            raise UsageError('{} holds no tables{}'.format(
+                arguments.database, ' in schema {}'.format(arguments.schema) if arguments.schema else ''))
+        tables = [catalogTable(database.type, table) for table in requestedTables]
         requested = {table.upper(): table for table in tables}
         for table in tables:
             log.logging.info('Sampling up to {} row(s) of {}'.format(arguments.sample, table))
-            proposal = proposeTable(database, table, sampleSize=arguments.sample, foreignKeys=foreignKeys, rules=rules)
+            proposal = proposeTable(database, table, sampleSize=arguments.sample, foreignKeys=foreignKeys, rules=rules,
+                                    maskKeys=arguments.mask_keys)
             # Parents first, so a target that enforces foreign keys accepts the load.
             parents = sorted({requested[foreignKey.referencedTable.upper()] for foreignKey in foreignKeys
                               if foreignKey.table.upper() == table.upper() and foreignKey.referencedTable.upper() in requested
@@ -719,7 +768,7 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
             drafts.append(JobDraft(table=table, sourceQuery='SELECT * FROM {}'.format(database.statementName(table)),
                                    predecessors=parents, proposal=proposal))
 
-    heading = _generatedHeading('discover', arguments.database, target) + _nextSteps(arguments.database, target, arguments.table)
+    heading = _generatedHeading('discover', arguments.database, target) + _nextSteps(arguments.database, target, requestedTables)
     _writeOutput(renderJobs(drafts, arguments.database, target, heading, keyVariable=arguments.key_variable,
                             chunkSize=arguments.chunk_size, targetType=databaseConfiguration[target].type), arguments.output)
 
@@ -760,7 +809,8 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
 
         drafts = []
         for table in plan.tables:
-            proposal = proposeTable(database, table, sampleSize=arguments.sample, foreignKeys=foreignKeys, rules=rules) if arguments.mask else None
+            proposal = proposeTable(database, table, sampleSize=arguments.sample, foreignKeys=foreignKeys, rules=rules,
+                                    maskKeys=arguments.mask_keys) if arguments.mask else None
             drafts.append(JobDraft(table=table, sourceQuery=plan.queries[table], predecessors=plan.parents[table], proposal=proposal))
 
     heading = _generatedHeading('subset', arguments.database, arguments.target) + [
@@ -1010,6 +1060,59 @@ def _commandVerifyReferences(arguments: argparse.Namespace, log: Log) -> int:
     return EXIT_SUCCESS
 
 
+def _commandCoverage(arguments: argparse.Namespace, log: Log) -> int:
+    """Lists every table in a source database and what the jobs do with it.
+
+    `audit` checks the jobs that exist; this one finds what no job covers at
+    all, which nothing else can see -- a table with no job has no audit.
+
+    Exits 1 when any table is neither copied nor declared in `acknowledged`.
+    """
+
+    from .coverage import UNCOVERED, coverageReport, jobsReading, renderCoverage
+
+    jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+    jobs = {name: job for name, job in _selectJobs(jobsFile.jobs, arguments.job, log).items() if arguments.job or job.active}
+    alias = arguments.database or _theOnlySourceDatabase(jobs)
+    _requireAlias(databaseConfiguration, alias)
+
+    with Database(connectionSettings=databaseConfiguration[alias]) as database:
+        tables = database.listTables(schema=arguments.schema)
+        # Only for the tables nothing covers: the rest are already accounted
+        # for, and reading every column of a whole schema is not free.
+        covered = {table for table in tables if jobsReading(table, alias, jobs)}
+        columns = {}
+        for table in tables:
+            if table in covered:
+                continue
+            try:
+                columns[table] = database.getAllColumnNames(table=table)
+            except Exception as error:
+                log.logging.warning('{}: could not read its columns -- {}'.format(table, describeError(error)))
+
+    report = coverageReport(alias, tables, jobs, acknowledged=jobsFile.acknowledged.get(alias),
+                            columns=columns, rules=_discoveryRules(arguments))
+    _writeOutput(json.dumps(report, indent=2, default=str) + '\n' if arguments.format == 'json' else renderCoverage(report),
+                 arguments.output)
+
+    if report['summary'][UNCOVERED]:
+        return EXIT_JOBS_DID_NOT_SUCCEED
+
+    return EXIT_SUCCESS
+
+
+def _theOnlySourceDatabase(jobs: Mapping[str, Any]) -> str:
+    """The alias every job reads from, when --database isn't given."""
+
+    aliases = sorted({job.sourceDatabase for job in jobs.values()})
+
+    if len(aliases) != 1:
+        raise UsageError('--database is required: the jobs read from {}'.format(
+            ', '.join(aliases) if aliases else 'no database'))
+
+    return aliases[0]
+
+
 def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
     """Reports what each job does with data, and anything a reviewer should
     question. Offline unless --connect, which also resolves each masked
@@ -1030,13 +1133,15 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
     declaredForeignKeys: Dict[str, List[ForeignKey]] = {}
 
     if arguments.connect:
+        # Every job's columns, not only a masked one's: an unmasked job's are
+        # what says whether it is carrying personal data (see audit._auditUnmaskedJob).
         for name, job in jobs.items():
-            if job.masking is not None:
-                try:
-                    returnedColumns[name] = _sourceQueryColumns(job, databaseConfiguration)
+            try:
+                returnedColumns[name] = _sourceQueryColumns(job, databaseConfiguration)
+                if job.masking is not None:
                     targetColumns[name] = job.targetColumns or _targetColumns(job, databaseConfiguration)
-                except Exception as error:
-                    unreachable[name] = describeError(error)
+            except Exception as error:
+                unreachable[name] = describeError(error)
 
         keysByAlias: Dict[str, List[ForeignKey]] = {}
         for alias in sorted({job.sourceDatabase for job in jobs.values()} | {job.targetDatabase for job in jobs.values()}):
@@ -1050,7 +1155,8 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
                     except Exception as error:
                         log.logging.warning('{}: could not read foreign keys -- {}'.format(alias, describeError(error)))
             except Exception as error:
-                log.logging.warning('{}: could not connect to check encryption and foreign keys -- {}'.format(alias, describeError(error)))
+                log.logging.warning('{}: could not connect to {} to check encryption and foreign keys -- {}'.format(
+                    alias, databaseConfiguration[alias].describeTarget(), describeError(error)))
                 if not isSqlite:
                     encryption[alias] = None
 
@@ -1209,6 +1315,8 @@ def _addGeneratorArguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--sample', type=_positiveInteger, default=1000, help='rows sampled per table to classify columns (default: 1000)')
     parser.add_argument('--key-variable', default='MASKING_KEY', help='environment variable the generated jobs read the masking key from')
     parser.add_argument('--chunk-size', type=_positiveInteger, default=5000, help='chunkSize for the generated jobs (default: 5000)')
+    parser.add_argument('--mask-keys', action='store_true',
+                        help='mask numeric surrogate keys too, in the domain each foreign key shares, instead of keeping them')
     parser.add_argument('--output', help='write the generated jobs here instead of stdout; must not already exist')
 
 
@@ -1281,6 +1389,15 @@ def _buildParser() -> argparse.ArgumentParser:
     referencesParser.add_argument('--output', help='write the report here instead of stdout; must not already exist')
     referencesParser.set_defaults(handler=_commandVerifyReferences)
 
+    coverageParser = subparsers.add_parser('coverage', help='list a source database\'s tables and what the jobs do with each')
+    _addCommonArguments(coverageParser, memory=False)
+    _addRulesArgument(coverageParser)
+    coverageParser.add_argument('--database', help='the source database alias to check; required when the jobs read from more than one')
+    coverageParser.add_argument('--schema', help='the schema to list, instead of the connection\'s own')
+    coverageParser.add_argument('--job', action='append', help='only these jobs count as covering a table. Repeatable.')
+    coverageParser.add_argument('--format', choices=['text', 'json'], default='text', help='output format')
+    coverageParser.add_argument('--output', help='write to this file instead of stdout')
+
     verifyParser = subparsers.add_parser('verify-manifest', help='check that a manifest is unaltered, and who signed it')
     verifyParser.add_argument('manifest', nargs='?', help='a manifest file (default: --manifest-database, else jobs.yaml\'s `manifest`)')
     _addManifestLocationArguments(verifyParser)
@@ -1304,7 +1421,9 @@ def _buildParser() -> argparse.ArgumentParser:
     discoverParser = subparsers.add_parser('discover', help='propose a masking policy for tables, from their schema and a sample')
     _addCommonArguments(discoverParser, jobs=False)
     discoverParser.add_argument('--database', required=True, help='the alias to read from')
-    discoverParser.add_argument('--table', action='append', required=True, help='a table to propose a policy for (repeatable)')
+    discoverParser.add_argument('--table', action='append', help='a table to propose a policy for (repeatable)')
+    discoverParser.add_argument('--all-tables', action='store_true', help='every table in the database, instead of naming each with --table')
+    discoverParser.add_argument('--schema', help='the schema --all-tables lists, instead of the connection\'s own')
     discoverParser.add_argument('--target', help='the alias the generated jobs load into (default: --database, masking in place)')
     _addGeneratorArguments(discoverParser)
     _addRulesArgument(discoverParser)
@@ -1355,8 +1474,20 @@ def _buildParser() -> argparse.ArgumentParser:
     clearParser.add_argument('--dry-run', action='store_true', help='show which tables would be emptied, and in what order')
     clearParser.add_argument('--yes', action='store_true', help='actually delete the rows')
     clearParser.set_defaults(handler=_commandClear)
+    coverageParser.set_defaults(handler=_commandCoverage)
 
     return parser
+
+
+# Flags that only some subcommands define, filled in as None for the ones that
+# don't, so shared helpers can read them without asking first. Every dest any
+# subparser defines has to be here; test_cli proves it, because a name left out
+# is an AttributeError only the subcommand that misses it would ever hit.
+SHARED_FLAG_DESTINATIONS = (
+    'job', 'force', 'workers', 'dry_run', 'forever', 'manifest', 'jobs', 'memory', 'memory_database', 'memory_table', 'yes',
+    'accept_key_change', 'history', 'history_database', 'history_table', 'manifest_database', 'manifest_table', 'run',
+    'notify_url', 'rules', 'database', 'schema', 'mask_keys', 'all_tables',
+    )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -1364,9 +1495,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = _buildParser()
     arguments = parser.parse_args(argv)
 
-    for name in ('job', 'force', 'workers', 'dry_run', 'forever', 'manifest', 'jobs', 'memory', 'memory_database', 'memory_table', 'yes', 'config',
-                 'databases', 'accept_key_change', 'history', 'history_database', 'history_table', 'manifest_database', 'manifest_table', 'run',
-                 'notify_url', 'rules'):
+    for name in SHARED_FLAG_DESTINATIONS:
         if not hasattr(arguments, name):
             setattr(arguments, name, None)
 

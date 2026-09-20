@@ -5,6 +5,7 @@ The exit codes are the point. For anything that schedules work the exit code is
 the entire interface, and runDataJobs used to return None -- so a cron wrapping
 this reported success on total failure.
 """
+import argparse
 import sqlite3
 
 import pytest
@@ -435,6 +436,7 @@ jobs:
     targetTableFinal: customers
     insertStrategy: swap
     chunkSize: 10
+    unmasked: true
   loadOrders:
     active: true
     predecessors: [loadCustomers]
@@ -444,6 +446,7 @@ jobs:
     targetTableFinal: orders
     insertStrategy: upsert
     chunkSize: 10
+    unmasked: true
 """
 
 
@@ -1163,3 +1166,73 @@ def test_only_commands_that_read_run_state_offer_its_flags(command, offers):
     flags = {flag for action in subparsers.choices[command]._actions for flag in action.option_strings}
 
     assert ({'--memory', '--memory-database', '--memory-table'} <= flags) is offers
+
+
+def test_dry_run_compares_the_column_counts_it_already_prints():
+    """The ordinary way a working job stops working: production gains a column
+    the target hasn't got. The run said so clearly; the dry run had both
+    numbers in hand and passed anyway.
+    """
+    from bauta.cli import _checkColumnCounts
+    from bauta.configuration import DataJobConfig
+
+    job = DataJobConfig(active=True, sourceDatabase='prod', sourceQuery='select * from customers',
+                        targetDatabase='staging', targetTableFinal='customers', insertStrategy='upsert', chunkSize=10)
+
+    assert _checkColumnCounts('maskCustomers', job, ['id', 'email'], ['id', 'email']) is None
+
+    problem = _checkColumnCounts('maskCustomers', job, ['id', 'email', 'tax_id'], ['id', 'email'])
+    assert problem is not None and 'returns 3 column(s)' in problem and 'fills 2' in problem
+
+
+def test_dry_run_counts_only_the_columns_target_columns_names():
+    from bauta.cli import _checkColumnCounts
+    from bauta.configuration import DataJobConfig
+
+    job = DataJobConfig(active=True, sourceDatabase='prod', sourceQuery='select id, email from customers',
+                        targetDatabase='staging', targetTableFinal='customers', insertStrategy='upsert', chunkSize=10,
+                        targetColumns=['id', 'email'])
+
+    assert _checkColumnCounts('maskCustomers', job, ['id', 'email'], ['id', 'email', 'created_at']) is None
+
+
+def test_every_subcommand_gets_the_shared_flags_filled_in():
+    """`main` fills in the flags a subcommand doesn't define, so the helpers
+    several subcommands share can read them without asking first. Proves the
+    fill-in reaches every subcommand, and that no name in the list has gone
+    stale -- a stale one hides the fact that nothing defines it any more.
+    """
+    from bauta.cli import SHARED_FLAG_DESTINATIONS, _buildParser
+
+    parser = _buildParser()
+    (subparsers,) = [action for action in parser._actions if isinstance(action, argparse._SubParsersAction)]
+
+    defined = {action.dest for subparser in subparsers.choices.values() for action in subparser._actions}
+    stale = sorted(name for name in SHARED_FLAG_DESTINATIONS if name not in defined)
+
+    assert not stale, 'no subcommand defines these any more: {}'.format(', '.join(stale))
+
+    # And the flags only some subcommands define are the ones that need filling
+    # in at all: a flag every subcommand defines never needs to be in the list.
+    everywhere = {action.dest for action in next(iter(subparsers.choices.values()))._actions}
+    for subparser in subparsers.choices.values():
+        everywhere &= {action.dest for action in subparser._actions}
+
+    redundant = sorted(name for name in SHARED_FLAG_DESTINATIONS if name in everywhere)
+
+    assert not redundant, 'every subcommand already defines these, so filling them in is dead: {}'.format(', '.join(redundant))
+
+
+def test_discover_needs_exactly_one_way_of_choosing_tables():
+    from bauta.cli import UsageError, _requireTableSelection
+
+    class Arguments:
+        def __init__(self, table, allTables):
+            self.table, self.all_tables = table, allTables
+
+    _requireTableSelection(Arguments(['customers'], False))
+    _requireTableSelection(Arguments(None, True))
+
+    for bad in (Arguments(None, False), Arguments(['customers'], True)):
+        with pytest.raises(UsageError):
+            _requireTableSelection(bad)

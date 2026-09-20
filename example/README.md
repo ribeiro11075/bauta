@@ -124,7 +124,7 @@ cp example/starter/configuration/*.yaml configuration/
 | File | What it holds |
 | --- | --- |
 | `database.yaml` | two database aliases, with credentials read from the environment |
-| `jobs.yaml` | data jobs, including an incremental one and two masked ones, with run state, history and the manifest kept in `transaction/` |
+| `jobs.yaml` | a `defaults:` block, data jobs including an incremental one and two masked ones, and run state, history and the manifest kept in `transaction/` |
 
 Set the variables it reads -- `SOURCE_DB_PASSWORD`, `TARGET_DB_PASSWORD` and `MASKING_KEY` -- then edit it for your databases. The CLI reads `./configuration` by default; `--config DIR` points it anywhere else.
 

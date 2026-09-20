@@ -16,6 +16,7 @@ Since masking runs inside a data job, it also gets streaming, retries, watermark
 - [Masking in place](#masking-in-place)
 - [The manifest](#the-manifest)
 - [Reviewing policies: `audit`](#reviewing-policies-audit)
+- [`coverage`: what the jobs do not cover](#coverage-what-the-jobs-do-not-cover)
 - [Proposing a policy: `discover`](#proposing-a-policy-discover)
 - [Copying a subset: `subset`](#copying-a-subset-subset)
 - [Creating and refreshing the copy](#creating-and-refreshing-the-copy)
@@ -312,7 +313,7 @@ The key is what stops someone who knows this scheme from hashing likely values, 
 
 - **Read it from the environment**: `key: ${MASKING_KEY}`. Never give it a `${NAME:-default}`, and never commit it.
 - It must be at least 16 characters. Use a random one: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-- **Rotating it changes every mask.** A copy masked under the old key won't join to one masked under the new key. So each masked job's key fingerprint is recorded when it completes, and an **upsert** job whose key has changed since stops the run: its target still holds rows masked under the old key. Empty those targets with `bauta clear`, which also forgets the recorded fingerprints, or pass `--accept-key-change` (`acceptKeyChange=True` from Python) if you mean it. A `swap` job replaces its whole target, so it just carries on.
+- **Rotating it changes every mask.** A copy masked under the old key won't join to one masked under the new key. So each masked job's key fingerprint is recorded when it completes, and an **upsert** job whose key has changed since stops the run: its target still holds rows masked under the old key. A `swap` job replaces its whole target, so it just carries on. What to do next depends on whether the policy masks the target's primary key: see [rotating the masking key](operations.md#rotating-the-masking-key).
 - The key never appears in logs, errors or the manifest, and pydantic hides it from the configuration's repr. Runs log a **fingerprint** instead: a short, non-reversible identifier. Two runs with the same fingerprint used the same key.
 
 Whoever holds the key can confirm a guess (for example "is this row Alice?") by masking the guess and comparing, so give it the same care as production credentials. [security.md](security.md) sets out what masking does and doesn't protect, for a security review.
@@ -457,6 +458,46 @@ The check on `swap` jobs reads only the keys the target declares, since a key on
 `audit` exits 1 on an error, and with `--strict` on a warning too, so it can gate a CI pipeline. `--format json` writes the same report for other tools, and `--output FILE` writes it to a file. `--job` narrows it.
 
 
+## `coverage`: what the jobs do not cover
+
+`audit` checks the jobs that exist. It cannot see a table nobody wrote a job for — a table with no job has nothing to audit — and that is exactly what a new release adds to production.
+
+`coverage` starts from the database instead of from the configuration. It lists every table in a source database and says what the jobs do with each:
+
+```
+bauta coverage
+bauta coverage --database prod --schema sales
+bauta coverage --format json
+```
+
+```
+prod: 4 table(s)
+
+  audit_log                                NOT COVERED
+    actor_email                            looks like personal data
+  employees                                NOT COVERED
+    salary                                 looks like personal data
+  countries                                copied as it stands by copyCountries
+  customers                                copied and masked by maskCustomers
+
+Covered: 1 masked, 1 copied as they stand, 0 declared not copied. NOT COVERED: 2.
+Add a job for each table above, or declare it in `acknowledged` with the reason it is not copied.
+```
+
+| State | Meaning |
+| --- | --- |
+| copied and masked | A job reads the table and masks what it reads. |
+| copied as it stands | A job reads the table with no masking policy. `audit` reports these too. |
+| not copied, declared | No job reads it, and [`acknowledged`](configuration.md#acknowledged) records why. |
+| NOT COVERED | No job reads it, and nothing says that was intended. |
+
+A table counts as covered when a job reading that database names it in its `sourceQuery`. That doesn't parse SQL — it is the same approximation [`audit`](#reviewing-policies-audit) makes for tables that reference each other — so a job whose query reaches a table only through a view covers it in fact but not in this report, and has to be declared.
+
+For a table nothing covers, `coverage` reads its column names and marks the ones that look like personal data, by the same rules as [`discover`](#proposing-a-policy-discover), including your own from [`discovery.yaml`](#your-own-rules-discoveryyaml). Columns of covered tables aren't read.
+
+**`coverage` exits 1 when any table is NOT COVERED**, so it can follow `run` in CI and fail the build when production grows a table the copy doesn't account for. `--database` picks the alias when the jobs read from more than one; `--job` narrows which jobs count as covering.
+
+
 ## Proposing a policy: `discover`
 
 ```
@@ -477,9 +518,17 @@ For each table, `discover` reads the schema and samples rows (`--sample`, defaul
 ```
 
 - **Names first, then values.** Column names are matched against [rules](#your-own-rules-discoveryyaml) for common patterns (email, phone, SSN, card, name, address, birth date and so on). A name-based suggestion is dropped if it doesn't fit the column's type, so `place_of_birth` isn't treated as a date. Sampled values are then checked for emails, national identifiers, card numbers (with a Luhn check), IP addresses, UUIDs, dates, phone numbers and long free text.
-- **Keys are decided together.** Primary keys, the columns that foreign keys reference, and the foreign-key columns themselves get matching domains, so both ends of a relationship agree. Numeric keys are proposed as `keep`, since surrogate ids reveal little, and text keys as `key`.
+- **Keys are decided together.** Primary keys, the columns that foreign keys reference, and the foreign-key columns themselves get matching domains, so both ends of a relationship agree. Numeric keys are proposed as `keep`, since surrogate ids reveal little, and text keys as `key`. **`--mask-keys` masks the numeric ones too**, in the domain each relationship shares:
+
+  ```yaml
+  id: {strategy: key, domain: customers}          # --mask-keys
+  customer_id: {strategy: key, domain: customers} # the other end, same domain
+  ```
+
+  Both ends move together, so the copy's references still match. Use it where the ids themselves are meaningful — sequential ids leak how many customers there are, and when each was created — or where the copy's ids must not be production's. Note that masking a key the target uses as its primary key means a later key rotation has to go through `bauta clear`; see [rotating the masking key](operations.md#rotating-the-masking-key).
 - **Sampled values stay in memory.** None of them is printed, logged or written.
 - **Load settings.** With a separate `--target`, jobs upsert and load parent tables before child tables. Without one, the proposal masks in place through a `<table>_masked_stage` swap.
+- **A whole schema at once.** `--all-tables` proposes for every table in the database, instead of naming each with a repeated `--table`; `--schema NAME` lists another schema. Pair it with [`bauta coverage`](#coverage-what-the-jobs-do-not-cover), which starts from the same list and fails on anything the generated jobs then leave out.
 - `--output` refuses to overwrite an existing file, so it can't replace a policy that has already been reviewed.
 
 Treat the result as a starting point for review. It isn't a finished policy.

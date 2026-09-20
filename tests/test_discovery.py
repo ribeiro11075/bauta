@@ -295,3 +295,27 @@ def test_a_rules_file_that_cannot_work_is_refused(raw, message):
 
     with pytest.raises(ConfigurationError, match=message):
         Configuration.validateDiscoveryRules(raw)
+
+
+def test_mask_keys_masks_a_numeric_key_in_the_domain_both_ends_share():
+    """Without it a numeric surrogate is kept, which is right by default. With
+    it both ends move together, so the copy's references still match.
+    """
+    from bauta.discovery import suggestColumn
+
+    kept = suggestColumn('customers', 'id', None, [1, 2, 3], keyReference=('customers', True))
+    masked = suggestColumn('customers', 'id', None, [1, 2, 3], keyReference=('customers', True), maskKeys=True)
+    other = suggestColumn('orders', 'customer_id', None, [1, 2, 3], keyReference=('customers', True), maskKeys=True)
+
+    assert kept.policy == {'strategy': 'keep'}
+    assert masked.policy == {'strategy': 'key', 'domain': 'customers'}
+    assert other.policy == masked.policy, 'both ends of the reference must share a domain'
+
+
+def test_mask_keys_leaves_a_text_key_as_it_already_was():
+    from bauta.discovery import suggestColumn
+
+    plain = suggestColumn('customers', 'reference', None, ['AB-1'], keyReference=('customers', False))
+    masked = suggestColumn('customers', 'reference', None, ['AB-1'], keyReference=('customers', False), maskKeys=True)
+
+    assert plain.policy == masked.policy == {'strategy': 'key', 'domain': 'customers'}

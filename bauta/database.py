@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Ty
 
 from .configuration import WATERMARK_PLACEHOLDER, ConfigurationError, DatabaseConnectionConfig, DatabaseType
 from .databaseDialects import ColumnDefinition, DatabaseDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
-    SQLiteDialect, quoteFoldedTable, quoteIdentifier, splitTableName, suffixedName, tooLongName
+    SQLiteDialect, catalogName, quoteFoldedTable, quoteIdentifier, splitTableName, suffixedName, tooLongName
 
 DIALECTS: Dict[DatabaseType, DatabaseDialect] = {
     DatabaseType.MYSQL: MySQLDialect(),
@@ -289,6 +289,53 @@ class Database:
             self.primaryKeyCache[table] = self.dialect.primaryKey(self.cursor, table)
 
         return self.primaryKeyCache[table]
+
+
+    def listTables(self, schema: Optional[str] = None) -> List[str]:
+        """The base tables a job could copy, sorted, named so that each can be
+        handed straight back to catalogColumns or getPrimaryColumnNames.
+
+        Views and the server's own tables are left out. Without `schema` these
+        are the connection's own tables -- the schema an unqualified name
+        already resolves in, `currentSchema` included -- and named bare, as a
+        job would write them. With one, each is qualified with it.
+
+        A name the catalog spells in a way this database would not fold an
+        unquoted name to -- a mixed-case name on Oracle or PostgreSQL, a
+        reserved word, a name with a space -- comes back quoted, since that is
+        the only spelling that reads back as the same table. See "How names are
+        written" in docs/design.md.
+        """
+
+        names = [self._asWritten(name) for name in self.dialect.listTables(self.cursor, schema)]
+
+        if schema is not None:
+            qualifier = self._asWritten(schema)
+            names = ['{}.{}'.format(qualifier, name) for name in names]
+
+        # Sorted here rather than left to the server: each orders by its own
+        # collation -- SQL Server's ignores case, Oracle's does not -- and a
+        # name that had to be quoted sorts by its quote. One order on all six
+        # is what makes a report comparable between them.
+        return sorted(names)
+
+
+    def _asWritten(self, name: str) -> str:
+        """A name the catalog reported, spelled so that reading it back means
+        this same name and no other.
+
+        Left bare where it already reads back as itself, which is the spelling
+        a person would write. Quoted otherwise: a name this database would fold
+        (`Orders` on Oracle or PostgreSQL), and a name carrying a dot, which
+        would otherwise be read as `schema.table`.
+        """
+
+        schema, bare = splitTableName(name)
+
+        if schema is None and catalogName(self.type, bare) == name:
+            return name
+
+        return quoteIdentifier(self.type, name)
 
 
     def getForeignKeys(self) -> List[ForeignKey]:

@@ -73,7 +73,9 @@ def test_an_unmasked_copy_from_a_source_other_jobs_mask_is_flagged():
         })
 
     assert _messages(report, 'warning') == [
-        ('copyOrders', 'copies from prod without masking, though other jobs mask what they read from it')]
+        ('copyOrders', 'copies from prod without masking, though other jobs mask what they read from it'),
+        ('rollUp', 'copies from staging to staging without masking, so every column it returns is written as it stands. '
+                   'Add a masking policy, or declare the choice with `unmasked: true`')]
 
 
 def test_an_unencrypted_source_connection_is_flagged_for_masked_jobs():
@@ -255,8 +257,8 @@ def test_a_job_whose_columns_do_not_line_up_is_not_guessed_at():
 
 def _copies(customersQuery, ordersQuery='select * from orders', **customers: Any):
     return {
-        'loadCustomers': _job(sourceQuery=customersQuery, **customers),
-        'loadOrders': _job(sourceQuery=ordersQuery, targetTableFinal='orders'),
+        'loadCustomers': _job(sourceQuery=customersQuery, unmasked=True, **customers),
+        'loadOrders': _job(sourceQuery=ordersQuery, targetTableFinal='orders', unmasked=True),
         }
 
 
@@ -310,7 +312,7 @@ def test_a_similar_table_name_does_not_count_as_a_mention():
 def test_a_table_referencing_itself_is_left_to_subset():
     from bauta.databaseDialects import ForeignKey
 
-    jobs = {'loadEmployees': _job(sourceQuery="select * from employees where site = 'x'", targetTableFinal='employees')}
+    jobs = {'loadEmployees': _job(sourceQuery="select * from employees where site = 'x'", targetTableFinal='employees', unmasked=True)}
     report = auditJobs(jobs, foreignKeys={'staging': [ForeignKey('employees', ('manager_id',), 'employees', ('id',), 'fk_manager')]})
 
     assert report['findings'] == []
@@ -456,7 +458,7 @@ def test_a_swapped_table_that_declares_keys_is_warned_about():
     from bauta.databaseDialects import ForeignKey
 
     jobs = {'loadOrders': _job(sourceQuery='select * from orders', targetTableFinal='orders', insertStrategy='swap',
-                               targetTableStage='orders_stage')}
+                               targetTableStage='orders_stage', unmasked=True)}
     report = auditJobs(jobs, declaredForeignKeys={'staging': [_foreignKey()]})
 
     assert _messages(report, 'warning') == [(
@@ -470,7 +472,7 @@ def test_keys_recreated_after_a_swap_of_the_child_are_not_flagged():
     from bauta.databaseDialects import ForeignKey
 
     jobs = {'loadOrders': _job(sourceQuery='select * from orders', targetTableFinal='orders', insertStrategy='swap',
-                               targetTableStage='orders_stage',
+                               targetTableStage='orders_stage', unmasked=True,
                                postTargetAdhocQueries=['alter table orders add constraint fk foreign key (customer_id) references customers (id)'])}
 
     assert auditJobs(jobs, declaredForeignKeys={'staging': [_foreignKey()]})['findings'] == []

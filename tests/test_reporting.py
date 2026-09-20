@@ -162,3 +162,113 @@ def test_the_notification_text_leads_with_the_outcome():
 
     assert payload['text'].startswith('bauta on ')
     assert ': succeeded -- 1 completed, 0 failed, 0 skipped, 42 row(s)' in payload['text']
+
+
+# Reading history back from the end ---------------------------------------------
+
+def _writeHistory(path, count, job='loadOrders'):
+    import json
+
+    with open(path, 'w') as file:
+        for index in range(count):
+            file.write(json.dumps({'runId': 'run{}'.format(index), 'job': job, 'status': 'completed',
+                                   'rowCount': index, 'attempts': 1, 'startedAt': None, 'finishedAt': None,
+                                   'durationSeconds': 0.0, 'error': None}) + '\n')
+
+
+def test_history_reads_the_newest_records_first(tmp_path):
+    from bauta.reporting import FileHistory
+
+    path = tmp_path / 'history.jsonl'
+    _writeHistory(path, 50)
+
+    records = FileHistory(path).read(limit=3)
+
+    assert [record['runId'] for record in records] == ['run49', 'run48', 'run47']
+
+
+def test_history_reads_only_the_tail_of_a_long_file(tmp_path):
+    """Regression test: reading twenty records used to parse every line ever
+    written, so `bauta history` got slower every day a run recorded to it.
+    """
+    from bauta.reporting import TAIL_BLOCK_BYTES, FileHistory
+
+    path = tmp_path / 'history.jsonl'
+    _writeHistory(path, 20000)
+    assert path.stat().st_size > TAIL_BLOCK_BYTES * 4
+
+    records = FileHistory(path).read(limit=5)
+
+    assert [record['runId'] for record in records] == ['run19999', 'run19998', 'run19997', 'run19996', 'run19995']
+
+
+def test_history_finds_records_straddling_a_block_boundary(tmp_path):
+    """A record is only whole once the block before it has been read too."""
+    from bauta.reporting import FileHistory, _linesBackwards
+
+    path = tmp_path / 'history.jsonl'
+    _writeHistory(path, 2000)
+
+    lines = [line for line in _linesBackwards(path, blockSize=64) if line.strip()]
+
+    assert len(lines) == 2000
+    assert all(line.startswith(b'{') and line.endswith(b'}') for line in lines)
+    # Reading a block at a time must give the same records as one big read.
+    assert lines == [line for line in _linesBackwards(path, blockSize=1024 * 1024) if line.strip()]
+
+
+def test_history_filters_by_job_across_blocks(tmp_path):
+    import json
+
+    from bauta.reporting import FileHistory
+
+    path = tmp_path / 'history.jsonl'
+    with open(path, 'w') as file:
+        for index in range(4000):
+            job = 'wanted' if index % 500 == 0 else 'other'
+            file.write(json.dumps({'runId': 'run{}'.format(index), 'job': job, 'status': 'completed', 'rowCount': 0,
+                                   'attempts': 1, 'startedAt': None, 'finishedAt': None, 'durationSeconds': 0.0,
+                                   'error': None}) + '\n')
+
+    records = FileHistory(path).read(limit=3, job='wanted')
+
+    assert [record['runId'] for record in records] == ['run3500', 'run3000', 'run2500']
+
+
+def test_history_reads_a_file_whose_last_line_has_no_newline(tmp_path):
+    from bauta.reporting import FileHistory
+
+    path = tmp_path / 'history.jsonl'
+    _writeHistory(path, 3)
+    path.write_text(path.read_text().rstrip('\n'))
+
+    assert [record['runId'] for record in FileHistory(path).read(limit=5)] == ['run2', 'run1', 'run0']
+
+
+def test_history_of_an_empty_or_missing_file_is_empty(tmp_path):
+    from bauta.reporting import FileHistory
+
+    missing = tmp_path / 'nothing.jsonl'
+    empty = tmp_path / 'empty.jsonl'
+    empty.write_text('')
+
+    assert FileHistory(missing).read() == []
+    assert FileHistory(empty).read() == []
+
+
+def test_history_round_trips_what_it_appended(tmp_path):
+    """append() and read() have to agree about order and shape."""
+    from bauta.dependencyGraph import JobOutcome, JobStatus
+    from bauta.reporting import FileHistory
+    from bauta.runner import RunResult
+
+    path = tmp_path / 'history.jsonl'
+    history = FileHistory(path)
+
+    history.append(RunResult(outcomes=[JobOutcome(job='first', status=JobStatus.COMPLETED, rowCount=1)]), 'runA')
+    history.append(RunResult(outcomes=[JobOutcome(job='second', status=JobStatus.FAILED, error='boom')]), 'runB')
+
+    records = history.read(limit=10)
+
+    assert [record['job'] for record in records] == ['second', 'first']
+    assert records[0]['status'] == 'failed' and records[0]['error'] == 'boom'

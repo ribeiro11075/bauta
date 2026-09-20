@@ -8,7 +8,7 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple, Union
 
 import yaml
 
@@ -73,8 +73,10 @@ def exclusiveRun(lockFile: Union[str, Path]) -> Iterator[None]:
 class MemoryBackend(ABC):
     """Tracks each job's last-run time, wherever an implementation keeps it.
 
-    Must be picklable, since each job's process gets a copy: hold settings,
-    not an open file or connection, and open resources inside each method.
+    Must be picklable, since each job's process gets a copy: hold the settings
+    a resource is opened from rather than the resource. One that keeps a
+    connection open between calls -- DatabaseMemory does -- leaves it out of
+    what it pickles and opens its own in whichever process first needs it.
     """
 
     @abstractmethod
@@ -276,6 +278,96 @@ class DatabaseMemory(MemoryBackend):
     def __init__(self, connectionSettings: DatabaseConnectionConfig, table: str = 'bauta_memory') -> None:
         self.connectionSettings = connectionSettings
         self.table = table
+        self._database: Optional[Database] = None
+        self._pid: Optional[int] = None
+
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """What is pickled into each job's process. A connection can't cross,
+        so the copy that arrives opens its own on first use.
+        """
+
+        return dict(self.__dict__, _database=None, _pid=None)
+
+
+    def _connected(self) -> Database:
+        """This process's connection, opened the first time it is needed.
+
+        Held rather than reopened per call: a completed masked incremental job
+        records a watermark, a key fingerprint and a run, and reads its
+        watermark on every attempt -- four connections, and four subprocesses
+        besides wherever passwordCommand supplies a cloud IAM token.
+
+        Keyed on the process id as well, so a copy that reached a worker some
+        other way than the pickle above never writes through its parent's
+        connection.
+        """
+
+        pid = os.getpid()
+
+        if self._database is None or self._pid != pid:
+            self.close()
+            self._database = Database(connectionSettings=self.connectionSettings)
+            self._pid = pid
+
+        return self._database
+
+
+    def close(self) -> None:
+        """Closes the connection this process holds, if it holds one. Idempotent.
+
+        Nothing has to call this: a connection dies with its process, as the
+        per-call ones did. It is here for a program that embeds the library and
+        outlives its runs.
+        """
+
+        database, self._database, self._pid = self._database, None, None
+
+        if database is not None:
+            try:
+                database.close()
+            except Exception:
+                pass
+
+
+    def _run(self, work: 'Callable[[Database], Any]') -> Any:
+        """`work` against this process's connection, once more on a fresh one
+        if a connection that was already open failed.
+
+        Reopening per call used to hide a server restart, an idle timeout or an
+        expired token; holding one means meeting them. Only a reused connection
+        is retried -- a failure on one opened in this same call is the
+        statement's, not the connection's -- so nothing runs twice because a
+        statement was wrong.
+        """
+
+        reused = self._database is not None and self._pid == os.getpid()
+
+        try:
+            return work(self._connected())
+        except Exception:
+            if not reused:
+                raise
+            self.close()
+            return work(self._connected())
+
+
+    def _query(self, statement: str) -> Any:
+
+        def work(database: Database) -> Any:
+            rows = database.query(statement.format(database.statementName(self.table)))
+            # Reading opens a transaction on PostgreSQL, which on a held
+            # connection would stay open for the life of the run -- idle in
+            # transaction, which holds back vacuum and trips server timeouts.
+            database.connection.rollback()
+            return rows
+
+        return self._run(work)
+
+
+    def _upsert(self, data: Any, columns: Any) -> None:
+
+        self._run(lambda database: database.upsert(table=self.table, data=data, columns=columns))
 
 
     @staticmethod
@@ -321,30 +413,31 @@ class DatabaseMemory(MemoryBackend):
         return text
 
 
+    # The table is written into each statement the way a load already writes
+    # it -- quoted, and folded as this database folds an unquoted name -- so a
+    # table whose name needs quotes is read as well as written.
+
     def read(self) -> Dict[str, float]:
         """Skips rows whose last_run is still NULL: a watermark recorded
         before a run.
         """
 
-        with Database(connectionSettings=self.connectionSettings) as database:
-            rows = database.query('SELECT job, last_run FROM {}'.format(self.table))
+        rows = self._query('SELECT job, last_run FROM {}')
 
-            return {job: lastRun for job, lastRun in rows if lastRun is not None}
+        return {job: lastRun for job, lastRun in rows if lastRun is not None}
 
 
     def recordRun(self, job: str) -> None:
 
-        with Database(connectionSettings=self.connectionSettings) as database:
-            database.upsert(table=self.table, data=[(job, time.time())], columns=['job', 'last_run'])
+        self._upsert([(job, time.time())], ['job', 'last_run'])
 
 
     def readWatermarks(self) -> Dict[str, Any]:
 
-        with Database(connectionSettings=self.connectionSettings) as database:
-            rows = database.query('SELECT job, watermark_value, watermark_type FROM {}'.format(self.table))
+        rows = self._query('SELECT job, watermark_value, watermark_type FROM {}')
 
-            return {job: self._decodeWatermark(value, typeTag) for job, value, typeTag in rows
-                    if value is not None and typeTag != KEY_FINGERPRINT_TYPE}
+        return {job: self._decodeWatermark(value, typeTag) for job, value, typeTag in rows
+                if value is not None and typeTag != KEY_FINGERPRINT_TYPE}
 
 
     def readKeyFingerprints(self) -> Dict[str, str]:
@@ -353,22 +446,19 @@ class DatabaseMemory(MemoryBackend):
         and their NULL last_run out of read().
         """
 
-        with Database(connectionSettings=self.connectionSettings) as database:
-            rows = database.query("SELECT job, watermark_value FROM {} WHERE watermark_type = '{}'".format(self.table, KEY_FINGERPRINT_TYPE))
+        rows = self._query("SELECT job, watermark_value FROM {{}} WHERE watermark_type = '{}'".format(KEY_FINGERPRINT_TYPE))
 
-            return {job[:-len(KEY_FINGERPRINT_SUFFIX)]: value for job, value in rows if job.endswith(KEY_FINGERPRINT_SUFFIX) and value}
+        return {job[:-len(KEY_FINGERPRINT_SUFFIX)]: value for job, value in rows if job.endswith(KEY_FINGERPRINT_SUFFIX) and value}
 
 
     def recordKeyFingerprint(self, job: str, fingerprint: Optional[str]) -> None:
 
-        with Database(connectionSettings=self.connectionSettings) as database:
-            database.upsert(table=self.table, data=[(job + KEY_FINGERPRINT_SUFFIX, fingerprint, KEY_FINGERPRINT_TYPE)],
-                            columns=['job', 'watermark_value', 'watermark_type'])
+        self._upsert([(job + KEY_FINGERPRINT_SUFFIX, fingerprint, KEY_FINGERPRINT_TYPE)],
+                     ['job', 'watermark_value', 'watermark_type'])
 
 
     def recordWatermark(self, job: str, value: Any) -> None:
 
         text, typeTag = self._encodeWatermark(value)
 
-        with Database(connectionSettings=self.connectionSettings) as database:
-            database.upsert(table=self.table, data=[(job, text, typeTag)], columns=['job', 'watermark_value', 'watermark_type'])
+        self._upsert([(job, text, typeTag)], ['job', 'watermark_value', 'watermark_type'])

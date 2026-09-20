@@ -120,7 +120,11 @@ class Transform:
         self.columns = columns
         self.columnTransforms = columnTransforms
         self.data = data if data is not None else []
-        self._transformsByIndex = [(index, self.columnTransforms.get(column, [])) for index, column in enumerate(self.columns)]
+        # Only the columns that actually have a transformer: the rest would be
+        # walked for nothing, once per chunk. Each transformer reads and writes
+        # its own column alone, so leaving the others out changes no result.
+        self._transformsByIndex = [(index, self.columnTransforms[column]) for index, column in enumerate(self.columns)
+                                   if self.columnTransforms.get(column)]
 
 
     def validate(self) -> None:
@@ -138,6 +142,12 @@ class Transform:
         """Transforms one batch of rows. Assumes validate() has already run."""
 
         if not data:
+            return data
+
+        # Most jobs configure no transforms at all, and every chunk of every
+        # job passes through here: without this, each one was copied to lists
+        # and back to tuples to change nothing.
+        if not self._transformsByIndex:
             return data
 
         rows = [list(row) for row in data]

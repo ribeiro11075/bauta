@@ -332,3 +332,173 @@ def test_running_a_malformed_password_command_is_a_configuration_error():
     for command in ('  ', 'echo "x'):
         with pytest.raises(ConfigurationError, match='passwordCommand'):
             runPasswordCommand(command)
+
+
+MASKING_KEY = 'a-configuration-test-masking-key'
+
+
+def _jobsFile(job, **fileLevel):
+    settings = {'workers': 1, 'jobs': {'copyCustomers': job}}
+    settings.update(fileLevel)
+    return settings
+
+
+def test_a_misspelled_masking_block_is_rejected_rather_than_ignored():
+    """The reason unknown keys are forbidden: `maskng` was silently dropped, so
+    a job that looked masked copied every column as it stood.
+    """
+    raw = _jobsFile(_job(maskng={'key': MASKING_KEY, 'columns': {'id': 'keep', 'email': 'email'}}))
+
+    with pytest.raises(ConfigurationError) as error:
+        Configuration.validateJobConfiguration(raw, DataJobsFile)
+
+    assert 'maskng' in str(error.value)
+
+
+def test_a_misspelled_setting_is_rejected_at_every_level():
+    for raw in (_jobsFile(_job(chunksize=500)),
+                _jobsFile(_job(masking={'key': MASKING_KEY, 'columns': {'id': 'keep'}, 'defaultStrategyy': 'keep'})),
+                _jobsFile(_job(), workerss=1)):
+        with pytest.raises(ConfigurationError):
+            Configuration.validateJobConfiguration(raw, DataJobsFile)
+
+
+def test_a_misspelled_connection_setting_is_rejected():
+    with pytest.raises(ConfigurationError):
+        Configuration.validateDatabaseConfiguration({'db': {'type': 'sqlite', 'database': 'd.db', 'hostt': 'h'}})
+
+
+def test_top_level_anchor_keys_are_left_for_yaml_to_use():
+    """`x-` keys hold anchors the jobs merge from, as docker-compose uses them,
+    and must survive the rule that every other unknown key is an error.
+    """
+    raw = _jobsFile(_job(), **{'x-defaults': {'chunkSize': 500}})
+
+    assert Configuration.validateJobConfiguration(raw, DataJobsFile).workers == 1
+
+    databases = Configuration.validateDatabaseConfiguration(
+        {'x-shared': {'type': 'sqlite'}, 'db': {'type': 'sqlite', 'database': 'd.db'}})
+
+    assert set(databases) == {'db'}
+
+
+def test_defaults_supply_what_a_job_does_not_name():
+    raw = _jobsFile({'sourceQuery': 'select id, email from customers', 'targetTableFinal': 'customers',
+                     'masking': {'columns': {'id': 'keep', 'email': 'email'}}},
+                    defaults={'active': True, 'sourceDatabase': 'prod', 'targetDatabase': 'staging',
+                              'insertStrategy': 'upsert', 'chunkSize': 500, 'masking': {'key': MASKING_KEY}})
+
+    job = Configuration.validateJobConfiguration(raw, DataJobsFile).jobs['copyCustomers']
+
+    assert (job.sourceDatabase, job.targetDatabase, job.chunkSize) == ('prod', 'staging', 500)
+    assert job.masking is not None and job.masking.key.get_secret_value() == MASKING_KEY
+
+
+def test_a_job_keeps_its_own_value_over_a_default():
+    raw = _jobsFile(_job(chunkSize=10), defaults={'chunkSize': 500, 'sourceDatabase': 'elsewhere'})
+
+    job = Configuration.validateJobConfiguration(raw, DataJobsFile).jobs['copyCustomers']
+
+    assert job.chunkSize == 10 and job.sourceDatabase == 'a'
+
+
+def test_defaults_do_not_give_an_unmasked_job_a_masking_block():
+    """An unmasked job must stay visibly unmasked, rather than becoming a key
+    with no policy.
+    """
+    raw = _jobsFile(_job(), defaults={'masking': {'key': MASKING_KEY}})
+
+    assert Configuration.validateJobConfiguration(raw, DataJobsFile).jobs['copyCustomers'].masking is None
+
+
+def test_defaults_refuse_settings_that_belong_to_one_job():
+    for defaults in ({'sourceQuery': 'select 1'}, {'targetTableFinal': 'customers'},
+                     {'masking': {'columns': {'id': 'keep'}}}):
+        with pytest.raises(ConfigurationError):
+            Configuration.validateJobConfiguration(_jobsFile(_job(), defaults=defaults), DataJobsFile)
+
+
+def test_unmasked_cannot_be_declared_beside_a_masking_policy():
+    raw = _jobsFile(_job(unmasked=True, masking={'key': MASKING_KEY, 'columns': {'id': 'keep', 'email': 'email'}}))
+
+    with pytest.raises(ConfigurationError) as error:
+        Configuration.validateJobConfiguration(raw, DataJobsFile)
+
+    assert 'unmasked' in str(error.value)
+
+
+def _databases(**overrides):
+    settings = {'prod': {'type': 'sqlite', 'database': 'prod.db'}, 'staging': {'type': 'sqlite', 'database': 'staging.db'}}
+    for alias, extra in overrides.items():
+        settings[alias] = {**settings[alias], **extra}
+    return Configuration.validateDatabaseConfiguration(settings)
+
+
+def test_a_database_that_requires_masking_refuses_an_unmasked_job():
+    jobsFile = Configuration.validateJobConfiguration(_jobsFile(_job(sourceDatabase='prod', targetDatabase='staging')), DataJobsFile)
+
+    for requiring in ({'prod': {'requireMasking': True}}, {'staging': {'requireMasking': True}}):
+        with pytest.raises(ConfigurationError) as error:
+            Configuration.validateJobGraph(jobsFile.jobs, databases=_databases(**requiring))
+
+        assert 'requireMasking' in str(error.value)
+
+
+def test_requiring_masking_is_not_waived_by_a_job_declaring_itself_unmasked():
+    """`unmasked` records a decision about one job; requireMasking is the
+    database's, and nothing overrides it.
+    """
+    raw = _jobsFile(_job(sourceDatabase='prod', targetDatabase='staging', unmasked=True))
+    jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
+
+    with pytest.raises(ConfigurationError):
+        Configuration.validateJobGraph(jobsFile.jobs, databases=_databases(staging={'requireMasking': True}))
+
+
+def test_a_masked_job_satisfies_a_database_that_requires_masking():
+    raw = _jobsFile(_job(sourceDatabase='prod', targetDatabase='staging',
+                         masking={'key': MASKING_KEY, 'columns': {'id': 'keep'}}))
+    jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
+
+    Configuration.validateJobGraph(jobsFile.jobs, databases=_databases(staging={'requireMasking': True}))
+
+
+def test_a_job_needs_only_what_is_particular_to_it():
+    """active, chunkSize and workers have defaults, so a minimal file says only
+    what this job does that another wouldn't.
+    """
+    raw = {'jobs': {'copyCustomers': {'sourceDatabase': 'prod', 'sourceQuery': 'select id from customers',
+                                      'targetDatabase': 'staging', 'targetTableFinal': 'customers',
+                                      'insertStrategy': 'upsert'}}}
+
+    jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
+    job = jobsFile.jobs['copyCustomers']
+
+    assert jobsFile.workers == 1
+    assert job.active is True and job.chunkSize == 5000
+
+
+def test_insert_strategy_stays_required():
+    """The one job setting where a wrong value gives wrong data rather than an
+    error: upsert never removes rows deleted in production, swap replaces the
+    table wholesale. It has to be chosen, not defaulted.
+    """
+    raw = {'jobs': {'copyCustomers': {'sourceDatabase': 'prod', 'sourceQuery': 'select id from customers',
+                                      'targetDatabase': 'staging', 'targetTableFinal': 'customers'}}}
+
+    with pytest.raises(ConfigurationError) as error:
+        Configuration.validateJobConfiguration(raw, DataJobsFile)
+
+    assert 'insertStrategy' in str(error.value)
+
+
+def test_a_connection_describes_what_it_points_at_without_the_password():
+    sqlite, postgres = Configuration.validateDatabaseConfiguration({
+        'lite': {'type': 'sqlite', 'database': 'copy.db'},
+        'warehouse': {'type': 'postgresql', 'database': 'analytics', 'host': 'db.example', 'port': 5432,
+                      'user': 'etl', 'password': 'hunter2'},
+        }).values()
+
+    assert sqlite.describeTarget().startswith('sqlite file /') and sqlite.describeTarget().endswith('copy.db')
+    assert postgres.describeTarget() == 'postgresql analytics on db.example:5432'
+    assert 'hunter2' not in postgres.describeTarget()

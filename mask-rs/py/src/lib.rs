@@ -25,7 +25,7 @@ use rayon::prelude::*;
 use num_bigint::BigInt;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods, PyList, PyListMethods, PyString};
+use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods, PyList, PyListMethods, PyString, PyTuple, PyTupleMethods};
 
 use bauta_core::cheap;
 use bauta_core::{Charset, FakeKind, FakeLists, FakeStrategy, FpeStrategy, KeyStrategy, KeyedHash, MaskError};
@@ -175,6 +175,24 @@ impl CacheKey {
     }
 }
 
+/// One Python value as Rust knows it, owned so the GIL can be dropped after.
+fn convert(value: &Bound<'_, PyAny>) -> PyResult<Input> {
+    Ok(if value.is_none() {
+        Input::Null
+    } else if value.is_instance_of::<pyo3::types::PyBool>() {
+        Input::Bool
+    } else if value.is_instance_of::<PyString>() {
+        Input::Text(value.extract::<String>()?)
+    } else if value.is_instance_of::<pyo3::types::PyInt>() {
+        match value.extract::<BigInt>() {
+            Ok(number) => Input::Int(number),
+            Err(_) => Input::Other,
+        }
+    } else {
+        Input::Other
+    })
+}
+
 /// Where a position's answer comes from.
 enum Source {
     Ready(Output),
@@ -277,24 +295,27 @@ impl Masker {
     /// to a REFUSED message; every other position of `masked` is the answer.
     /// The caller walks `problems` in position order, so a refusal Python would
     /// have raised first still raises first.
-    fn maskColumn<'py>(&self, py: Python<'py>, values: &Bound<'py, PyList>) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyDict>)> {
-        // Convert with the GIL held.
-        let mut inputs = Vec::with_capacity(values.len());
-        for value in values.iter() {
-            inputs.push(if value.is_none() {
-                Input::Null
-            } else if value.is_instance_of::<pyo3::types::PyBool>() {
-                Input::Bool
-            } else if value.is_instance_of::<PyString>() {
-                Input::Text(value.extract::<String>()?)
-            } else if value.is_instance_of::<pyo3::types::PyInt>() {
-                match value.extract::<BigInt>() {
-                    Ok(number) => Input::Int(number),
-                    Err(_) => Input::Other,
-                }
-            } else {
-                Input::Other
-            });
+    ///
+    /// `values` is any sequence, so the caller hands over the column it already
+    /// has -- a list or a tuple -- rather than copying it into a list first.
+    fn maskColumn<'py>(&self, py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyDict>)> {
+        // Convert with the GIL held. A list and a tuple are walked by their own
+        // iterators, which is markedly faster than the general protocol: a
+        // column arrives as one or the other, and going through try_iter for a
+        // tuple cost more than handing the column over uncopied saved.
+        let mut inputs = Vec::with_capacity(values.len().unwrap_or(0));
+        if let Ok(list) = values.cast::<PyList>() {
+            for value in list.iter() {
+                inputs.push(convert(&value)?);
+            }
+        } else if let Ok(tuple) = values.cast::<PyTuple>() {
+            for value in tuple.iter() {
+                inputs.push(convert(&value)?);
+            }
+        } else {
+            for value in values.try_iter()? {
+                inputs.push(convert(&value?)?);
+            }
         }
 
         // Compute without it: each distinct value once, from the cache where it

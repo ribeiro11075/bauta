@@ -15,6 +15,10 @@
 #
 # A literal value still works, which is convenient for local development and
 # for sqlite (which has no credentials at all). Don't do it for anything real.
+#
+# For Oracle, replace `database` with `serviceName` (or `sid`). Any field this
+# file doesn't recognise is an error, so a misspelling stops `bauta validate`
+# rather than being ignored.
 sourceDb:
   type: mysql
   user: ${SOURCE_DB_USER:-etl}
@@ -22,8 +26,6 @@ sourceDb:
   database: exampleSourceDatabase
   host: ${SOURCE_DB_HOST:-source.example.com}
   port: ${SOURCE_DB_PORT:-3306}
-  serviceName:
-  sid:
 targetDb:
   type: postgresql
   user: ${TARGET_DB_USER:-etl}
@@ -31,5 +33,6 @@ targetDb:
   database: exampleTargetDatabase
   host: ${TARGET_DB_HOST:-target.example.com}
   port: ${TARGET_DB_PORT:-5432}
-  serviceName:
-  sid:
+  # Nothing may be written here without a masking policy. Uncomment once every
+  # job that loads into it masks: it is the line a reviewer signs.
+  # requireMasking: true

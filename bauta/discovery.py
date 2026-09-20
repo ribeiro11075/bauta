@@ -244,19 +244,26 @@ def _compatible(strategy: str, values: Sequence[Any], category: Optional[ColumnC
 
 
 def suggestColumn(table: str, column: str, category: Optional[ColumnCategory], values: Sequence[Any],
-                  keyReference: Optional[Tuple[str, bool]] = None, rules: DiscoveryRules = BUILTIN_RULES) -> Suggestion:
+                  keyReference: Optional[Tuple[str, bool]] = None, rules: DiscoveryRules = BUILTIN_RULES,
+                  maskKeys: bool = False) -> Suggestion:
     """One column's proposed policy.
 
     `keyReference`, for a key column, is the domain it shares with the other
     end and whether that end is numeric. Keys are decided first, since both
     ends must agree: `keep` for a numeric surrogate, `key` for text. Then the
     name rules, then the value rules, each in `rules`' order.
+
+    `maskKeys` masks numeric surrogate keys too, in the domain both ends share,
+    so a copy whose ids must not be production's needs no hand-editing. Both
+    ends move together, so the references still match.
     """
 
     if keyReference is not None:
         domain, numeric = keyReference
-        if numeric:
+        if numeric and not maskKeys:
             return Suggestion(column, {'strategy': 'keep'}, 'numeric key (domain {}); use key if the ids themselves are meaningful'.format(domain))
+        if numeric:
+            return Suggestion(column, {'strategy': 'key', 'domain': domain}, 'numeric key; masked one-to-one so references still match')
         return Suggestion(column, {'strategy': 'key', 'domain': domain}, 'text key; masked one-to-one so references still match')
 
     words = nameWords(column)
@@ -311,12 +318,14 @@ def keyReferences(table: str, columns: Sequence[str], primaryKey: Sequence[str],
 
 
 def proposeTable(database: Any, table: str, sampleSize: int = DEFAULT_SAMPLE_SIZE, foreignKeys: Optional[List[ForeignKey]] = None,
-                 primaryKeys: Optional[Mapping[str, Sequence[str]]] = None, rules: DiscoveryRules = BUILTIN_RULES) -> TableProposal:
+                 rules: DiscoveryRules = BUILTIN_RULES, maskKeys: bool = False) -> TableProposal:
     """Samples `table` and suggests a policy for each of its columns.
 
-    `database` is a bauta Database. foreignKeys and primaryKeys can be
-    passed in when proposing several tables, so the schema is read once.
-    `rules` is discoveryRules(), with a discovery.yaml's rules or without.
+    `database` is a bauta Database. `foreignKeys` can be passed in when
+    proposing several tables, so the schema is read once; the primary keys they
+    reference are read through the database's own cache. `rules` is
+    discoveryRules(), with a discovery.yaml's rules or without. `maskKeys`
+    masks numeric surrogate keys as well as text ones.
     """
 
     columns, rows = database.sample('SELECT * FROM {}'.format(database.statementName(table)), sampleSize)
@@ -329,8 +338,7 @@ def proposeTable(database: Any, table: str, sampleSize: int = DEFAULT_SAMPLE_SIZ
         except NotImplementedError:
             foreignKeys = []
 
-    knownPrimaryKeys = dict(primaryKeys or {})
-    knownPrimaryKeys.setdefault(table.upper(), primaryKey)
+    knownPrimaryKeys = {table.upper(): primaryKey}
     for foreignKey in foreignKeys:
         referenced = foreignKey.referencedTable.upper()
         if foreignKey.table.upper() == table.upper() and referenced not in knownPrimaryKeys:
@@ -343,7 +351,7 @@ def proposeTable(database: Any, table: str, sampleSize: int = DEFAULT_SAMPLE_SIZ
         values = [row[index] for row in rows]
         category = database.dialect.columnCategory(types[index]) if index < len(types) else None
         keyReference = (domains[column], _isNumeric(values, category)) if column in domains else None
-        suggestions.append(suggestColumn(table, column, category, values, keyReference, rules))
+        suggestions.append(suggestColumn(table, column, category, values, keyReference, rules, maskKeys))
 
     return TableProposal(table=table, columns=suggestions)
 

@@ -350,6 +350,11 @@ class Strategy:
     REQUIRED: ClassVar[Tuple[str, ...]] = ()
     # Whether the strategy uses the key at all; the manifest records it.
     KEYED: ClassVar[bool] = True
+    # Whether the strategy returns the column exactly as it was given, so a
+    # plan can carry those values through rather than reading and rewriting
+    # them. Declared here rather than by naming a built-in strategy from this
+    # module, which would make the core depend on builtinMasking.
+    PASSTHROUGH: ClassVar[bool] = False
     # Whether mask() depends only on the value, key and options, so results
     # can be remembered.
     CACHEABLE: ClassVar[bool] = False
@@ -433,9 +438,12 @@ class Strategy:
         """The column through the extension, with Python finishing the values it
         doesn't cover. Resolved in order, so the first bad value raises whichever
         implementation ran.
+
+        `values` is handed over as it is: the extension takes any sequence, so
+        a column that is already a list or a tuple is not copied first.
         """
 
-        masked, problems = self._native.maskColumn(list(values))
+        masked, problems = self._native.maskColumn(values)
 
         for index in sorted(problems):
             problem = problems[index]
@@ -617,14 +625,29 @@ class BoundMasking:
             self.manifest.append(ColumnMasking(column=column, strategy=policy['strategy'], domain=domain if strategyType.KEYED else None, source=source))
 
         self._chunkIndex = 0
-        from .builtinMasking import KeepStrategy
+        # The columns that actually have to be read and rewritten. A policy
+        # usually keeps far more columns than it masks, and carrying those
+        # through costs nothing.
+        self._maskedIndexes = [index for index, strategy in enumerate(self.strategies) if not strategy.PASSTHROUGH]
+        self._passthrough = not self._maskedIndexes
+        self._everyColumnMasked = len(self._maskedIndexes) == len(self.strategies)
 
-        self._passthrough = all(isinstance(strategy, KeepStrategy) for strategy in self.strategies)
+
+    def _maskColumn(self, index: int, values: Sequence[Any], chunkIndex: int) -> List[Any]:
+        """One column, with a failure named after the column it came from."""
+
+        try:
+            return self.strategies[index].maskColumn(values, chunkIndex)
+        except MaskingError as error:
+            raise MaskingError('column "{}": {}'.format(self.manifest[index].column, error)) from None
 
 
     def apply(self, rows: Sequence[Tuple[Any, ...]], chunkIndex: Optional[int] = None) -> List[Tuple[Any, ...]]:
         """`chunkIndex` is the chunk's position in the source, which `shuffle`
         keys on. Left out, it counts calls.
+
+        Columns are masked in read order, whichever path below runs, since
+        `shuffle` keys on the chunk's position rather than on anything here.
         """
 
         if chunkIndex is None:
@@ -634,14 +657,26 @@ class BoundMasking:
         if not rows or self._passthrough:
             return list(rows)
 
-        maskedColumns = []
-        for index, (strategy, entry) in enumerate(zip(self.strategies, self.manifest)):
-            try:
-                maskedColumns.append(strategy.maskColumn([row[index] for row in rows], chunkIndex))
-            except MaskingError as error:
-                raise MaskingError('column "{}": {}'.format(entry.column, error)) from None
+        if len(rows[0]) != len(self.strategies):
+            raise MaskingError('the policy covers {} column(s) and these rows have {}; a bound plan is applied to the rows of the '
+                               'query it was bound to'.format(len(self.strategies), len(rows[0])))
 
-        return list(zip(*maskedColumns))
+        if self._everyColumnMasked:
+            # Transposed in C rather than by a pass over every row per column,
+            # and a column at a time: holding all of them at once cost more in
+            # cache misses than the cheaper transpose saved.
+            return list(zip(*[self._maskColumn(index, column, chunkIndex) for index, column in enumerate(zip(*rows))]))
+
+        masked = [self._maskColumn(index, [row[index] for row in rows], chunkIndex) for index in self._maskedIndexes]
+
+        spliced = []
+        for position, row in enumerate(rows):
+            values = list(row)
+            for column, index in enumerate(self._maskedIndexes):
+                values[index] = masked[column][position]
+            spliced.append(tuple(values))
+
+        return spliced
 
 
 def buildMaskingManifest(outcomes: Sequence[Any], declared: Mapping[str, Mapping[str, Any]],

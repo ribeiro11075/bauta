@@ -535,3 +535,99 @@ def test_a_name_being_created_is_folded_and_a_name_read_from_a_catalog_is_not(da
 def test_a_suffix_goes_inside_the_quotes_of_a_quoted_name(databaseType, table, expected):
     """`[group]_tmp` is not a name sp_rename can parse, so the swap failed."""
     assert suffixedName(databaseType, table, '_tmp') == expected
+
+
+# COPY's text format: the fast dispatch and the chain behind it ------------------
+
+def _copyValues():
+    import datetime
+    import decimal
+    import uuid
+
+    return [
+        None, True, False, 0, 1, -42, 2 ** 70,
+        decimal.Decimal('0'), decimal.Decimal('-1.2500'), decimal.Decimal('1E-10'),
+        0.0, -0.0, 1.5, float('nan'), float('inf'), float('-inf'),
+        '', 'plain', 'tab\there', 'newline\nhere', 'carriage\rhere', 'back\\slash', 'unicode é中',
+        datetime.date(2026, 1, 2), datetime.datetime(2026, 1, 2, 3, 4, 5, 123456),
+        datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc), datetime.time(3, 4, 5),
+        uuid.UUID('12345678-1234-5678-1234-567812345678'),
+        b'', b'\x00\xffbytes', bytearray(b'\x01\x02'), memoryview(b'\x03\x04'),
+        ]
+
+
+def test_the_copy_dispatch_agrees_with_the_chain_for_every_type_it_handles():
+    """The dispatch is an index into the same answers, never a second opinion."""
+    from bauta.databaseDialects import _copyField, _copyFieldUnusual
+
+    for value in _copyValues():
+        assert _copyField(value) == _copyFieldUnusual(value), repr(value)
+
+
+def test_a_subclass_falls_through_to_the_chain_and_is_spelled_as_it_was():
+    """The dispatch is keyed on the exact type, so a subclass is not in it and
+    takes the chain -- which decides it by isinstance, as it always did.
+    """
+    import datetime
+    import decimal
+
+    from bauta.databaseDialects import _copyField, _copyFieldUnusual
+
+    class Text(str):
+        pass
+
+    class Number(int):
+        pass
+
+    class Moment(datetime.datetime):
+        pass
+
+    class Amount(decimal.Decimal):
+        pass
+
+    values = [Text('tab\there'), Number(-42), Moment(2026, 1, 2, 3, 4, 5), Amount('1.25')]
+
+    for value in values:
+        assert type(value) not in _copyDispatchTypes()
+        assert _copyField(value) == _copyFieldUnusual(value)
+
+    assert _copyField(Text('tab\there')) == 'tab\\there'
+    assert _copyField(Number(-42)) == '-42'
+    assert _copyField(Moment(2026, 1, 2, 3, 4, 5)) == '2026-01-02 03:04:05'
+    assert _copyField(Amount('1.25')) == '1.25'
+
+
+def _copyDispatchTypes():
+    from bauta.databaseDialects import _COPY_FIELDS
+
+    return set(_COPY_FIELDS)
+
+
+def test_bool_is_never_taken_for_an_int():
+    """PostgreSQL wants t/f, and bool is a subclass of int -- which the chain
+    orders around and the dispatch cannot confuse, since type(True) is bool.
+    """
+    from bauta.databaseDialects import _copyField
+
+    assert _copyField(True) == 't'
+    assert _copyField(False) == 'f'
+    assert _copyField(1) == '1'
+    assert _copyField(0) == '0'
+
+
+def test_a_value_copy_cannot_spell_still_sends_the_chunk_the_other_way():
+    import datetime
+
+    from bauta.databaseDialects import _copyText
+
+    for value in ([1, 2], {'a': 1}, datetime.timedelta(hours=1), object()):
+        assert _copyText([(value,)]) is None
+
+
+def test_copy_text_round_trips_a_whole_chunk_the_same_as_the_chain():
+    from bauta.databaseDialects import _copyFieldUnusual, _copyText
+
+    rows = [tuple(_copyValues())]
+    expected = '\t'.join(_copyFieldUnusual(value) for value in rows[0]) + '\n'
+
+    assert _copyText(rows) == expected
