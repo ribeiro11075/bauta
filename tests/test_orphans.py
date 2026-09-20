@@ -1,146 +1,96 @@
-"""A run whose process is killed outright takes its jobs with it.
+"""A job process ends when the run that started it does.
 
 SIGKILL runs none of the parent's cleanup, so its job processes used to be
 orphaned and keep loading rows and writing run state -- while the run lock,
 held by the dead parent, was already free, so the next `bauta run` started
 alongside the orphan and the two loaded over each other.
 
-POSIX only: the test kills a process and reads the process table.
+What a parent's death looks like to a job is the end of a pipe only the parent
+holds, so that is what this tests: no signals, no reading the process table,
+and the same result on every platform.
 """
-import os
-import signal
-import sqlite3
-import subprocess
-import sys
+import logging
 import time
-from pathlib import Path
 
-import pytest
+from bauta.runner import EXIT_ORPHANED, PROCESS_CONTEXT, _initializeWorker
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
-pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='kills a process and reads the process table')
-
-# Long enough that the job is still streaming when the parent is killed, and
-# short enough that a test that fails to kill it doesn't hang for long.
-ROWS = 3000000
-
-# How long the job process may take to notice. It exits within milliseconds of
-# the parent's death; before it watched for that, it ran on until the next log
-# record it tried to send, which took seconds and thousands more rows.
-ORPHAN_SECONDS = 3.0
-
-DATABASES = """source:
-  type: sqlite
-  database: source.db
-copy:
-  type: sqlite
-  database: copy.db
-"""
-
-JOBS = """workers: 1
-jobs:
-  slow:
-    active: true
-    sourceDatabase: source
-    sourceQuery: |-
-      WITH RECURSIVE counter(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM counter WHERE x < {rows})
-      SELECT x, 'row ' || x FROM counter
-    targetDatabase: copy
-    targetTableFinal: rows_loaded
-    insertStrategy: upsert
-    chunkSize: 200
-""".format(rows=ROWS)
+# The watchdog exits as soon as the pipe reports end-of-file, which is
+# immediate; these seconds are for a loaded machine, not for the mechanism.
+EXIT_SECONDS = 10.0
+START_SECONDS = 60.0
 
 
-def _jobProcesses(parent):
-    """The pids of `parent`'s job processes, from the process table.
+def waitForever(logEnd, parentAlive, ready):
+    """A job process, reduced to what every one of them does: start the way a
+    job starts, then get on with work that would not end on its own.
 
-    Named by what a spawned process runs, so multiprocessing's own resource
-    tracker -- also a child, and not one that writes anything -- is left out.
+    Through _initializeWorker rather than the watchdog directly, so that a job
+    that stopped watching for its parent fails this. At module level because a
+    spawned process must be able to import it.
     """
 
-    listing = subprocess.run(['ps', '-ax', '-o', 'pid=,ppid=,command='], capture_output=True, text=True, timeout=30).stdout
-    processes = (line.split(maxsplit=2) for line in listing.splitlines() if len(line.split()) > 2)
+    _initializeWorker(logEnd, parentAlive, logging.INFO)
+    ready.send('started')
 
-    return [int(pid) for pid, parentPid, command in processes if int(parentPid) == parent and 'spawn_main' in command]
+    while True:
+        time.sleep(0.05)
 
 
-def _rowsLoaded(workspace):
+def _started():
+    """A job process running waitForever, with the pipes its run holds."""
 
-    connection = sqlite3.connect(str(workspace / 'copy.db'))
+    childEnd, parentEnd = PROCESS_CONTEXT.Pipe(duplex=False)
+    readyEnd, sendReady = PROCESS_CONTEXT.Pipe(duplex=False)
+    # The log pipe a worker forwards its records over; nothing reads it here.
+    logEnd, sendLog = PROCESS_CONTEXT.Pipe(duplex=False)
+    process = PROCESS_CONTEXT.Process(target=waitForever, args=(sendLog, childEnd, sendReady), daemon=True)
+    process.start()
+    # Only the child holds these now, as in _JobProcess.
+    childEnd.close()
+    sendReady.close()
+    sendLog.close()
+
+    assert readyEnd.poll(START_SECONDS), 'the job process never started'
+    assert readyEnd.recv() == 'started'
+
+    return process, parentEnd, logEnd
+
+
+def _ended(process, parentEnd, logEnd):
+
+    parentEnd.close()
+    logEnd.close()
+    process.join(EXIT_SECONDS)
+    if process.is_alive():
+        process.kill()
+        process.join()
+
+
+def test_a_job_process_exits_when_the_pipe_to_its_run_closes():
+    process, parentEnd, logEnd = _started()
+
     try:
-        return connection.execute('SELECT count(*) FROM rows_loaded').fetchone()[0]
+        assert process.is_alive()
+
+        # What the death of the run does to the pipe, without killing pytest.
+        parentEnd.close()
+        process.join(EXIT_SECONDS)
+
+        assert not process.is_alive(), 'the job process outlived the run that started it'
+        assert process.exitcode == EXIT_ORPHANED
     finally:
-        connection.close()
+        _ended(process, parentEnd, logEnd)
 
 
-def _running(pid):
-
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-
-    return True
-
-
-def _waitFor(condition, seconds, message):
-
-    deadline = time.time() + seconds
-    while time.time() < deadline:
-        result = condition()
-        if result:
-            return result
-        time.sleep(0.1)
-
-    pytest.fail(message)
-
-
-@pytest.fixture
-def workspace(tmp_path):
-    (tmp_path / 'database.yaml').write_text(DATABASES)
-    (tmp_path / 'jobs.yaml').write_text(JOBS)
-    for name in ('source.db', 'copy.db'):
-        connection = sqlite3.connect(str(tmp_path / name))
-        connection.execute('CREATE TABLE rows_loaded (id INT PRIMARY KEY, label TEXT)')
-        connection.commit()
-        connection.close()
-
-    return tmp_path
-
-
-def test_killing_a_run_outright_stops_the_job_it_started(workspace):
-    environment = dict(os.environ, PYTHONPATH=str(REPO_ROOT))
-    run = subprocess.Popen([sys.executable, '-c', 'from bauta.cli import main; main()',
-                            'run', '--quiet', '--force', '--databases', 'database.yaml', '--jobs', 'jobs.yaml'],
-                           cwd=str(workspace), env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def test_a_job_process_keeps_working_while_its_run_holds_the_pipe():
+    """The watchdog waits for end-of-file, not for a message, so nothing the
+    run does or fails to send may end a job early.
+    """
+    process, parentEnd, logEnd = _started()
 
     try:
-        (worker,) = _waitFor(lambda: _jobProcesses(run.pid), 60, 'the run never started a job process')
-        # Killed mid-load, which is the case that mattered: an orphan kept
-        # writing rows for as long as its query lasted.
-        loaded = _waitFor(lambda: _rowsLoaded(workspace), 60, 'the job loaded no rows before it was killed')
+        process.join(1.0)
 
-        os.kill(run.pid, signal.SIGKILL)
-        run.wait(timeout=30)
-
-        # Promptly, not eventually: an orphan does die at the next log record
-        # it fails to send, but it can load a great many rows before then, and
-        # the run lock it held is already free for the next run to take.
-        _waitFor(lambda: not _running(worker), ORPHAN_SECONDS,
-                 'the job process was still running {}s after the run that started it was killed'.format(ORPHAN_SECONDS))
-        stopped = _rowsLoaded(workspace)
-        time.sleep(1.0)
-
-        assert loaded > 0
-        assert _rowsLoaded(workspace) == stopped, 'rows were still being written after the run was killed'
+        assert process.is_alive()
     finally:
-        for pid in [run.pid] + _jobProcesses(run.pid):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        run.wait(timeout=30)
+        _ended(process, parentEnd, logEnd)
