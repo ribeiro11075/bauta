@@ -123,6 +123,7 @@ def _customersAndOrders(customerId, orderCustomerId, orderKey=KEY, orderTarget='
     return {
         'maskCustomers': _masked({'id': customerId, 'email': 'email'}, sourceQuery='select id, email from customers'),
         'maskOrders': _job(sourceQuery='select id, customer_id from orders', targetTableFinal='orders', targetDatabase=orderTarget,
+                           predecessors=['maskCustomers'],
                            masking={'key': orderKey, 'columns': {'id': 'keep', 'customer_id': orderCustomerId}}),
         }
 
@@ -250,3 +251,249 @@ def test_a_job_whose_columns_do_not_line_up_is_not_guessed_at():
     report = _connected(_customersAndOrders('key', 'key'), targetColumns={'maskCustomers': ['id', 'email'], 'maskOrders': ['customer_id']})
 
     assert _messages(report, 'warning') == []
+
+
+def _copies(customersQuery, ordersQuery='select * from orders', **customers: Any):
+    return {
+        'loadCustomers': _job(sourceQuery=customersQuery, **customers),
+        'loadOrders': _job(sourceQuery=ordersQuery, targetTableFinal='orders'),
+        }
+
+
+def _coverage(jobs):
+    report = auditJobs(jobs, foreignKeys={'staging': [_foreignKey()]})
+    return [(job, message) for job, message in _messages(report, 'warning') if 'copies only in part' in message]
+
+
+def test_a_child_copied_whole_under_an_incremental_parent_is_flagged():
+    jobs = _copies('select * from customers where updated_at > {{ watermark }}', watermarkColumn='updated_at', watermarkInitial='2026-01-01')
+
+    assert _coverage(jobs) == [(
+        'loadOrders',
+        'in staging, orders.customer_id references customers, which loadCustomers copies only in part (incremental on updated_at), '
+        'but loadOrders is not limited to the rows it copies, so the copy can reference rows it lacks. Limit loadOrders to rows whose '
+        'customers loadCustomers copies, have loadCustomers also select what loadOrders references, or copy customers whole')]
+
+
+def test_a_filtered_parent_is_flagged_too():
+    (message,) = [message for _, message in _coverage(_copies("select * from customers WHERE region = 'eu'"))]
+
+    assert '(its sourceQuery has a WHERE)' in message
+
+
+def test_a_child_limited_by_its_parent_is_not_flagged():
+    jobs = _copies("select * from customers where region = 'eu'",
+                   ordersQuery="select * from orders o where exists (select 1 from app.\"CUSTOMERS\" c where c.id = o.customer_id "
+                               "and c.region = 'eu')")
+
+    assert _coverage(jobs) == []
+
+
+def test_a_parent_that_also_selects_what_its_children_reference_is_not_flagged():
+    jobs = _copies('select * from customers c where c.updated_at > {{ watermark }} or exists '
+                   '(select 1 from orders o where o.customer_id = c.id and o.updated_at > {{ watermark }})',
+                   watermarkColumn='updated_at', watermarkInitial='2026-01-01')
+
+    assert _coverage(jobs) == []
+
+
+def test_a_parent_copied_whole_is_not_flagged():
+    assert _coverage(_copies('select * from customers', ordersQuery="select * from orders where status = 'open'")) == []
+
+
+def test_a_similar_table_name_does_not_count_as_a_mention():
+    jobs = _copies("select * from customers where region = 'eu'", ordersQuery='select * from orders join customers_archive a on 1 = 1')
+
+    assert len(_coverage(jobs)) == 1
+
+
+def test_a_table_referencing_itself_is_left_to_subset():
+    from bauta.databaseDialects import ForeignKey
+
+    jobs = {'loadEmployees': _job(sourceQuery="select * from employees where site = 'x'", targetTableFinal='employees')}
+    report = auditJobs(jobs, foreignKeys={'staging': [ForeignKey('employees', ('manager_id',), 'employees', ('id',), 'fk_manager')]})
+
+    assert report['findings'] == []
+
+
+def test_coverage_needs_foreign_keys():
+    jobs = _copies('select * from customers where updated_at > {{ watermark }}', watermarkColumn='updated_at', watermarkInitial='2026-01-01')
+
+    assert auditJobs(jobs)['findings'] == []
+
+
+def _ordered(orders: Any = None, **customers: Any):
+    return {
+        'loadCustomers': _job(**customers),
+        'loadOrders': _job(sourceQuery='select * from orders', targetTableFinal='orders', **(orders or {})),
+        }
+
+
+def _ordering(jobs):
+    report = auditJobs(jobs, foreignKeys={'staging': [_foreignKey()]})
+    return [(job, message) for job, message in _messages(report, 'warning') if 'loaded yet' in message or 'inactive' in message]
+
+
+def test_a_child_that_does_not_wait_for_its_parent_is_flagged():
+    assert _ordering(_ordered()) == [(
+        'loadOrders',
+        'in staging, orders.customer_id references customers, but loadOrders does not wait for loadCustomers, directly or through its '
+        'other predecessors, so it can load rows whose customers are not loaded yet. Add loadCustomers to its predecessors')]
+
+
+def test_a_child_that_waits_for_its_parent_is_not_flagged():
+    assert _ordering(_ordered({'predecessors': ['loadCustomers']})) == []
+
+
+def test_waiting_through_another_job_counts():
+    jobs = _ordered({'predecessors': ['loadRegions']})
+    jobs['loadRegions'] = _job(sourceQuery='select * from regions', targetTableFinal='regions', predecessors=['loadCustomers'])
+
+    assert _ordering(jobs) == []
+
+
+def test_waiting_through_an_inactive_job_does_not_count():
+    jobs = _ordered({'predecessors': ['loadRegions']})
+    jobs['loadRegions'] = _job(sourceQuery='select * from regions', targetTableFinal='regions', predecessors=['loadCustomers'], active=False)
+
+    (message,) = [message for _, message in _ordering(jobs)]
+    assert 'loadOrders does not wait for loadCustomers' in message
+
+
+def test_a_parent_with_a_longer_refresh_is_flagged():
+    (message,) = [message for _, message in _ordering(_ordered({'predecessors': ['loadCustomers'], 'refresh': 5}, refresh=60))]
+
+    assert message == ("in staging, orders.customer_id references customers, and loadOrders waits for loadCustomers only in cycles that "
+                       "loadCustomers run in, since their refresh is longer than loadOrders's, so in the others it can load rows whose "
+                       "customers are not loaded yet. Give them the same refresh")
+
+
+def test_a_longer_refresh_between_them_is_named():
+    jobs = _ordered({'predecessors': ['loadRegions']})
+    jobs['loadRegions'] = _job(sourceQuery='select * from regions', targetTableFinal='regions', predecessors=['loadCustomers'], refresh=60)
+
+    (message,) = [message for _, message in _ordering(jobs)]
+    assert 'only in cycles that loadRegions run in' in message
+
+
+def test_a_parent_with_the_same_or_a_shorter_refresh_is_not_flagged():
+    assert _ordering(_ordered({'predecessors': ['loadCustomers'], 'refresh': 60}, refresh=60)) == []
+    assert _ordering(_ordered({'predecessors': ['loadCustomers'], 'refresh': 60}, refresh=5)) == []
+
+
+def test_an_inactive_parent_is_flagged():
+    (message,) = [message for _, message in _ordering(_ordered({'predecessors': ['loadCustomers']}, active=False))]
+
+    assert message == ('in staging, orders.customer_id references customers, but loadCustomers, which loads it, is inactive, '
+                       'so loadOrders loads rows whose customers are not loaded')
+
+
+def test_an_inactive_child_is_not_flagged():
+    assert _ordering(_ordered({'active': False})) == []
+
+
+def test_a_predecessor_outside_the_audited_jobs_is_not_guessed_at():
+    assert _ordering(_ordered({'predecessors': ['loadRegions']})) == []
+
+
+def _swapped(**customers: Any):
+    fields = dict(insertStrategy='swap', targetTableStage='customers_stage')
+    fields.update(customers)
+    return {
+        'loadCustomers': _job(**fields),
+        'loadOrders': _job(sourceQuery='select * from orders', targetTableFinal='orders', predecessors=['loadCustomers']),
+        }
+
+
+def _swaps(jobs, foreignKey=None):
+    report = auditJobs(jobs, declaredForeignKeys={'staging': [foreignKey or _foreignKey()]})
+    return _messages(report, 'error')
+
+
+def test_a_referenced_table_loaded_by_swap_is_an_error():
+    assert _swaps(_swapped()) == [(
+        'loadCustomers',
+        'in staging, orders.customer_id references customers, which loadCustomers replaces by swap. The key stays on the table it was '
+        'declared on, which the swap renames to customers_stage, so it stops checking customers, and the next run cannot empty '
+        'customers_stage. Recreate the key on customers in postTargetAdhocQueries, or load customers with upsert and a stage table')]
+
+
+def test_a_key_an_earlier_swap_left_on_the_stage_is_an_error():
+    from bauta.databaseDialects import ForeignKey
+
+    (message,) = [message for _, message in _swaps(_swapped(), ForeignKey('orders', ('customer_id',), 'customers_stage', ('id',), 'fk'))]
+
+    assert message.startswith('in staging, orders.customer_id references customers_stage, the stage table of loadCustomers, as an '
+                              'earlier swap leaves it, so it does not check customers, and the next run cannot empty customers_stage')
+
+
+def test_keys_recreated_after_the_swap_are_not_flagged():
+    jobs = _swapped(postTargetAdhocQueries=['alter table orders drop constraint fk_orders_customers',
+                                            'alter table orders add constraint fk_orders_customers foreign key (customer_id) '
+                                            'references customers (id)'])
+
+    assert _swaps(jobs) == []
+
+
+def test_a_referenced_table_loaded_by_upsert_is_not_flagged():
+    assert _swaps(_swapped(insertStrategy='upsert')) == []
+    assert _swaps(_swapped(insertStrategy='upsert', targetTableStage=None)) == []
+
+
+def test_a_swapped_table_referencing_itself_is_not_flagged():
+    from bauta.databaseDialects import ForeignKey
+
+    assert _swaps(_swapped(), ForeignKey('customers', ('referrer_id',), 'customers', ('id',), 'fk')) == []
+
+
+def test_keys_only_the_source_declares_do_not_count_for_a_swap():
+    report = auditJobs(_swapped(), foreignKeys={'staging': [_foreignKey()]})
+
+    assert _messages(report, 'error') == []
+
+
+def test_a_swapped_table_that_declares_keys_is_warned_about():
+    from bauta.databaseDialects import ForeignKey
+
+    jobs = {'loadOrders': _job(sourceQuery='select * from orders', targetTableFinal='orders', insertStrategy='swap',
+                               targetTableStage='orders_stage')}
+    report = auditJobs(jobs, declaredForeignKeys={'staging': [_foreignKey()]})
+
+    assert _messages(report, 'warning') == [(
+        'loadOrders',
+        'in staging, orders declares foreign key(s) customer_id -> customers, but loadOrders replaces it by swap with orders_stage, '
+        'which declares none, so after a run the copy stops enforcing them. Recreate them on orders in postTargetAdhocQueries, or load '
+        'it with upsert and a stage table')]
+
+
+def test_keys_recreated_after_a_swap_of_the_child_are_not_flagged():
+    from bauta.databaseDialects import ForeignKey
+
+    jobs = {'loadOrders': _job(sourceQuery='select * from orders', targetTableFinal='orders', insertStrategy='swap',
+                               targetTableStage='orders_stage',
+                               postTargetAdhocQueries=['alter table orders add constraint fk foreign key (customer_id) references customers (id)'])}
+
+    assert auditJobs(jobs, declaredForeignKeys={'staging': [_foreignKey()]})['findings'] == []
+
+
+def test_a_key_and_its_reference_both_shuffled_are_flagged():
+    """Matching policies aren't enough: shuffle moves values between rows, so
+    every reference ends up pointing at another row.
+    """
+    shuffled = {'strategy': 'shuffle', 'domain': 'customer'}
+    report = _connected(_customersAndOrders(shuffled, shuffled))
+
+    (message,) = [message for _, message in _messages(report, 'warning') if 'shuffle' in message]
+    assert message == ('in staging, orders.customer_id and customers.id, which it references, are both masked with shuffle, which moves '
+                       'values between rows rather than mapping them, so the copied references will point at other rows. Mask a key and '
+                       'its references with key or fpe')
+
+
+def test_a_parent_limited_without_a_where_is_still_partial():
+    for query, reason in (('select * from customers order by id limit 50', 'its sourceQuery has a LIMIT'),
+                          ('select top 50 * from customers', 'its sourceQuery has a TOP'),
+                          ('select * from customers order by id fetch first 50 rows only', 'its sourceQuery has a FETCH FIRST'),
+                          ('select c.* from customers c join regions r on r.code = c.region_code', 'its sourceQuery joins another table')):
+        (message,) = [message for _, message in _coverage(_copies(query))]
+
+        assert '({})'.format(reason) in message

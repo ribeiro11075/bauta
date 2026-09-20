@@ -59,8 +59,9 @@ class _Builder:
     would grow exponentially with the schema's depth.
     """
 
-    def __init__(self, names: Dict[str, str], materialize: bool, quote: Callable[[str], str]) -> None:
+    def __init__(self, names: Dict[str, str], materialize: bool, quote: Callable[[str], str], quoteTable: Callable[[str], str]) -> None:
         self.names = names
+        self.quoteTable = quoteTable
         self.materialize = materialize
         self.quote = quote
         self.counter = 0
@@ -93,7 +94,7 @@ class _Builder:
     def define(self, selection: str, table: str, conditions: Sequence[str], alias: str, dependencies: List[str]) -> None:
 
         self.bodies[selection] = 'SELECT * FROM {} {} WHERE {}'.format(
-            self.names[table], alias, ' OR '.join('({})'.format(condition) for condition in conditions))
+            self.quoteTable(self.names[table]), alias, ' OR '.join('({})'.format(condition) for condition in conditions))
         self.dependencies[selection] = dependencies
 
 
@@ -186,14 +187,17 @@ def relatedTables(foreignKeys: Sequence[ForeignKey], roots: Iterable[str], follo
 
 
 def planSubset(foreignKeys: Sequence[ForeignKey], root: str, where: str, followChildren: bool = True,
-               ignore: Iterable[str] = (), materialize: bool = False, quote: Optional[Callable[[str], str]] = None) -> SubsetPlan:
+               ignore: Iterable[str] = (), materialize: bool = False, quote: Optional[Callable[[str], str]] = None,
+               quoteTable: Optional[Callable[[str], str]] = None) -> SubsetPlan:
     """The per-table queries for a subset rooted at `root`, filtered by `where`,
     which is embedded verbatim, like a sourceQuery.
 
     `materialize` writes `AS MATERIALIZED`, where the dialect supports it (see
     DatabaseDialect.supportsMaterializedSelections). `quote` quotes column
-    names, e.g. `lambda name: quoteIdentifier(database.type, name)`. Raises
-    SubsetError past MAX_SELECTION_DEPTH.
+    names, e.g. `lambda name: quoteIdentifier(database.type, name)`, and
+    `quoteTable` the table names, without which a table named for a reserved
+    word made every generated query a syntax error. Raises SubsetError past
+    MAX_SELECTION_DEPTH.
     """
 
     ignoreSet = parseIgnore(ignore)
@@ -218,7 +222,7 @@ def planSubset(foreignKeys: Sequence[ForeignKey], root: str, where: str, followC
                           'ignored column is nullable or masked'.format(described))
 
     order = _topologicalOrder(included, parentEdges)
-    builder = _Builder(names, materialize, quote or (lambda name: name))
+    builder = _Builder(names, materialize, quote or (lambda name: name), quoteTable or (lambda name: name))
     downSelection = {table: 'subset_down_{}'.format(position) for position, table in enumerate(order, start=1)}
     keptSelection = {table: 'subset_kept_{}'.format(position) for position, table in enumerate(order, start=1)}
 

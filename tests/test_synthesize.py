@@ -23,6 +23,7 @@ CREATE TABLE order_items (order_id INT REFERENCES orders(id), line INT, sku VARC
 CREATE TABLE tags (order_id INT REFERENCES orders(id), sku VARCHAR(10) REFERENCES products(sku), PRIMARY KEY (order_id, sku));
 CREATE TABLE employees (id INTEGER PRIMARY KEY, manager_id INT REFERENCES employees(id), full_name VARCHAR(40));
 CREATE TABLE bosses (id INTEGER PRIMARY KEY, boss_id INT NOT NULL REFERENCES bosses(id));
+CREATE TABLE labels (id INTEGER PRIMARY KEY, code VARCHAR(20) NOT NULL UNIQUE, label VARCHAR(40));
 '''
 
 
@@ -74,6 +75,38 @@ def test_a_second_run_continues_after_the_existing_keys(database):
 
     assert [row[0] for row in database.query('SELECT id FROM customers ORDER BY id')] == list(range(1, 11))
     assert sorted(row[0] for row in database.query('SELECT sku FROM products')) == ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
+
+
+def test_a_unique_text_column_gets_a_different_value_in_every_row(database):
+    """Words cut to twenty characters repeat within a few hundred rows, which
+    a UNIQUE constraint refuses; each value ends in its row's number.
+    """
+    assert _fill(database, ('labels', 200)) == [200]
+
+    codes = [row[0] for row in database.query('SELECT code FROM labels')]
+    assert len(set(codes)) == 200
+    assert all(len(code) <= 20 for code in codes)
+
+
+def test_a_second_run_does_not_repeat_the_first_runs_values(database):
+    """Every generator is indexed by the row's number, so a second run that
+    started at row 0 again would generate the first run's values.
+    """
+    _fill(database, ('labels', 20), ('customers', 20))
+    _fill(database, ('labels', 20), ('customers', 20))
+
+    assert database.query('SELECT count(DISTINCT code) FROM labels') == [(40,)]
+    assert database.query('SELECT count(DISTINCT email) FROM customers') == [(40,)]
+
+
+def test_a_unique_column_with_too_few_distinct_values_is_refused_clearly(database):
+    """A raw driver error tells no one what happened, and each chunk has
+    already committed by then.
+    """
+    database.alter('CREATE TABLE codes (id INTEGER PRIMARY KEY, code CHAR(1) NOT NULL UNIQUE)')
+
+    with pytest.raises(SynthesisError, match='codes refused a generated row after'):
+        synthesizeTable(database, 'codes', 400)
 
 
 def test_the_same_seed_makes_the_same_rows(tmp_path):

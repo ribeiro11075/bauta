@@ -1,6 +1,8 @@
 import pytest
 
-from bauta.databaseDialects import ColumnCategory, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, SQLiteDialect
+from bauta.configuration import DatabaseType
+from bauta.databaseDialects import ColumnCategory, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, SQLiteDialect, \
+    catalogName, quoteFoldedTable, quoteTableName, splitTableName, suffixedName
 
 ALL_COLUMNS = ['id', 'name', 'amount']
 PRIMARY_KEY_COLUMNS = ['id']
@@ -127,7 +129,21 @@ def test_oracle_placeholders_are_positional_binds():
 def test_oracle_catalog_queries_look_in_the_current_schema_not_every_schema():
     for query in (OracleDialect().primaryKeyQuery(), OracleDialect().columnsQuery(), OracleDialect().tableExistsQuery()):
         assert "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')" in query
-        assert 'table_name = UPPER({})' in query
+        assert 'table_name = {}' in query
+
+
+def test_oracle_catalog_queries_bind_the_name_rather_than_upper_casing_it():
+    """UPPER() in the query hid every table whose name is quoted, which on
+    Oracle is the only way to name a lower-case one.
+    """
+
+    for query in (OracleDialect().primaryKeyQuery(), OracleDialect().columnsQuery(), OracleDialect().tableExistsQuery()):
+        assert 'UPPER(' not in query
+
+
+def test_postgresql_catalog_queries_bind_the_name_rather_than_lower_casing_it():
+    for query in (PostgreSQLDialect().primaryKeyQuery(), PostgreSQLDialect().columnsQuery(), PostgreSQLDialect().tableExistsQuery()):
+        assert 'lower(' not in query
 
 
 def test_oracle_upsert_query_is_a_merge_with_matched_and_not_matched():
@@ -454,3 +470,68 @@ def test_encryption_is_read_from_what_the_server_reports(dialect, row, expected)
             return row
 
     assert dialect.isEncrypted(_Cursor([])) is expected
+
+
+@pytest.mark.parametrize('table,expected', [
+    ('orders', (None, 'orders')),
+    ('sales.orders', ('sales', 'orders')),
+    ('"group"', (None, '"group"')),
+    ('"sales"."group"', ('"sales"', '"group"')),
+    ('dbo.[a.b]', ('dbo', '[a.b]')),
+    ('`my db`.`group`', ('`my db`', '`group`')),
+    ])
+def test_a_table_name_splits_on_the_dot_that_separates_its_parts(table, expected):
+    """A dot inside quotes belongs to the name, so `dbo.[a.b]` is one table."""
+    assert splitTableName(table) == expected
+
+
+@pytest.mark.parametrize('databaseType,name,expected', [
+    (DatabaseType.POSTGRESQL, 'Orders', 'orders'),
+    (DatabaseType.POSTGRESQL, '"Orders"', 'Orders'),
+    (DatabaseType.ORACLE, 'orders', 'ORDERS'),
+    (DatabaseType.ORACLE, '"group"', 'group'),
+    (DatabaseType.MSSQL, '[group]', 'group'),
+    (DatabaseType.MYSQL, '`group`', 'group'),
+    (DatabaseType.MYSQL, 'Orders', 'Orders'),
+    (DatabaseType.SQLITE, '"a""b"', 'a"b'),
+    ])
+def test_a_name_is_unquoted_and_folded_the_way_its_database_stores_it(databaseType, name, expected):
+    """What a catalog lookup binds: quoting a name used to be enough to make
+    every lookup of it report nothing.
+    """
+    assert catalogName(databaseType, name) == expected
+
+
+@pytest.mark.parametrize('databaseType,table,expected', [
+    (DatabaseType.POSTGRESQL, 'group', '"group"'),
+    (DatabaseType.POSTGRESQL, '"group"', '"group"'),
+    (DatabaseType.MSSQL, 'sales.group', '[sales].[group]'),
+    (DatabaseType.ORACLE, '"group"', '"group"'),
+    (DatabaseType.MYSQL, '`group`', '`group`'),
+    ])
+def test_a_table_name_is_quoted_once_however_it_was_written(databaseType, table, expected):
+    assert quoteTableName(databaseType, table) == expected
+
+
+@pytest.mark.parametrize('databaseType,table,expected', [
+    (DatabaseType.POSTGRESQL, 'Orders', ('"Orders"', '"orders"')),
+    (DatabaseType.ORACLE, 'orders', ('"orders"', '"ORDERS"')),
+    (DatabaseType.ORACLE, '"group"', ('"group"', '"group"')),
+    ])
+def test_a_name_being_created_is_folded_and_a_name_read_from_a_catalog_is_not(databaseType, table, expected):
+    """A catalog holds the spelling that answers; a name being created is
+    folded so it answers to itself unquoted, as its columns are.
+    """
+
+    assert (quoteTableName(databaseType, table), quoteFoldedTable(databaseType, table)) == expected
+
+
+@pytest.mark.parametrize('databaseType,table,expected', [
+    (DatabaseType.POSTGRESQL, 'orders', 'orders_tmp'),
+    (DatabaseType.MSSQL, '[group]', '[group_tmp]'),
+    (DatabaseType.MSSQL, 'sales.[group]', 'sales.[group_tmp]'),
+    (DatabaseType.ORACLE, '"group"', '"group_tmp"'),
+    ])
+def test_a_suffix_goes_inside_the_quotes_of_a_quoted_name(databaseType, table, expected):
+    """`[group]_tmp` is not a name sp_rename can parse, so the swap failed."""
+    assert suffixedName(databaseType, table, '_tmp') == expected

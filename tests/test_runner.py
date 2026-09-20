@@ -75,6 +75,12 @@ class _FakeDatabase:
         self.calls.append(('getAllColumnNames', table))
         return self.columnNames
 
+    primaryKeyColumns: List[str] = ['id']
+
+    def getPrimaryColumnNames(self, table: str) -> List[str]:
+        self.calls.append(('getPrimaryColumnNames', table))
+        return self.primaryKeyColumns
+
     def truncate(self, table: str) -> None:
         self.calls.append(('truncate', table))
 
@@ -255,7 +261,7 @@ def test_execute_data_job_validates_transforms_against_the_source_querys_columns
     the *target*'s own columns (introspected, since targetColumns is unset) don't
     include 'name' at all.
     """
-    monkeypatch.setattr(_FakeDatabase, 'getAllColumnNames', lambda self, table: ['totallyDifferentTargetColumn'])
+    monkeypatch.setattr(_FakeDatabase, 'getAllColumnNames', lambda self, table: ['totallyDifferentTargetColumn', 'andAnother'])
     jobConfig = _dataJobConfig(sourceQueryColumnTransforms={'name': ['json:dumps']})
     databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
@@ -290,6 +296,89 @@ def test_execute_data_job_runs_adhoc_queries_before_and_after_load(fakeDatabases
     upsertIndex = next(index for index, call in enumerate(calls) if call[0] == 'upsert')
     postIndex = calls.index(('alter', 'post1'))
     assert preIndex < upsertIndex < postIndex
+
+
+def test_a_query_that_returns_fewer_columns_than_the_target_says_which_and_how_many(monkeypatch):
+    """The load binds by position, and the driver's own complaint names neither
+    the table nor the columns: "the current statement uses 5, and there are 3
+    supplied".
+    """
+
+    class _WiderTarget(_FakeDatabase):
+        def getAllColumnNames(self, table: str) -> List[str]:
+            return ['id', 'name', 'notes', 'region']
+
+    monkeypatch.setattr('bauta.runner.Database', _WiderTarget)
+
+    with pytest.raises(ConfigurationError, match='List the ones the query fills in targetColumns'):
+        _executeDataJob('job1', _dataJobConfig(), {'src': _dbConfig(), 'tgt': _dbConfig()})
+
+
+def test_an_upsert_into_a_target_without_a_primary_key_writes_nothing_first(monkeypatch):
+    """It used to find out when the first chunk was upserted, by which time its
+    preTargetAdhocQueries had run against the live target and the stage table
+    held every row.
+    """
+
+    created: List[_FakeDatabase] = []
+
+    class _KeylessTarget(_FakeDatabase):
+        primaryKeyColumns: List[str] = []
+
+        def __init__(self, connectionSettings: DatabaseConnectionConfig) -> None:
+            super().__init__(connectionSettings)
+            created.append(self)
+
+    monkeypatch.setattr('bauta.runner.Database', _KeylessTarget)
+    jobConfig = _dataJobConfig(targetTableStage='people_stage', preTargetAdhocQueries=['pre1'])
+
+    with pytest.raises(ConfigurationError, match='has no primary key'):
+        _executeDataJob('job1', jobConfig, {'src': _dbConfig(), 'tgt': _dbConfig()})
+
+    written = [call[0] for database in created for call in database.calls]
+    assert 'alter' not in written and 'truncate' not in written and 'insert' not in written
+
+
+def test_a_post_query_that_fails_after_a_swap_reports_the_rows_the_target_holds(monkeypatch):
+    """The swap had already replaced the target, so reporting 0 rows against a
+    copy that had just been rebuilt sent people looking in the wrong place.
+    """
+
+    class _FailingPostQuery(_FakeDatabase):
+        def alter(self, query: str) -> None:
+            if query == 'post1':
+                raise RuntimeError('division by zero')
+            super().alter(query)
+
+    monkeypatch.setattr('bauta.runner.Database', _FailingPostQuery)
+    jobConfig = _dataJobConfig(insertStrategy=InsertStrategy.SWAP, targetTableStage='people_stage', postTargetAdhocQueries=['post1'])
+    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+
+    outcome = _runDataJob('job1', jobConfig, databaseConfiguration, _TimelineMemory([]))
+
+    assert outcome.status == JobStatus.FAILED
+    assert outcome.rowCount == 2
+    assert 'people holds its 2 row(s)' in outcome.error
+    assert 'postTargetAdhocQuery failed' in outcome.error
+
+
+def test_a_masked_load_that_overflows_a_column_says_a_mask_can_be_wider(monkeypatch, caplog):
+    """The driver names the column, not the mask that widened the value, and
+    `key` keeping an integer's digit count is the usual reason.
+    """
+
+    class _RefusingTarget(_FakeDatabase):
+        def upsert(self, **arguments: Any) -> None:
+            raise RuntimeError('numeric field overflow: value out of range for type integer')
+
+    monkeypatch.setattr('bauta.runner.Database', _RefusingTarget)
+    jobConfig = _dataJobConfig(masking={'key': 'k' * 16, 'columns': {'id': {'strategy': 'key'}, 'name': 'keep'}})
+
+    outcome = _runDataJob('job1', jobConfig, {'src': _dbConfig(), 'tgt': _dbConfig()}, _TimelineMemory([]))
+
+    assert outcome.status == JobStatus.FAILED
+    assert "`key` keeps an integer's digit count" in caplog.text
+    assert 'widen the column' in caplog.text
 
 
 def test_execute_data_job_runs_pre_adhoc_queries_before_loading_the_stage_table(fakeDatabases):
@@ -427,6 +516,9 @@ def test_execute_data_job_streams_rather_than_materializing_the_whole_extract(mo
         def getAllColumnNames(self, table: str) -> List[str]:
             return ['id', 'name']
 
+        def getPrimaryColumnNames(self, table: str) -> List[str]:
+            return ['id']
+
         def upsert(self, table: str, data: List[Tuple[Any, ...]], chunkSize: int = 100, columns: Any = None) -> None:
             timeline.append(('load', len(data)))
 
@@ -493,6 +585,9 @@ def test_the_pipeline_can_be_turned_off(monkeypatch):
 
         def getAllColumnNames(self, table: str) -> List[str]:
             return ['id', 'name']
+
+        def getPrimaryColumnNames(self, table: str) -> List[str]:
+            return ['id']
 
         def upsert(self, table: str, data: List[Tuple[Any, ...]], chunkSize: int = 100, columns: Any = None) -> None:
             timeline.append(('load', len(data)))
@@ -1400,6 +1495,9 @@ def _pipelineFake(rows, failReadAt=None, failWriteAt=None, written=None, reads=N
 
         def getAllColumnNames(self, table: str) -> List[str]:
             return ['id', 'name']
+
+        def getPrimaryColumnNames(self, table: str) -> List[str]:
+            return ['id']
 
         def upsert(self, table: str, data: List[Any], chunkSize: int = 100, columns: Any = None) -> None:
             self.insert(table, data)

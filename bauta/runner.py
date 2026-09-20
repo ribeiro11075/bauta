@@ -5,7 +5,9 @@ import contextlib
 import logging
 import multiprocessing as mp
 import os
+import re
 import signal
+import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from multiprocessing.connection import wait as waitForAny
@@ -36,6 +38,11 @@ PROCESS_CONTEXT = mp.get_context('spawn')
 
 # How long a timed-out job gets to exit after SIGTERM before it is killed.
 TERMINATE_GRACE_SECONDS = 5.0
+
+# The exit code a job uses when it finds its parent gone. Nothing reads it --
+# by then there is no parent to report to -- but it tells the two apart in a
+# process listing or a core dump.
+EXIT_ORPHANED = 3
 
 # How long a job may take to exit once it has sent its outcome, before it is
 # stopped. It has nothing left to do by then but close its connections.
@@ -217,6 +224,22 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: D
         columns = jobConfig.targetColumns or targetDatabase.getAllColumnNames(table=jobConfig.targetTableFinal)
         logger.debug('Resolved target columns for {}: {}'.format(jobConfig.targetTableFinal, columns))
 
+        if not jobConfig.targetColumns and len(columns) != len(sourceQueryColumns):
+            # The load binds by position, so the two lists must line up. The
+            # driver's own complaint names neither the table nor the columns:
+            # "the current statement uses 5, and there are 3 supplied".
+            raise ConfigurationError(
+                'sourceQuery returns {} column(s) {} and {} has {} ({}). List the ones the query fills in targetColumns, in the '
+                'query\'s order'.format(len(sourceQueryColumns), sourceQueryColumns, jobConfig.targetTableFinal, len(columns),
+                                        ', '.join(columns)))
+
+        if jobConfig.insertStrategy == InsertStrategy.UPSERT and not targetDatabase.getPrimaryColumnNames(table=jobConfig.targetTableFinal):
+            # Asked before anything is written, not when the first chunk is
+            # upserted: the job used to run its preTargetAdhocQueries and load
+            # every row into the stage table before finding this out.
+            raise ConfigurationError('{} has no primary key, so an upsert cannot match its rows -- add one, or use '
+                                     'insertStrategy: swap'.format(jobConfig.targetTableFinal))
+
         for preTargetAdhocQuery in jobConfig.preTargetAdhocQueries:
             logger.debug('Running preTargetAdhocQuery: {}'.format(preTargetAdhocQuery))
             targetDatabase.alter(preTargetAdhocQuery)
@@ -258,7 +281,12 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: D
 
             return rows
 
-        _streamChunks(chunks, prepareChunk, writeChunk, watermarkIndex, _pipelineDepth())
+        try:
+            _streamChunks(chunks, prepareChunk, writeChunk, watermarkIndex, _pipelineDepth())
+        except Exception as error:
+            if masking is not None:
+                _noteIfMaskedValueDoesNotFit(error, job, loadTable)
+            raise
 
         logger.info('Streamed {} row(s) from {} into {}'.format(rowCount, jobConfig.sourceDatabase, loadTable))
 
@@ -267,13 +295,24 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: D
             logger.info('Swapping {} with stage table {}'.format(jobConfig.targetTableFinal, jobConfig.targetTableStage))
             targetDatabase.swap(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage)
 
+            if masking is not None:
+                # The swap moved what the target held into the stage. For a job
+                # masking in place that is the unmasked original, which must not
+                # stay readable beside the masked copy.
+                logger.info('Emptying stage table {}, which now holds what {} held before the swap'.format(
+                    jobConfig.targetTableStage, jobConfig.targetTableFinal))
+                targetDatabase.truncate(table=jobConfig.targetTableStage)
+
         if jobConfig.insertStrategy == InsertStrategy.UPSERT and jobConfig.targetTableStage:
             logger.info('Upserting {} from stage table {}'.format(jobConfig.targetTableFinal, jobConfig.targetTableStage))
             targetDatabase.upsertFromStage(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage, columns=columns)
 
         for postTargetAdhocQuery in jobConfig.postTargetAdhocQueries:
             logger.debug('Running postTargetAdhocQuery: {}'.format(postTargetAdhocQuery))
-            targetDatabase.alter(postTargetAdhocQuery)
+            try:
+                targetDatabase.alter(postTargetAdhocQuery)
+            except Exception as error:
+                raise PostLoadError(postTargetAdhocQuery, error, rowCount, jobConfig.targetTableFinal) from error
 
     maskingApplied = None
     if masking is not None:
@@ -356,6 +395,42 @@ def _streamChunks(chunks: Iterable[List[Tuple[Any, ...]]], prepare: Callable[[in
             raise
 
 
+# What each driver says when a value doesn't fit the column it is written to.
+# A masked value is the usual cause in a job that masks: `key` keeps an
+# integer's digit count, which an INT column's range cuts across, and `number`
+# varies a value that may already be at its column's limit.
+_OUT_OF_RANGE = re.compile(r'out of range|overflow|too large|ORA-01438|ORA-01426', re.IGNORECASE)
+
+
+def _noteIfMaskedValueDoesNotFit(error: Exception, job: str, table: str) -> None:
+    """Says why a masked load overflowed a column, which the driver's own
+    message doesn't: it names the column, not the mask that widened the value.
+    """
+
+    if _OUT_OF_RANGE.search(str(error)) is None:
+        return
+
+    logger.warning('{}: {} refused a value as out of its range, and this job masks. A mask can be wider than what it replaced: '
+                   '`key` keeps an integer\'s digit count, so a 10-digit value can leave an INT column\'s range, and `number` '
+                   'varies a value that may already be at its column\'s limit. Bound `number` with min and max, or widen the '
+                   'column'.format(job, table), extra={'job': job})
+
+
+class PostLoadError(Exception):
+    """A postTargetAdhocQuery that failed after the rows were already in place.
+
+    Carries the row count so the failure says how many rows the target holds,
+    rather than the nothing a failure usually loaded: a swap that has happened
+    has already replaced the target, and reporting 0 rows against a copy that
+    had just been rebuilt sent people looking in the wrong place.
+    """
+
+    def __init__(self, query: str, error: Exception, rowCount: int, targetTable: str) -> None:
+        super().__init__('the load finished and {} holds its {} row(s), but a postTargetAdhocQuery failed -- {}: {}'.format(
+            targetTable, rowCount, query, describeError(error)))
+        self.rowCount = rowCount
+
+
 # Deterministic errors, raised by this package, that a retry can't fix.
 # Everything else is retried; see "Retries" in docs/design.md.
 PERMANENT_ERRORS = (ConfigurationError, TransformError, TransformResolutionError, MaskingError)
@@ -375,7 +450,8 @@ def _executeWithRetries(jobConfig: DataJobConfig, job: str, attempt: Callable[[]
 
             if isinstance(error, PERMANENT_ERRORS) or attemptNumber > jobConfig.retries:
                 logger.error('Failed to complete {} due to error {}'.format(job, error), exc_info=error)
-                return JobOutcome(job=job, status=JobStatus.FAILED, error=describeError(error), attempts=attemptNumber)
+                loaded = error.rowCount if isinstance(error, PostLoadError) else 0
+                return JobOutcome(job=job, status=JobStatus.FAILED, error=describeError(error), attempts=attemptNumber, rowCount=loaded)
 
             delay = min(MAXIMUM_RETRY_DELAY_SECONDS, jobConfig.retryDelaySeconds * (2 ** min(attemptNumber - 1, 32)))
             logger.warning(
@@ -435,13 +511,36 @@ def _runDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: Dict[
     return outcome._replace(startedAt=startedAt, finishedAt=time.time())
 
 
-def _initializeWorker(connection: Any, logLevel: int) -> ConnectionForwarder:
+def _exitWhenOrphaned(parentAlive: Any) -> None:
+    """Ends this process the moment the run that started it is gone.
+
+    `parentAlive` is a pipe the parent holds the other end of and never writes
+    to, so it reads end-of-file exactly when the parent dies -- including under
+    SIGKILL, which runs none of the parent's cleanup and used to leave the job
+    loading rows and writing run state for as long as its query lasted. The run
+    lock dies with the parent, so the next `bauta run` would start alongside it
+    and the two would load over each other.
+
+    os._exit, not sys.exit: an orphan must stop writing now, not unwind. Its
+    connections die with it, so each server rolls back what it hadn't committed.
+    """
+
+    try:
+        parentAlive.recv()
+    except (EOFError, OSError):
+        pass
+    finally:
+        os._exit(EXIT_ORPHANED)
+
+
+def _initializeWorker(connection: Any, parentAlive: Any, logLevel: int) -> ConnectionForwarder:
     """Runs first in each job's process. Ignores Ctrl-C, which reaches the whole
     process group, so the parent decides how to stop; SIGTERM keeps its
     default, since that is how a timed-out job is stopped.
     """
 
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    threading.Thread(target=_exitWhenOrphaned, args=(parentAlive,), name='bauta-parent', daemon=True).start()
 
     return forwardToConnection(connection, logLevel)
 
@@ -483,13 +582,16 @@ def _requireWatermarkCapableMemory(jobsFile: DataJobsFile, memory: MemoryBackend
             'Implement readWatermarks/recordWatermark on it, or use FileMemory.'.format(type(memory).__name__, ', '.join(incrementalJobs)))
 
 
-def _jobProcess(connection: Any, logLevel: int, job: str, jobConfig: DataJobConfig,
+def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobConfig: DataJobConfig,
                 databaseConfiguration: Dict[str, DatabaseConnectionConfig], memory: MemoryBackend, maskingThreads: int = 1) -> None:
     """The whole life of one job's process: run the job, and send its log
     records and then its outcome back on `connection`, which it alone writes to.
+
+    `parentAlive` ends the process if the run that started it dies; see
+    _exitWhenOrphaned.
     """
 
-    forwarder = _initializeWorker(connection, logLevel)
+    forwarder = _initializeWorker(connection, parentAlive, logLevel)
     setMaskingThreads(maskingThreads)
     forwarder.send('outcome', _runDataJob(job, jobConfig, databaseConfiguration, memory))
     connection.close()
@@ -558,11 +660,16 @@ class _JobProcess:
         self._closed = False
 
         self._connection, sendingEnd = PROCESS_CONTEXT.Pipe(duplex=False)
+        # Nothing is ever sent on this second pipe: the child watches it for
+        # the end-of-file that this end's closing -- or this process's death --
+        # gives it. See _exitWhenOrphaned.
+        childEnd, self._alive = PROCESS_CONTEXT.Pipe(duplex=False)
         self.process = PROCESS_CONTEXT.Process(
             target=_jobProcess, name='bauta {}'.format(job), daemon=True,
-            args=(sendingEnd, logLevel, job, jobConfig, databaseConfiguration, memory, maskingThreads))
+            args=(sendingEnd, childEnd, logLevel, job, jobConfig, databaseConfiguration, memory, maskingThreads))
         self.process.start()
         sendingEnd.close()
+        childEnd.close()
 
 
     @property
@@ -637,9 +744,7 @@ class _JobProcess:
             self.process.kill()
             self.process.join()
 
-        if not self._closed:
-            self._closed = True
-            self._connection.close()
+        self._release()
 
 
     def _drain(self) -> None:
@@ -652,6 +757,20 @@ class _JobProcess:
             if not self._closed and not self._connection.poll():
                 self._closed = True
                 self._connection.close()
+
+        self._release()
+
+
+    def _release(self) -> None:
+        """Closes both of the job's pipes, once the job is over. Idempotent, so
+        a job that is stopped and then drained releases them once.
+        """
+
+        if not self._closed:
+            self._closed = True
+            self._connection.close()
+
+        self._alive.close()
 
 
     def _died(self) -> JobOutcome:

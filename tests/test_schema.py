@@ -16,6 +16,7 @@ ORACLE = DatabaseType.ORACLE
 POSTGRESQL = DatabaseType.POSTGRESQL
 MYSQL = DatabaseType.MYSQL
 MSSQL = DatabaseType.MSSQL
+MARIADB = DatabaseType.MARIADB
 SQLITE = DatabaseType.SQLITE
 
 
@@ -91,18 +92,98 @@ def test_portable_types_render_per_target(target, portable, expected):
     assert renderType(target, portable, isKey=False)[0] == expected
 
 
-@pytest.mark.parametrize('target,expected', [(MYSQL, 'VARCHAR(255)'), (MSSQL, 'NVARCHAR(255)'), (ORACLE, 'VARCHAR2(255 CHAR)'),
-                                             (POSTGRESQL, 'TEXT'), (SQLITE, 'TEXT')])
+@pytest.mark.parametrize('target,expected', [(MYSQL, 'VARCHAR(255) COLLATE utf8mb4_0900_bin'), (MSSQL, 'NVARCHAR(255) COLLATE Latin1_General_BIN2'),
+                                             (ORACLE, 'VARCHAR2(255 CHAR)'), (POSTGRESQL, 'TEXT'), (SQLITE, 'TEXT')])
 def test_unbounded_text_in_a_key_is_bounded_where_the_target_requires_it(target, expected):
     rendered, note = renderType(target, PortableType('text'), isKey=True)
 
     assert rendered == expected
-    assert (note is not None) == (expected != 'TEXT')
+    assert (note is not None) == (not expected.startswith('TEXT'))
+
+
+@pytest.mark.parametrize('target,expected', [
+    (MYSQL, 'VARCHAR(10) COLLATE utf8mb4_0900_bin'),
+    (MARIADB, 'VARCHAR(10) COLLATE utf8mb4_nopad_bin'),
+    (MSSQL, 'NVARCHAR(10) COLLATE Latin1_General_BIN2'),
+    (POSTGRESQL, 'VARCHAR(10)'),
+    (ORACLE, 'VARCHAR2(10 CHAR)'),
+    (SQLITE, 'VARCHAR(10)'),
+    ])
+def test_a_text_key_is_collated_to_compare_exactly_where_the_default_would_not(target, expected):
+    """Their defaults compare `a` and `A` -- and `ss` and the German sharp s --
+    as one value, so two keys the source keeps apart became one row in the copy,
+    or a primary-key violation once a chunk held both.
+    """
+
+    assert renderType(target, PortableType('text', length=10), isKey=True)[0] == expected
+    assert renderType(target, PortableType('text', length=10), isKey=False)[0] == expected.split(' COLLATE ')[0]
 
 
 def test_lossy_renderings_say_so():
     assert renderType(ORACLE, PortableType('time'), isKey=False)[1]
     assert renderType(MYSQL, PortableType('timestampTz'), isKey=False)[1]
+
+
+def test_a_time_zone_aware_timestamp_into_oracle_says_the_instant_can_move():
+    """Oracle keeps the loading session's offset, so 12:00+02 came back as
+    10:00-04 -- a different instant, and nothing said so.
+    """
+    rendered, note = renderType(ORACLE, PortableType('timestampTz'), isKey=False)
+
+    assert rendered == 'TIMESTAMP WITH TIME ZONE'
+    assert 'instant moves' in note
+
+
+def test_a_time_into_oracle_is_wide_enough_for_a_day_long_one():
+    """MySQL's driver returns a TIME as a timedelta, and its text runs to
+    '-35 days, 1:00:01.999999'; VARCHAR2(16 CHAR) refused it.
+    """
+    rendered, note = renderType(ORACLE, PortableType('time'), isKey=False)
+
+    assert rendered == 'VARCHAR2(32 CHAR)' and note
+    assert len('-35 days, 1:00:01.999999') <= 32
+
+
+@pytest.mark.parametrize('target,expected', [(MYSQL, 'DECIMAL(65,30)'), (MSSQL, 'DECIMAL(38,10)')])
+def test_a_decimal_of_no_declared_size_says_what_it_was_given(target, expected):
+    rendered, note = renderType(target, PortableType('decimal'), isKey=False)
+
+    assert rendered == expected
+    assert expected in note
+
+    assert renderType(POSTGRESQL, PortableType('decimal'), isKey=False) == ('NUMERIC', None)
+
+
+@pytest.mark.parametrize('target,expected', [(MYSQL, 'DECIMAL(65,30)'), (MSSQL, 'DECIMAL(38,30)'), (ORACLE, 'NUMBER(38,30)')])
+def test_a_decimal_wider_than_the_target_says_what_it_was_clamped_to(target, expected):
+    rendered, note = renderType(target, PortableType('decimal', precision=70, scale=30), isKey=False)
+
+    assert rendered == expected
+    assert 'clamped to {}'.format(expected) in note
+
+
+@pytest.mark.parametrize('target,expected', [(MYSQL, 'INT'), (POSTGRESQL, 'INTEGER'), (ORACLE, 'NUMBER(10)'), (SQLITE, 'INTEGER')])
+def test_sqlites_64_bit_integer_says_where_it_does_not_fit(target, expected):
+    """Every SQLite INTEGER holds 64 bits, whatever its column says, so only
+    SQLite itself takes them all back.
+    """
+    rendered, note = renderType(target, portableType(SQLITE, column('INTEGER')), isKey=False)
+
+    assert rendered == expected
+    assert (note is None) == (target == SQLITE)
+
+
+@pytest.mark.parametrize('dataType,rendered,digits', [('bigint unsigned', 'BIGINT', '20 digits'), ('int unsigned', 'INTEGER', '10 digits')])
+def test_an_unsigned_mysql_integer_says_its_values_will_not_load(dataType, rendered, digits):
+    """MySQL reports `unsigned` only in column_type, which is why the catalog
+    query reads that rather than data_type: an INT UNSIGNED reaches 4294967295
+    and looked exactly like an INT.
+    """
+    renderedType, note = renderType(POSTGRESQL, portableType(MYSQL, column(dataType, precision=20, scale=0)), isKey=False)
+
+    assert renderedType == rendered
+    assert digits in note
+    assert renderType(POSTGRESQL, portableType(MYSQL, column('bigint', precision=19, scale=0)), isKey=False)[1] is None
 
 
 def table(name, columns, primaryKey=(), foreignKeys=()):
@@ -122,7 +203,7 @@ def test_statements_create_parents_first_with_keys_and_constraints():
     assert '[id] INT NOT NULL' in statements[0].sql
     assert '[email] NVARCHAR(MAX)' in statements[0].sql
     assert 'PRIMARY KEY ([id])' in statements[0].sql
-    assert 'CONSTRAINT orders_customer_id_fkey FOREIGN KEY ([customer_id]) REFERENCES customers ([id])' in statements[1].sql
+    assert 'CONSTRAINT orders_customer_id_fkey FOREIGN KEY ([customer_id]) REFERENCES [customers] ([id])' in statements[1].sql
 
 
 @pytest.mark.parametrize('target,expected', [
@@ -149,23 +230,69 @@ def test_foreign_keys_can_be_left_out():
 
 
 def test_stage_tables_have_the_key_but_no_foreign_keys():
+    """They cannot carry them: a swap of the parent redirects the key to the
+    emptied old table, and every row is then refused.
+    """
     statements = createStatements(POSTGRESQL, POSTGRESQL, [CUSTOMERS, ORDERS], stageSuffix='_stage')
 
     assert [statement.table for statement in statements] == ['customers', 'customers_stage', 'orders', 'orders_stage']
     assert 'PRIMARY KEY ("id")' in statements[3].sql
+    assert 'CONSTRAINT orders_customer_id_fkey FOREIGN KEY ("customer_id") REFERENCES "customers" ("id")' in statements[2].sql
     assert 'FOREIGN KEY' not in statements[3].sql
-
-
-def test_stages_only_skips_the_tables_themselves():
-    statements = createStatements(POSTGRESQL, POSTGRESQL, [CUSTOMERS], stageSuffix='_masked_stage', stagesOnly=True)
-
-    assert [statement.table for statement in statements] == ['customers_masked_stage']
 
 
 def test_a_primary_key_column_is_never_nullable():
     definition = table('t', [('id', 'integer', True)], primaryKey=['id'])
 
     assert '"id" INTEGER NOT NULL' in createStatements(POSTGRESQL, POSTGRESQL, [definition])[0].sql
+
+
+def test_two_tables_with_the_same_constraint_name_get_different_ones():
+    """Constraint names are per table on PostgreSQL and SQLite, but unique
+    across the schema on the other four, where the second CREATE TABLE would
+    fail and leave half a schema behind.
+    """
+    items = table('items', [('id', 'integer', False), ('customer_id', 'integer', True)], primaryKey=['id'],
+                  foreignKeys=[ForeignKey('items', ('customer_id',), 'customers', ('id',), 'fk_parent')])
+    orders = ORDERS._replace(foreignKeys=[ForeignKey('orders', ('customer_id',), 'customers', ('id',), 'fk_parent')])
+
+    statements = createStatements(POSTGRESQL, MYSQL, [CUSTOMERS, orders, items])
+    names = [statement.sql.split('CONSTRAINT ')[1].split(' ')[0] for statement in statements if 'CONSTRAINT' in statement.sql]
+
+    assert sorted(names) == ['fk_parent', 'fk_parent_2']
+
+
+def test_long_constraint_names_that_share_a_prefix_stay_different():
+    """Cut to the length limit, two names that differ past it become one."""
+    shared = 'fk_' + 'a' * 70
+    definition = ORDERS._replace(foreignKeys=[ForeignKey('orders', ('customer_id',), 'customers', ('id',), shared + '_one'),
+                                              ForeignKey('orders', ('id',), 'customers', ('id',), shared + '_two')])
+
+    sql = createStatements(POSTGRESQL, ORACLE, [CUSTOMERS, definition])[1].sql
+    names = [part.split(' ')[0] for part in sql.split('CONSTRAINT ')[1:]]
+
+    assert len(set(names)) == 2
+    assert all(len(name) <= 63 for name in names)
+
+
+def test_a_key_to_a_column_the_primary_key_does_not_cover_brings_a_unique_constraint():
+    """Every dialect needs a unique constraint behind a foreign key, and
+    `subset --root products` makes exactly this shape.
+    """
+    products = table('products', [('id', 'integer', False), ('sku', 'text', False)], primaryKey=['id'])
+    aliases = table('sku_aliases', [('alias', 'text', False), ('sku', 'text', False)], primaryKey=['alias'],
+                    foreignKeys=[ForeignKey('sku_aliases', ('sku',), 'products', ('sku',), 'fk_sku')])
+
+    statements = createStatements(POSTGRESQL, POSTGRESQL, [aliases, products], stageSuffix='_stage')
+
+    assert [statement.table for statement in statements] == ['products', 'products_stage', 'sku_aliases', 'sku_aliases_stage']
+    assert 'UNIQUE ("sku")' in statements[0].sql
+    assert all('UNIQUE' not in statement.sql for statement in statements[1:])
+    assert 'UNIQUE' not in createStatements(POSTGRESQL, POSTGRESQL, [products])[0].sql
+
+
+def test_a_key_to_the_primary_key_needs_no_unique_constraint():
+    assert 'UNIQUE' not in createStatements(POSTGRESQL, POSTGRESQL, [CUSTOMERS, ORDERS])[0].sql
 
 
 def test_constraint_names_are_made_safe_for_every_dialect():
@@ -193,6 +320,18 @@ def test_cycles_are_reported_but_self_references_are_not():
     cycle = [ForeignKey('a', ('b_id',), 'b', ('id',), 'fk1'), ForeignKey('b', ('a_id',), 'a', ('id',), 'fk2')]
     with pytest.raises(SchemaError, match='cycle among: a, b'):
         orderParentsFirst(['a', 'b'], cycle)
+
+
+def test_the_cycle_message_fits_every_command_that_orders_tables():
+    """`synthesize` and `clear` raise it too, over tables that already exist,
+    and neither has the --no-foreign-keys the message used to offer.
+    """
+    cycle = [ForeignKey('a', ('b_id',), 'b', ('id',), 'fk1'), ForeignKey('b', ('a_id',), 'a', ('id',), 'fk2')]
+
+    with pytest.raises(SchemaError) as raised:
+        clearOrder(['a', 'b'], cycle)
+
+    assert '--' not in str(raised.value)
 
 
 def test_clear_order_is_children_first_and_case_insensitive():
@@ -247,6 +386,62 @@ def test_read_table_carries_its_foreign_keys(sqliteDatabase):
 
     assert definition.primaryKey == ['line', 'id']
     assert [foreignKey.referencedTable for foreignKey in definition.foreignKeys] == ['customers']
+
+
+def test_read_table_names_the_table_as_it_was_asked_for(sqliteDatabase):
+    """Taking the name from a matching foreign key instead spelled a table in
+    a key the way the catalog holds it -- upper case on Oracle -- and one
+    without any the way it was asked for, in the same invocation.
+    """
+    keyed = readTable(sqliteDatabase, 'ORDERS', sqliteDatabase.getForeignKeys())
+    unkeyed = readTable(sqliteDatabase, 'customers', sqliteDatabase.getForeignKeys())
+
+    assert (keyed.name, unkeyed.name) == ('ORDERS', 'customers')
+
+
+def test_a_table_named_for_a_reserved_word_is_created_quoted():
+    """`CREATE TABLE group (...)` is a syntax error on every dialect, and
+    `--apply` failed part-way through a set after creating the tables before it.
+    """
+    group = table('group', [('id', 'integer', False)], primaryKey=['id'])
+    lines = table('lines', [('id', 'integer', False), ('group_id', 'integer', True)], primaryKey=['id'],
+                  foreignKeys=[ForeignKey('lines', ('group_id',), 'group', ('id',), 'fk_lines')])
+
+    statements = createStatements(POSTGRESQL, POSTGRESQL, [group, lines])
+
+    assert statements[0].sql.startswith('CREATE TABLE "group" (')
+    assert 'REFERENCES "group" ("id")' in statements[1].sql
+
+
+def test_a_name_the_target_would_cut_short_is_noted():
+    """PostgreSQL keeps 63 bytes and says nothing, so two tables alike up to
+    there became one, and the second job loaded over the first.
+    """
+    long = table('a' * 64, [('id', 'integer', False)], primaryKey=['id'])
+
+    (statement,) = createStatements(MYSQL, POSTGRESQL, [long])
+
+    assert statement.notes == ['name: {} is 64 bytes long, and postgresql keeps only 63, '
+                               'so it names whatever other table shares its first 63'.format('a' * 64)]
+    assert createStatements(MYSQL, DatabaseType.SQLITE, [long])[0].notes == []
+
+
+def test_a_table_a_person_named_in_quotes_keeps_that_spelling():
+    """Quoting is the only way to name a lower-case table on Oracle, so folding
+    it would create a different table than the one asked for.
+    """
+    quoted = table('"group"', [('id', 'integer', False)], primaryKey=['id'])
+
+    assert createStatements(POSTGRESQL, ORACLE, [quoted])[0].sql.startswith('CREATE TABLE "group" (')
+
+
+def test_a_foreign_key_references_the_parent_by_the_name_it_is_created_under():
+    """The catalog's spelling of the key's tables need not be the spelling the
+    tables are created under; MySQL would not find the other one.
+    """
+    orders = ORDERS._replace(foreignKeys=[ForeignKey('ORDERS', ('customer_id',), 'CUSTOMERS', ('id',), 'fk')])
+
+    assert 'REFERENCES `customers` (`id`)' in createStatements(POSTGRESQL, MYSQL, [CUSTOMERS, orders])[1].sql
 
 
 def test_read_table_rejects_a_missing_table(sqliteDatabase):

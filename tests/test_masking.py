@@ -336,6 +336,24 @@ def test_date_shift_writes_iso_text_back_in_the_same_shape(text):
     assert masked != text
 
 
+def test_date_shift_moves_everything_on_one_day_to_one_day():
+    """It is keyed on the day, so a day's rows stay a day's rows. Keyed on the
+    whole value, two timestamps hours apart landed days apart, and a date and a
+    timestamp of the same day disagreed about where that day went.
+    """
+    day = datetime.date(2026, 3, 4)
+    values = [day, datetime.datetime(2026, 3, 4, 0, 0), datetime.datetime(2026, 3, 4, 23, 59, 59, 999999),
+              '2026-03-04', '2026-03-04 13:14:15', '2026-03-04T13:14:15.500000']
+
+    masked = [maskOne('dateShift', value) for value in values]
+    days = {value if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime) else
+            (value.date() if isinstance(value, datetime.datetime) else datetime.date.fromisoformat(value[:10]))
+            for value in masked}
+
+    assert len(days) == 1
+    assert days != {day}
+
+
 def test_date_shift_rejects_text_that_is_not_a_date_without_echoing_it():
     with pytest.raises(MaskingError) as error:
         maskOne('dateShift', 'Springfield')
@@ -719,7 +737,9 @@ def test_fpe_keeps_a_texts_shape():
 
     assert re.fullmatch(r'\+\d \(\d{3}\) \d{3}-\d{4}', phone) and phone != '+1 (555) 010-9999'
     assert re.fullmatch(r'[0-9A-Za-z]{2}-[0-9A-Za-z]{5}', code) and code != 'AB-12cd9'
-    assert re.fullmatch(r'[0-9A-F]{8}-[0-9A-F]{2}', token)
+    # hex is case-sensitive, and fpe masks both cases within one alphabet,
+    # so a masked value may mix them.
+    assert re.fullmatch(r'[0-9A-Fa-f]{8}-[0-9A-Fa-f]{2}', token) and token != 'DEADBEEF-00'
 
 
 def test_fpe_keeps_a_uuid_a_uuid():
@@ -857,7 +877,7 @@ def test_redact_needs_text():
 CACHED_CASES = [
     ('hash', {}, ['a', 'b', 'a', 7, 7, 'x' * 300, 'x' * 300]),
     ('email', {}, ['Ann@Corp.com', 'ann@corp.com', 'Ann@Corp.com']),
-    ('digits', {'keepTrailing': 2}, ['+1 555 010 9999', 5550109999, '+1 555 010 9999', -42, -42]),
+    ('digits', {'keepTrailing': 2}, ['+1 555 010 9999', 5550109999, '+1 555 010 9999', -424242, -424242]),
     ('fakeName', {'maxLength': 8}, ['ann', 'bob', 'ann', 3, 3]),
     ('key', {}, [41, 42, 41, 'AB-12', 'AB-12', uuid.UUID(int=5), uuid.UUID(int=5), decimal.Decimal('41'), decimal.Decimal('41.0')]),
     ('fpe', {}, [1234567, 1234567, 'AB12-CD34', 'AB12-CD34', 12, 12]),
@@ -1053,3 +1073,33 @@ def test_number_never_gives_a_non_zero_value_back_unchanged(value):
 
 def test_number_keeps_zero():
     assert {strategy('number', domain=str(domain)).mask(0) for domain in range(20)} == {0}
+
+
+def test_hex_is_case_sensitive():
+    """Folding the case gave two spellings of one value the same mask, which
+    merged rows of a key. `key` keeps each character's case; `fpe` masks both
+    cases within one alphabet, as FF1 needs a single one.
+    """
+    values = ['ab12cd34', 'AB12CD34', 'aB12cd34']
+
+    keyed = [row[0] for row in MaskingPlan(GOLDEN_KEY, {'c': {'strategy': 'key', 'charset': 'hex'}}).bind(['c']).apply(
+        [(value,) for value in values])]
+    encrypted = _fpe({'strategy': 'fpe', 'charset': 'hex'}, values)
+
+    assert len(set(keyed)) == 3 and len(set(encrypted)) == 3
+    assert [''.join('u' if character.isupper() else 'l' if character.islower() else 'd' for character in value)
+            for value in keyed] == ['llddlldd', 'uudduudd', 'luddlldd']
+    assert all(re.fullmatch(r'[0-9A-Fa-f]{8}', value) for value in keyed + encrypted)
+
+
+def test_digits_refuses_a_policy_that_would_keep_every_digit():
+    """Otherwise '555-0100' comes back as it is while the manifest says it was masked."""
+    policy = {'strategy': 'digits', 'keepLeading': 3, 'keepTrailing': 4}
+
+    def mask(value):
+        return MaskingPlan(GOLDEN_KEY, {'c': policy}).bind(['c']).apply([(value,)])[0][0]
+
+    assert mask('+1 (555) 010-9999') != '+1 (555) 010-9999'
+
+    with pytest.raises(MaskingError, match='keepLeading 3 and keepTrailing 4 cover all 7 of them'):
+        mask('555-0100')

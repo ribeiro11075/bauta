@@ -163,11 +163,11 @@ def test_a_write_replaces_the_file_rather_than_rewriting_it_in_place(tmp_path, m
     memory.recordRun('first')
     before = memoryFile.read_text()
 
-    def dieMidWrite(document, stream):
+    def dieMidWrite(document, stream, **arguments):
         stream.write('lastRun:\n  fir')
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(yaml, 'safe_dump', dieMidWrite)
+    monkeypatch.setattr(yaml, 'dump', dieMidWrite)
 
     with pytest.raises(KeyboardInterrupt):
         memory.recordRun('second')
@@ -268,3 +268,26 @@ def test_database_memory_gives_a_watermark_back_as_the_type_it_was(tmp_path, val
     read = memory.readWatermarks()['job1']
 
     assert type(read) is type(value) and read == value
+
+
+def test_a_decimal_watermark_round_trips_exactly(tmp_path):
+    """Written as a float, 12345678901234567.1 came back as 1.2345678901234568e+16
+    -- above the highest row read, so the rows between were skipped for good.
+    """
+    import decimal
+
+    memory = FileMemory(memoryFile=tmp_path / 'memory.yaml')
+    value = decimal.Decimal('12345678901234567.1')
+    memory.recordWatermark('loadEvents', value)
+
+    stored = FileMemory(memoryFile=tmp_path / 'memory.yaml').readWatermarks()['loadEvents']
+
+    assert stored == value and isinstance(stored, decimal.Decimal)
+    assert "!decimal '12345678901234567.1'" in (tmp_path / 'memory.yaml').read_text()
+
+
+def test_a_watermark_written_as_a_float_by_an_older_version_still_reads(tmp_path):
+    memoryFile = tmp_path / 'memory.yaml'
+    memoryFile.write_text('lastRun: {}\nmaskingKeys: {}\nwatermarks:\n  loadEvents: 1.2345678901234568e+16\n')
+
+    assert FileMemory(memoryFile=memoryFile).readWatermarks() == {'loadEvents': 1.2345678901234568e+16}

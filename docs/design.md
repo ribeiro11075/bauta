@@ -34,6 +34,8 @@ Loads are written a chunk at a time too, each chunk in its own transaction. The 
 
 One statement can't update a row twice, so for both, rows repeating a key within a chunk are first reduced to the last of them — what applying them in turn would leave.
 
+**A `sourceQuery` that repeats a key** is a question the two upsert paths answer differently, so it is worth not writing one. A stage-less `upsert` keeps the last row of each key, as above. An `upsert` with a `targetTableStage` loads every row into the stage first, and the stage carries the target's primary key, so the database refuses the repeat there — loudly, and before anything reaches the target. Deduplicate in the query instead.
+
 Where the [native masker](masking.md#the-native-masker) is installed, the three stages overlap rather than taking turns: masking moves to a worker thread while the reader and writer keep the database connections, which they must — `mysqlclient` and PyMySQL forbid a connection being used by a thread other than its own, and SQLite enforces the same. Drivers release the GIL while they wait on a socket and the native masker releases it for a whole chunk, so the waiting and the masking genuinely overlap. A job then holds about three chunks rather than one. Pure-Python masking is slow enough to swamp any wait worth hiding, so it stays sequential; `BAUTA_PIPELINE` overrides either default.
 
 One chunk is still masked at a time, and chunks are written in the order they were read. With [`maskingThreads`](masking.md#masking-threads) above 1, that chunk's distinct values are spread over several threads, which changes how fast it's masked, not the result. A stage-less upsert writes straight into the live target, where one statement can't update the same row twice, so a key repeating across chunks has to arrive as it was read.
@@ -56,11 +58,17 @@ Masking is a stage of this same pipeline (transform, then mask, then load), so a
 | postgresql, mssql, sqlite | yes: the renames run in one transaction |
 | oracle | **no**: Oracle commits each DDL statement on its own |
 
-On Oracle, a failure between the renames can leave the target under its temporary name; the job fails and says which statement failed.
+On Oracle, a rename that fails — another session holding the table, which is `ORA-00054` — undoes the renames that already went through, so both tables end where they started and the next run swaps normally. The job still fails, and says which statement failed. A process killed between two of the renames can't undo anything, and leaves a table under the temporary name for someone to rename back.
 
-**Views.** PostgreSQL ties a view to the table itself, not to its name, so after the renames a view over the target would read what is now the stage table. The swap takes care of it: each view built directly on the target is recreated from its own definition in the same transaction, so it reads the new target, and keeps its grants and the views built on it. The other dialects resolve views by name, so their views follow the swap by themselves.
+**Views.** PostgreSQL ties a view to the table itself, not to its name, so after the renames a view over the target would read what is now the stage table. The swap takes care of it: each view built directly on the target is recreated from its own definition in the same transaction, so it reads the new target, and keeps its grants and the views built on it. SQLite has the opposite habit — it rewrites the views that *name* a renamed table, to follow it — so the swap renames with `legacy_alter_table` on, which leaves them naming the target. The remaining dialects resolve views by name and need nothing.
 
-**What isn't rebound on PostgreSQL:** materialized views, which keep reading the old table until recreated, and foreign keys in other tables that reference the target, which move with the old table. For a target that either points at, recreate them in `postTargetAdhocQueries`, or use `upsert` with a stage table instead of `swap`.
+**What isn't rebound on PostgreSQL:** materialized views, which keep reading the old table until recreated.
+
+**What isn't rebound anywhere:** foreign keys in other tables that reference the target. Every database ties them to the table, not its name, so they move with the old table to the stage's name and stop checking the new target. The next run then can't empty the stage: PostgreSQL, SQL Server, Oracle, MySQL and MariaDB refuse to truncate a referenced table, and SQLite refuses to delete rows still referenced. Recreate those keys in `postTargetAdhocQueries`, or use `upsert` with a stage table instead of `swap`. `audit --connect` [reports](masking.md#reviewing-policies-audit) a swap job whose target such a key references.
+
+**A `postTargetAdhocQuery` that fails after the swap** fails the job, but the swap has already happened: the target holds the new rows. The failure says so, and reports the rows loaded rather than none, so a copy that was in fact rebuilt doesn't read as a job that moved nothing.
+
+**The swapped table's own keys alternate.** A stage table has none (it can't: see [`--stage-suffix`](masking.md#schema-creating-the-targets-tables)), so after a swap the live table is the keyless former stage, and after the next swap the original is back with its keys. Between the two, the copy enforces nothing, and no load fails to tell you. `audit --connect` [warns](masking.md#reviewing-policies-audit) about a swap job whose table declares keys. Recreate them in `postTargetAdhocQueries`, or use `upsert` with a stage table for any table whose keys matter.
 
 
 ## Incremental loads
@@ -73,13 +81,14 @@ loadOrders:
     select id, customerId, amount, updatedAt from orders
     where updatedAt > {{ watermark }} - interval 5 minute
   watermarkColumn: updatedAt
-  watermarkInitial: '1970-01-01 00:00:00'
+  watermarkInitial: 1970-01-01 00:00:00    # unquoted: YAML reads it as a timestamp
   insertStrategy: upsert
   # ...
 ```
 
 - **`{{ watermark }}`** is a bound parameter, not text substitution. It can go anywhere a value can, including a join or subquery, and is rewritten to each dialect's own placeholder, so one query works on all six.
 - **`watermarkColumn`** is read from the *raw* rows, before transforms run. A transform may reformat the column, and the next run's predicate needs a value the source can still compare against.
+- **`watermarkInitial` is bound as whatever YAML made of it.** Written without quotes, `1970-01-01 00:00:00` is a timestamp, which is what a timestamp column and the lookback arithmetic below both want. In quotes it is text, and PostgreSQL and Oracle refuse to subtract an interval from text — on the first run, every run, so the job never advances. Quote it only where the column really is text.
 - **`insertStrategy: upsert`** is required. `swap` would replace the target with only the rows that changed, deleting everything else.
 
 ### Why the lookback window
@@ -119,6 +128,18 @@ So every point a job can die at falls *backwards*, into re-reading rows already 
 
 A reasonable split: `swap` for small tables and anywhere deletes matter; watermarked `upsert` for large append-and-update tables where full refreshes are what hurt.
 
+### Tables that reference each other
+
+A watermarked parent holds only the rows changed since `watermarkInitial`. A new order for a customer who hasn't changed since then references a customer the parent job never selects. With the foreign key declared in the target, the child job fails on every run, because a failed job's watermark doesn't advance. Without it, the orders load with references that point at nothing. Copy the parent whole, or have its query also select what new child rows reference:
+
+```sql
+select * from customers c
+where c.updatedAt > {{ watermark }}
+   or exists (select 1 from orders o where o.customerId = c.id and o.updatedAt > {{ watermark }})
+```
+
+`audit --connect` [warns about a parent copied in part](masking.md#reviewing-policies-audit) whose child isn't limited to match, and [`verify-references`](masking.md#verify-references-checking-the-copys-references) counts the rows a copy already holds that point at nothing.
+
 ### Where watermarks are kept
 
 In run state: `jobs.yaml`'s `memory`, a file or a table (see [run state](operations.md#run-state)); from Python, a `MemoryBackend`. `FileMemory` writes each update to a temporary file and renames it into place, so a process killed mid-write leaves the previous version rather than a file nothing can parse. It assumes a filesystem that persists between runs and is shared by every worker. Where that's false — a container without a volume, anything scaled across machines, serverless — use `DatabaseMemory`. `FileMemory` there doesn't fail loudly: it silently forgets every watermark and re-extracts from `watermarkInitial`. See [library.md](library.md#memory-backends).
@@ -131,6 +152,8 @@ In run state: `jobs.yaml`'s `memory`, a file or a table (see [run state](operati
 A job with `refresh: 5` whose predecessor has `refresh: 60` runs alone for 11 cycles in 12, and waits for its predecessor on the 12th. That's deliberate — otherwise `refresh: 5` would silently behave as `refresh: 60` — and it's what lets an hourly dimension load and a 5-minute fact load coexist.
 
 The trade-off is freshness, not correctness: between windows the dependent reads output up to an hour old. That's fine for a durable table, and wrong if the predecessor produces something transient the dependent consumes. Give both the same `refresh` in that case.
+
+It's wrong too when the dependent's table references the predecessor's: in the cycles the predecessor sits out, new orders load before the customers they reference. `audit --connect` [warns about this](masking.md#reviewing-policies-audit), and about a referencing job that doesn't wait at all.
 
 `bauta jobs` shows which jobs are due and which are throttled.
 
@@ -168,6 +191,8 @@ Processes are started with Python's `spawn` method on every platform, so a progr
 **Logs from jobs** are sent back to the main process and written by its handlers, so they follow `--log`, `--log-format` and `--quiet` like everything else.
 
 **Ctrl-C** reaches every process in the terminal's group; jobs ignore it and leave the decision to the main process, as described under stopping above.
+
+**A run killed outright** — `kill -9`, an out-of-memory kill, a scheduler that doesn't wait — takes its jobs with it. Each job watches a pipe the run holds the other end of and never writes to, so it reads end-of-file the moment the run dies, and ends there: no unwinding, no further rows, and each server rolls back what it hadn't committed. It matters because the run lock is held by that process and dies with it, so the next `bauta run` can start immediately; a job left loading would have written over it.
 
 
 ## Retries
@@ -214,6 +239,19 @@ A policy must list **every column the query returns**, or the job fails before w
 Copying between different databases means one driver's values have to be accepted by another. Two connection settings make that work, and both apply to every job:
 
 - **Oracle.** CLOB and BLOB columns are fetched as plain text and bytes rather than as LOB handles, which no other driver can load. The session's date formats are set to ISO 8601, so text such as `'2026-01-02 03:04:05'` loads into a `DATE` or `TIMESTAMP` column; that includes SQLite's dates and a `watermarkInitial` compared against a date column. This changes Oracle's implicit conversions between dates and text in both directions, so a `sourceQuery` that relied on the default `DD-MON-RR` format, or that calls `TO_CHAR` on a date without a format, now sees ISO text. Dates that arrive as datetime objects are unaffected.
-- **SQLite.** `Decimal` values, which other drivers return for `NUMERIC` columns, are stored as their exact text. Dates, timestamps and UUIDs are stored as ISO text, replacing Python's built-in converters, which are deprecated since 3.12.
+- **SQLite.** `Decimal` values, which other drivers return for `NUMERIC` columns, are written as their exact text — and kept that way only by a column SQLite gives text affinity, which is what `schema` creates for a decimal. A column declared `DECIMAL(38,10)` has *numeric* affinity, and SQLite converts the text to an integer or a float as it stores it: `123456789012345678.1234567890` comes back as `123456789012345680`. Dates, timestamps and UUIDs are stored as ISO text, replacing Python's built-in converters, which are deprecated since 3.12.
 
 `tests/test_integration_schema.py` copies the same rows between every pair of the six databases to keep this true.
+
+
+## How names are written
+
+A table name lives in two places, and they want opposite things. A statement needs it quoted, or a table called `group` is a syntax error. A catalog lookup — the primary key an upsert matches on, the columns a load fills, whether the table is there at all — binds it as a *value*, and a catalog holds names bare, so quoting one hides the table completely.
+
+So a name given to bauta is read before it is used. It is split on the dot that separates schema from table, ignoring dots inside quotes; each part is then unquoted, or, if it was written plainly, folded the way that database folds an unquoted name — upper case on Oracle, lower case on PostgreSQL, unchanged elsewhere. That spelling is what a lookup binds. To build a statement, it is quoted again in that database's own style. A name no database would accept unquoted, such as one with a space, is taken as it is written, since it has no unquoted spelling to fold.
+
+Two things follow. Writing `orders` means whatever the database means by `orders`, on all six. Writing `"Orders"` means that exact table, and is the only way to name one whose case the database would otherwise fold.
+
+A name longer than the target keeps is refused rather than used. Every database but SQLite cuts one to its limit — 63 bytes on PostgreSQL, 64 characters on MySQL and MariaDB, 128 on Oracle and SQL Server — and none of them says so, so two names alike up to the limit are one table: two jobs would load over each other, and the second swap would rename over the first's rows.
+
+The same reading builds the temporary name a swap renames through, so the suffix goes inside the quotes — `[group_tmp]`, never `[group]_tmp`, which SQL Server's parser refuses. `bauta schema` quotes the tables it creates as it already quoted their columns, and `subset` and `discover` quote the names they write into the jobs and queries they generate.

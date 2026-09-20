@@ -42,8 +42,9 @@ def test_a_related_schema_fills_with_valid_rows(server):
     suffix = uuid.uuid4().hex[:6]
     customers, products, orders, items = ('{}_{}'.format(table, suffix) for table in ('cust', 'prod', 'ord', 'item'))
     statements = [
-        'CREATE TABLE {} (id INT PRIMARY KEY, email VARCHAR(60) NOT NULL, first_name VARCHAR(20), birth_date DATE, '
-        'balance DECIMAL(10,2), active {}, notes {}, created_at {}, token {})'.format(customers, flag, text, timestamp, identifier),
+        'CREATE TABLE {} (id INT PRIMARY KEY, email VARCHAR(60) NOT NULL, code VARCHAR(20) NOT NULL UNIQUE, first_name VARCHAR(20), '
+        'birth_date DATE, balance DECIMAL(10,2), active {}, notes {}, created_at {}, token {})'.format(
+            customers, flag, text, timestamp, identifier),
         'CREATE TABLE {} (sku VARCHAR(12) PRIMARY KEY, price DECIMAL(8,2) NOT NULL)'.format(products),
         'CREATE TABLE {0} (id INT PRIMARY KEY, customer_id INT NOT NULL, CONSTRAINT fk_{0} FOREIGN KEY (customer_id) REFERENCES {1}(id))'.format(
             orders, customers),
@@ -62,9 +63,11 @@ def test_a_related_schema_fills_with_valid_rows(server):
         assert database.query('SELECT count(DISTINCT email) FROM {}'.format(customers)) == [(40,)]
         assert database.query('SELECT count(*) FROM {} WHERE sku NOT IN (SELECT sku FROM {})'.format(items, products)) == [(0,)]
 
-        # And again, continuing after the keys already there.
+        # And again, continuing after the keys already there. A UNIQUE column
+        # that isn't the key is what a repeated run used to collide on.
         assert synthesizeTable(database, customers, 10) == 10
         assert database.query('SELECT max(id) FROM {}'.format(customers))[0][0] == 50
+        assert database.query('SELECT count(DISTINCT code) FROM {}'.format(customers)) == [(50,)]
     finally:
         for table in (items, orders, products, customers):
             database.alter('DROP TABLE {}'.format(table))

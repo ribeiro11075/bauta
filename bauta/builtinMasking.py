@@ -240,6 +240,14 @@ class DigitsStrategy(Strategy):
 
         keepLeading = self.options.get('keepLeading', 0)
         keepTrailing = self.options.get('keepTrailing', 0)
+
+        # Otherwise the value would be returned as it is, while the manifest
+        # said it was masked: '555-0100' under keepLeading 3, keepTrailing 4.
+        if digits and len(digits) <= keepLeading + keepTrailing:
+            raise MaskingError('the digits strategy would keep every digit of this value: keepLeading {} and keepTrailing {} cover all {} of '
+                               'them, so it would be copied unmasked. Lower them, or mask this column another way'.format(
+                                   keepLeading, keepTrailing, len(digits)))
+
         stream = self.keyedHash.expand(digits.encode('ascii'), 2 * len(digits) + 32)
         generated = [str(byte % 10) for byte in stream if byte < 250]
 
@@ -391,7 +399,9 @@ _CALENDAR_INSIDE = range(datetime.date.min.toordinal() + 1, datetime.date.max.to
 
 class DateShiftStrategy(Strategy):
     """Move a date or timestamp by a keyed number of whole days, never zero.
-    ISO 8601 text is written back in the same shape.
+    The shift is keyed on the day, so every value on a day moves alike, whether
+    it is a date, a timestamp or ISO 8601 text. Text is written back in the
+    same shape.
 
     0001-01-01 and 9999-12-31 mean "no date" or "forever", so they are kept,
     and a shift that would leave the calendar or land on them goes the other way.
@@ -401,9 +411,17 @@ class DateShiftStrategy(Strategy):
     OPTIONS = {'maxDays': _integerOption(1, 36500)}
 
     def _offset(self, value: Any) -> datetime.timedelta:
+        """Keyed on the day alone, never the time of day, so everything that
+        happened on one day moves to one day.
+
+        Keyed on the whole value, two timestamps hours apart landed days apart,
+        a day's rows scattered across the month, and a DATE column and a
+        TIMESTAMP column holding the same day disagreed about where it went.
+        """
 
         maxDays = self.options.get('maxDays', 30)
-        days = self.keyedHash.below(_canonical(value), 2 * maxDays) - maxDays
+        day = value.date() if isinstance(value, datetime.datetime) else value
+        days = self.keyedHash.below(_canonical(day), 2 * maxDays) - maxDays
 
         return datetime.timedelta(days=days + 1 if days >= 0 else days)
 
@@ -556,7 +574,10 @@ class FakeStreetAddressStrategy(_FakeStrategy):
 
 
 _ALPHANUMERIC_CLASSES = ('0123456789', 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-_HEX_DIGITS = '0123456789abcdef'
+# Per case, so a hex value keeps each character's case and two spellings of
+# one value never share a mask. FF1 needs one alphabet for every position,
+# so `fpe` uses both cases together instead (_FPE_ALPHABETS).
+_HEX_CLASSES = ('0123456789', 'abcdef', 'ABCDEF')
 
 
 class KeyStrategy(Strategy):
@@ -595,7 +616,7 @@ class KeyStrategy(Strategy):
 
         for character in text:
             if charset == 'hex':
-                alphabets.append(_HEX_DIGITS if character.lower() in _HEX_DIGITS else None)
+                alphabets.append(next((alphabet for alphabet in _HEX_CLASSES if character in alphabet), None))
             elif charset == 'digits':
                 alphabets.append(_ALPHANUMERIC_CLASSES[0] if '0' <= character <= '9' else None)
             else:
@@ -609,11 +630,10 @@ class KeyStrategy(Strategy):
         _requireIdentifierLength('key', len(text))
         _requireAsciiCharset('key', text, charset)
         alphabets = self._alphabets(text, charset)
-        lowered = text.lower() if charset == 'hex' else text
 
         size = 1
         number = 0
-        for character, alphabet in zip(lowered, alphabets):
+        for character, alphabet in zip(text, alphabets):
             if alphabet is not None:
                 size *= len(alphabet)
                 number = number * len(alphabet) + alphabet.index(character)
@@ -632,12 +652,7 @@ class KeyStrategy(Strategy):
                 masked, index = divmod(masked, len(alphabet))
                 characters.append(alphabet[index])
 
-        result = ''.join(reversed(characters))
-
-        if charset == 'hex' and any(character in 'ABCDEF' for character in text) and not any(character in 'abcdef' for character in text):
-            return result.upper()
-
-        return result
+        return ''.join(reversed(characters))
 
 
     def mask(self, value: Any) -> Any:
@@ -664,7 +679,7 @@ class KeyStrategy(Strategy):
 
 _FPE_ALPHABETS = {
     'digits': '0123456789',
-    'hex': '0123456789abcdef',
+    'hex': '0123456789abcdefABCDEF',
     'alphanumeric': '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
     }
 
@@ -734,8 +749,7 @@ class FPEStrategy(Strategy):
         _requireIdentifierLength('fpe', len(text))
         _requireAsciiCharset('fpe', text, charset)
         alphabet = _FPE_ALPHABETS[charset]
-        lowered = text.lower() if charset == 'hex' else text
-        positions = [index for index, character in enumerate(lowered) if character in alphabet]
+        positions = [index for index, character in enumerate(text) if character in alphabet]
         cipher = self._cipher(len(alphabet))
 
         if len(positions) < cipher.minimumLength:
@@ -744,17 +758,13 @@ class FPEStrategy(Strategy):
 
         masked = set(positions)
         shape = ''.join('\x00' if index in masked else character for index, character in enumerate(text))
-        numerals = cipher.encrypt([alphabet.index(lowered[index]) for index in positions], ('text|' + charset + '|' + shape).encode('utf-8'))
+        numerals = cipher.encrypt([alphabet.index(text[index]) for index in positions], ('text|' + charset + '|' + shape).encode('utf-8'))
 
         characters = list(text)
         for index, numeral in zip(positions, numerals):
             characters[index] = alphabet[numeral]
-        result = ''.join(characters)
 
-        if charset == 'hex' and any(character in 'ABCDEF' for character in text) and not any(character in 'abcdef' for character in text):
-            return result.upper()
-
-        return result
+        return ''.join(characters)
 
 
     def mask(self, value: Any) -> Any:

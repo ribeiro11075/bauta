@@ -72,7 +72,7 @@ warehouse:
 | Field | Required or default | Meaning |
 | --- | --- | --- |
 | `type` | required | `oracle`, `mysql`, `postgresql`, `mssql`, `mariadb` or `sqlite` |
-| `database` | required | The database name. For `sqlite`, a file path or `:memory:`. |
+| `database` | required | The database name. For `sqlite`, a file path or `:memory:`. SQLite connections enforce declared foreign keys, as every other database does; SQLite itself leaves them off unless asked. |
 | `host`, `user` | required except for `sqlite` | SQLite is a local file with no server or authentication, so these are omitted for it. |
 | `password` | required except for `sqlite`, unless `passwordCommand` is set | Held as a secret, so it never appears in a log line or a traceback. |
 | `passwordCommand` | optional | A command whose output is the password, run at every connection. A string is split as a shell would split it, without a shell; `validate` rejects one that names no program or has an unterminated quote. For credentials that expire; see [passwords that expire](#passwords-that-expire). |
@@ -200,8 +200,8 @@ history:
 | `sourceDatabase` | required | An alias from `database.yaml`. |
 | `sourceQuery` | required | The query to extract with. |
 | `chunkSize` | required, at least 1 | Rows per batch. Extracts stream, so this is the **memory dial**: peak memory is about `chunkSize` × row width however large the source is — three times that where the [native masker](masking.md#the-native-masker) overlaps reading, masking and writing. |
-| `watermarkColumn` | optional | Makes the job incremental. See [incremental loads](design.md#incremental-loads). |
-| `watermarkInitial` | required with `watermarkColumn` | The value bound on the first run, before anything is stored. |
+| `watermarkColumn` | optional | Makes the job incremental. See [incremental loads](design.md#incremental-loads). Refused on a column the masking policy masks: the watermark is read before masking and kept in run state, logs and `bauta jobs`, so it would leak the unmasked value. |
+| `watermarkInitial` | required with `watermarkColumn` | The value bound on the first run, before anything is stored. Bound as the type YAML read: write a timestamp unquoted, or PostgreSQL and Oracle refuse the [lookback](design.md#why-the-lookback-window) arithmetic around it. |
 
 A job with `watermarkColumn` must also put a `{{ watermark }}` placeholder in `sourceQuery` and use `insertStrategy: upsert`. Validation enforces all three.
 
@@ -294,7 +294,9 @@ Masking runs after transforms, on `sourceQuery`'s result columns. **Every column
 
 **`targetColumns` is purely positional.** Left unset, `sourceQuery` must select every column of `targetTableFinal` in that table's own order. Real column names in the wrong order load data into the wrong columns *without any error*, since both sides are valid; a wrong count fails at the database.
 
-**Column names are quoted** in the statements a load writes, so a reserved word such as `rank` or `order` works as a column. Each name is first matched to the target's own spelling, ignoring case, so `targetColumns: [job]` still finds Oracle's `JOB`; a name the table doesn't have fails the job before anything is written, and so does one that matches two columns differing only in case, until it's spelled exactly. Table names are written as given.
+**Column names are quoted** in the statements a load writes, so a reserved word such as `rank` or `order` works as a column. Each name is first matched to the target's own spelling, ignoring case, so `targetColumns: [job]` still finds Oracle's `JOB`; a name the table doesn't have fails the job before anything is written, and so does one that matches two columns differing only in case, until it's spelled exactly.
+
+**Table names are quoted too**, so `targetTableFinal: group` loads into a table named for a reserved word. A name written plainly means what it means without quotes, so `orders` finds Oracle's `ORDERS` and PostgreSQL's `orders`; to name a table those two would fold differently — Oracle's lower-case `"orders"`, PostgreSQL's `"Orders"` — write it in quotes, in that database's own style (`"..."`, or `` `...` `` on MySQL and MariaDB, `[...]` on SQL Server), and that spelling is kept as it is. A schema is quoted apart from the table, so `sales.group` stays two names. The same holds for `targetTableStage`, for the tables `clear` empties, and for the names `schema`, `subset` and `discover` write into what they generate. `sourceQuery` and the adhoc queries are yours, and are written into SQL as given.
 
 
 ## Validation

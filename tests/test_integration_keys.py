@@ -8,7 +8,8 @@ Regression tests for three ways the key lookup used to go wrong, each silently:
   (Oracle) or was refused outright (PostgreSQL);
 - a key-only table on MySQL used INSERT IGNORE, which also swallows real errors.
 
-And for swap with schema-qualified names, which renames used to reject.
+And for swap with schema-qualified names, which renames used to reject, and
+with a table other tables reference, whose keys stay on the old table.
 
 Parametrized over the five servers in docker-compose.yml; any that isn't
 reachable, or whose driver isn't installed, is skipped with a reason. Run with
@@ -168,6 +169,45 @@ def test_swap_works_with_schema_qualified_names(server, otherSchema):
     assert _rows(database, stage) == [(1,)]
     assert database.tableExists(final)
     assert not database.tableExists('{}.{}_tmp'.format(otherSchema, final.rpartition('.')[2]))
+
+
+def test_a_swap_leaves_other_tables_keys_on_the_old_table(server):
+    """What audit's swap check rests on: a key referencing the target moves
+    with the old table to the stage's name, and the next run can't empty it.
+    """
+    from bauta.audit import auditJobs
+    from bauta.configuration import DataJobConfig
+
+    _, database, table = server
+    final = table('(id INT PRIMARY KEY)')
+    stage = table('(id INT PRIMARY KEY)')
+    child = table('(id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES {}(id))'.format(final))
+    database.insert(table=final, data=[(1,)])
+    database.insert(table=child, data=[(10, 1)])
+
+    def referenced():
+        return {foreignKey.referencedTable.lower() for foreignKey in database.getForeignKeys() if foreignKey.table.lower() == child.lower()}
+
+    def errors():
+        jobs = {'loadParent': DataJobConfig(active=True, sourceDatabase='prod', sourceQuery='select * from parent', targetDatabase='copy',
+                                            targetTableStage=stage, targetTableFinal=final, insertStrategy='swap', chunkSize=10)}
+        return [finding['message'] for finding in auditJobs(jobs, declaredForeignKeys={'copy': database.getForeignKeys()})['findings']
+                if finding['severity'] == 'error']
+
+    assert referenced() == {final.lower()}
+    (before,) = errors()
+    assert 'which loadParent replaces by swap' in before
+
+    database.swap(targetTable=final, stageTable=stage)
+
+    assert referenced() == {stage.lower()}
+    (after,) = errors()
+    assert 'the stage table of loadParent, as an earlier swap leaves it' in after
+
+    # Oracle names no foreign key, only its own ORA-02266.
+    with pytest.raises(Exception, match='(?i)foreign key|ORA-02266'):
+        database.truncate(stage)
+    database.connection.rollback()
 
 
 def test_database_history_and_key_fingerprints_work_on_every_server(server):

@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Ty
 
 from .configuration import WATERMARK_PLACEHOLDER, ConfigurationError, DatabaseConnectionConfig, DatabaseType
 from .databaseDialects import ColumnDefinition, DatabaseDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
-    SQLiteDialect, quoteIdentifier, splitTableName
+    SQLiteDialect, quoteFoldedTable, quoteIdentifier, splitTableName, suffixedName, tooLongName
 
 DIALECTS: Dict[DatabaseType, DatabaseDialect] = {
     DatabaseType.MYSQL: MySQLDialect(),
@@ -194,9 +194,37 @@ class Database:
 
     def truncate(self, table: str) -> None:
 
-        query = self.dialect.truncateQuery(table=table)
+        query = self.dialect.truncateQuery(table=self.statementName(table))
         self.cursor.execute(query)
         self.connection.commit()
+
+
+    def checkName(self, table: str) -> None:
+        """Refuses a name this database would silently cut to its length limit.
+
+        Cutting is not an error anywhere, so two tables named alike up to the
+        limit are one table: two jobs loaded over each other, and the second
+        swap renamed over the first's rows while both jobs reported failure.
+        """
+
+        problem = tooLongName(self.type, table)
+        if problem is not None:
+            raise ConfigurationError('table {}: {}. Load it into a shorter name'.format(table, problem))
+
+
+    def statementName(self, table: str) -> str:
+        """`table` as a statement must spell it: quoted, so a table named for a
+        reserved word works, and folded as this database folds an unquoted name,
+        so a name written plainly still means the table it named unquoted.
+
+        A name already quoted -- the only way to write one this database folds
+        differently -- keeps its own spelling. Catalog lookups take the name as
+        written and unquote it themselves.
+        """
+
+        self.checkName(table)
+
+        return quoteFoldedTable(self.type, table)
 
 
     def getAllColumnTypes(self, table: str) -> List[Any]:
@@ -204,7 +232,7 @@ class Database:
         metadata via cursor.description without scanning or fetching any rows.
         """
 
-        query = 'SELECT * FROM {} WHERE 1=0'.format(table)
+        query = 'SELECT * FROM {} WHERE 1=0'.format(self.statementName(table))
         self.cursor.execute(query)
 
         return [row[1] for row in self.cursor.description]
@@ -213,7 +241,7 @@ class Database:
     def getAllColumnNames(self, table: str) -> List[str]:
         """See getAllColumnTypes for why the query is bounded with WHERE 1=0."""
 
-        query = 'SELECT * FROM {} WHERE 1=0'.format(table)
+        query = 'SELECT * FROM {} WHERE 1=0'.format(self.statementName(table))
         self.cursor.execute(query)
 
         return [row[0] for row in self.cursor.description]
@@ -289,6 +317,11 @@ class Database:
 
 
     def tableExists(self, table: str) -> bool:
+        """Checked here as well as in statementName, since `schema --apply`
+        asks this before creating a table and writes its own DDL.
+        """
+
+        self.checkName(table)
 
         return self.dialect.tableExists(self.cursor, table)
 
@@ -343,10 +376,13 @@ class Database:
         """
 
         resolvedColumns = self.quoted(self.catalogColumns(table=table, columns=columns))
-        query = 'INSERT INTO {} ({}) VALUES ({})'.format(table, ', '.join(resolvedColumns), ', '.join(self.dialect.placeholders(len(resolvedColumns))))
+        statementTable = self.statementName(table)
+        query = 'INSERT INTO {} ({}) VALUES ({})'.format(
+            statementTable, ', '.join(resolvedColumns), ', '.join(self.dialect.placeholders(len(resolvedColumns))))
 
         for batch in self._batches(data, chunkSize):
-            if not self.dialect.bulkInsert(self.cursor, table, resolvedColumns, batch):
+            batch = self.dialect.prepareValues(batch)
+            if not self.dialect.bulkInsert(self.cursor, statementTable, resolvedColumns, batch):
                 self.cursor.executemany(query, batch)
             self.connection.commit()
 
@@ -363,13 +399,16 @@ class Database:
         canCollapse = len(keyIndexes) == len(primaryKeyColumns)
 
         allColumns, primaryKeyColumns, nonPrimaryKeyColumns = self.quoted(allColumns), self.quoted(primaryKeyColumns), self.quoted(nonPrimaryKeyColumns)
-        query = self.dialect.upsertQuery(table=table, allColumns=allColumns, primaryKeyColumns=primaryKeyColumns, nonPrimaryKeyColumns=nonPrimaryKeyColumns)
+        statementTable = self.statementName(table)
+        query = self.dialect.upsertQuery(table=statementTable, allColumns=allColumns, primaryKeyColumns=primaryKeyColumns,
+                                         nonPrimaryKeyColumns=nonPrimaryKeyColumns)
 
         for batch in self._batches(data, chunkSize):
+            batch = self.dialect.prepareValues(batch)
             loaded = False
             if canCollapse:
                 lastPerKey = list({tuple(row[index] for index in keyIndexes): row for row in batch}.values())
-                loaded = self.dialect.bulkUpsert(self.cursor, table, allColumns, primaryKeyColumns, nonPrimaryKeyColumns, lastPerKey)
+                loaded = self.dialect.bulkUpsert(self.cursor, statementTable, allColumns, primaryKeyColumns, nonPrimaryKeyColumns, lastPerKey)
             if not loaded:
                 self.cursor.executemany(query, batch)
             self.connection.commit()
@@ -378,7 +417,8 @@ class Database:
     def upsertFromStage(self, targetTable: str, stageTable: str, columns: Optional[List[str]] = None) -> None:
 
         allColumns, primaryKeyColumns, nonPrimaryKeyColumns = (self.quoted(bucket) for bucket in self._getColumnBuckets(table=targetTable, columns=columns))
-        query = self.dialect.upsertFromStageQuery(targetTable=targetTable, stageTable=stageTable, allColumns=allColumns,
+        query = self.dialect.upsertFromStageQuery(targetTable=self.statementName(targetTable), stageTable=self.statementName(stageTable),
+                                                    allColumns=allColumns,
                                                     primaryKeyColumns=primaryKeyColumns, nonPrimaryKeyColumns=nonPrimaryKeyColumns)
         self.alter(query=query)
 
@@ -390,7 +430,13 @@ class Database:
 
         stageSchema, _ = splitTableName(stageTable)
         _, targetName = splitTableName(targetTable)
-        tempTable = '{}.{}_tmp'.format(stageSchema, targetName) if stageSchema else targetName + '_tmp'
+        # Suffixed as written and quoted afterwards, so the temporary name is
+        # spelled like the target it stands in for. The suffix goes inside the
+        # quotes of a quoted name: `[group]_tmp` is not a name SQL Server's
+        # sp_rename can parse.
+        tempName = suffixedName(self.type, targetName, '_tmp')
+        tempTable = '{}.{}'.format(stageSchema, tempName) if stageSchema else tempName
 
-        self.dialect.swap(self.cursor, targetTable=targetTable, stageTable=stageTable, tempTable=tempTable)
+        self.dialect.swap(self.cursor, targetTable=self.statementName(targetTable), stageTable=self.statementName(stageTable),
+                          tempTable=self.statementName(tempTable))
         self.connection.commit()

@@ -11,7 +11,7 @@ import re
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from .configuration import DatabaseType
-from .databaseDialects import ColumnDefinition, ForeignKey, quoteFolded
+from .databaseDialects import ColumnDefinition, ForeignKey, bareName, quoteFolded, quoteFoldedTable, splitTableName, tooLongName
 
 
 class SchemaError(Exception):
@@ -23,6 +23,11 @@ class PortableType(NamedTuple):
 
     kind is one of: smallint, integer, bigint, decimal, float, boolean, text,
     fixedText, date, timestamp, timestampTz, time, binary, uuid, json.
+
+    `precision` and `scale` size a decimal. On an integer kind, `precision` is
+    the digits the source column holds, set only where that is more than the
+    kind's name suggests -- MySQL's BIGINT UNSIGNED, SQLite's 64-bit INTEGER --
+    so the target's narrower type can be noted.
     """
 
     kind: str
@@ -79,6 +84,11 @@ def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> Portable
 
     name = column.dataType.lower().strip()
     base = re.sub(r'\(.*?\)', '', name).strip()
+    # MySQL and MariaDB report `int unsigned` as one type name; every other
+    # attribute (`zerofill`, character sets) is dropped the same way.
+    unsigned = base.endswith(' unsigned')
+    if unsigned:
+        base = base[:-len(' unsigned')].strip()
 
     if sourceType == DatabaseType.ORACLE:
         if base == 'number':
@@ -108,7 +118,8 @@ def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> Portable
         # SQLite's own type-affinity rules, in its documented order.
         upper = base.upper()
         if 'INT' in upper:
-            return PortableType('bigint') if 'BIG' in upper else PortableType('integer')
+            # Whatever it is declared as, SQLite stores an integer in up to 8 bytes.
+            return PortableType('bigint') if 'BIG' in upper else PortableType('integer', precision=SQLITE_INTEGER_DIGITS)
         if 'BOOL' in upper:
             return PortableType('smallint', note=INTEGER_BOOLEAN_NOTE)
         if any(word in upper for word in ('CHAR', 'CLOB', 'TEXT')):
@@ -132,9 +143,10 @@ def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> Portable
     if base in ('tinyint', 'smallint', 'int2'):
         return PortableType('smallint')
     if base in ('int', 'integer', 'mediumint', 'int4', 'serial'):
-        return PortableType('integer')
+        # An unsigned column reaches 4294967295, which no target's INT holds.
+        return PortableType('integer', precision=UNSIGNED_INTEGER_DIGITS) if unsigned else PortableType('integer')
     if base in ('bigint', 'int8', 'bigserial'):
-        return PortableType('bigint')
+        return PortableType('bigint', precision=UNSIGNED_BIGINT_DIGITS) if unsigned else PortableType('bigint')
     if base in ('decimal', 'numeric', 'money', 'smallmoney'):
         if base in ('money', 'smallmoney'):
             return PortableType('decimal', precision=19, scale=4)
@@ -180,9 +192,80 @@ def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> Portable
 # this bounded length instead.
 KEY_TEXT_LENGTH = 255
 
+# Oracle keeps a TIME as text. MySQL's driver returns a TIME as a timedelta,
+# whose text runs to '-35 days, 1:00:01.999999' at the type's limits.
+ORACLE_TIME_LENGTH = 32
+
+SQLITE_INTEGER_DIGITS = 19
+
+# MySQL's and MariaDB's unsigned integers reach 4294967295 and
+# 18446744073709551615, which no other database's INT or BIGINT holds.
+UNSIGNED_INTEGER_DIGITS = 10
+UNSIGNED_BIGINT_DIGITS = 20
+
+# The digits each target's integer types take. SQLite gives all three the same
+# 64-bit affinity whatever they are called, and Oracle renders them as
+# NUMBER(n), which holds every value of that many digits.
+INTEGER_DIGITS = {'smallint': 4, 'integer': 9, 'bigint': 18}
+_TARGET_INTEGER_DIGITS = {
+    DatabaseType.ORACLE: {'smallint': 5, 'integer': 10, 'bigint': 19},
+    DatabaseType.SQLITE: {'smallint': 19, 'integer': 19, 'bigint': 19},
+    }
+
+
+def _decimal(name: str, precision: Optional[int], scale: Optional[int], maxPrecision: int, maxScale: int,
+             defaultScale: Optional[int] = None, unbounded: Optional[str] = None) -> Tuple[str, Optional[str]]:
+    """A decimal in the target's limits, and a note wherever they cut it.
+
+    `unbounded` is what this target calls a decimal of any size. Without one,
+    a source column that declared no precision has to be given the largest
+    decimal the target has, which is a choice, not a copy.
+    """
+
+    if not precision:
+        if unbounded:
+            return unbounded, None
+        rendered = '{}({},{})'.format(name, maxPrecision, defaultScale if defaultScale is not None else maxScale)
+        return rendered, 'the source declares no precision or scale; mapped to {}, which rounds anything longer'.format(rendered)
+
+    keptPrecision, keptScale = min(precision, maxPrecision), min(scale or 0, maxScale)
+    rendered = '{}({},{})'.format(name, keptPrecision, keptScale)
+    if (keptPrecision, keptScale) != (precision, scale or 0):
+        return rendered, 'the source is {}({},{}), more than this target holds; clamped to {}'.format(name, precision, scale or 0, rendered)
+
+    return rendered, None
+
+
+# The collation a key column needs on the databases whose default compares
+# text loosely, where two keys the source keeps apart would otherwise become
+# one row: `a` and `A`, `ss` and the German sharp s, and on MySQL and MariaDB
+# `a` and `a ` too. SQL Server compares trailing spaces loosely whatever the
+# collation, so there it refuses the second key instead of merging it.
+KEY_COLLATIONS = {
+    DatabaseType.MYSQL: 'utf8mb4_0900_bin',
+    DatabaseType.MARIADB: 'utf8mb4_nopad_bin',
+    DatabaseType.MSSQL: 'Latin1_General_BIN2',
+    }
+
+# The kinds a collation applies to.
+_COLLATED_KINDS = ('text', 'fixedText', 'uuid')
+
 
 def renderType(targetType: DatabaseType, portable: PortableType, isKey: bool) -> Tuple[str, Optional[str]]:
-    """The target dialect's type for a portable one, and a note if it's lossy."""
+    """The target dialect's type for a portable one, and a note if it's lossy.
+
+    A key column also carries a collation that compares text exactly, where the
+    target's default wouldn't; see KEY_COLLATIONS. Every column a key is made
+    of gets it, on both sides of a foreign key, since the two must agree.
+    """
+
+    rendered, note = _renderedType(targetType, portable, isKey)
+    collation = KEY_COLLATIONS.get(targetType) if isKey and portable.kind in _COLLATED_KINDS else None
+
+    return ('{} COLLATE {}'.format(rendered, collation) if collation else rendered), note
+
+
+def _renderedType(targetType: DatabaseType, portable: PortableType, isKey: bool) -> Tuple[str, Optional[str]]:
 
     kind, length, precision, scale = portable.kind, portable.length, portable.precision, portable.scale
     note = None
@@ -191,9 +274,14 @@ def renderType(targetType: DatabaseType, portable: PortableType, isKey: bool) ->
         length = KEY_TEXT_LENGTH
         note = 'unbounded text in a key; bounded to {} characters'.format(KEY_TEXT_LENGTH)
 
+    if kind in INTEGER_DIGITS and precision:
+        held = _TARGET_INTEGER_DIGITS.get(targetType, INTEGER_DIGITS)[kind]
+        if precision > held:
+            note = 'the source holds values of {} digits and this type {}; longer ones will be refused as they load'.format(precision, held)
+
     if targetType in (DatabaseType.MYSQL, DatabaseType.MARIADB):
         if kind == 'decimal':
-            return ('DECIMAL({},{})'.format(min(precision, 65), min(scale or 0, 30)) if precision else 'DECIMAL(65,30)'), note
+            return _decimal('DECIMAL', precision, scale, 65, 30)
         if kind == 'text' and (length is None or length > 16383):
             return 'LONGTEXT', note
         rendered = {
@@ -208,7 +296,7 @@ def renderType(targetType: DatabaseType, portable: PortableType, isKey: bool) ->
 
     if targetType == DatabaseType.POSTGRESQL:
         if kind == 'decimal':
-            return ('NUMERIC({},{})'.format(precision, scale or 0) if precision else 'NUMERIC'), note
+            return _decimal('NUMERIC', precision, scale, 1000, 1000, unbounded='NUMERIC')
         return {
             'smallint': 'SMALLINT', 'integer': 'INTEGER', 'bigint': 'BIGINT', 'float': 'DOUBLE PRECISION', 'boolean': 'BOOLEAN',
             'text': 'VARCHAR({})'.format(length) if length else 'TEXT', 'fixedText': 'CHAR({})'.format(length), 'date': 'DATE',
@@ -217,7 +305,7 @@ def renderType(targetType: DatabaseType, portable: PortableType, isKey: bool) ->
 
     if targetType == DatabaseType.MSSQL:
         if kind == 'decimal':
-            return ('DECIMAL({},{})'.format(min(precision, 38), min(scale or 0, 38)) if precision else 'DECIMAL(38,10)'), note
+            return _decimal('DECIMAL', precision, scale, 38, 38, defaultScale=10)
         if kind in ('text', 'json') and (length is None or length > 4000):
             return 'NVARCHAR(MAX)', note
         return {
@@ -229,13 +317,17 @@ def renderType(targetType: DatabaseType, portable: PortableType, isKey: bool) ->
 
     if targetType == DatabaseType.ORACLE:
         if kind == 'decimal':
-            return ('NUMBER({},{})'.format(min(precision, 38), scale or 0) if precision else 'NUMBER'), note
+            return _decimal('NUMBER', precision, scale, 38, 127, unbounded='NUMBER')
         if kind in ('text', 'json') and (length is None or length > 4000):
             return 'CLOB', note
         if kind == 'time':
-            return 'VARCHAR2(16 CHAR)', 'Oracle has no TIME type; mapped to text'
+            return 'VARCHAR2({} CHAR)'.format(ORACLE_TIME_LENGTH), \
+                'Oracle has no TIME type; mapped to text, wide enough for the day-long values MySQL\'s TIME allows'
         if kind == 'boolean':
             return 'NUMBER(1)', 'mapped to NUMBER(1)'
+        if kind == 'timestampTz':
+            return 'TIMESTAMP WITH TIME ZONE', 'Oracle keeps the offset of the session that loads the row, not the source\'s; ' \
+                'the instant moves unless that session is UTC'
         return {
             'smallint': 'NUMBER(5)', 'integer': 'NUMBER(10)', 'bigint': 'NUMBER(19)', 'float': 'BINARY_DOUBLE',
             'text': 'VARCHAR2({} CHAR)'.format(length), 'fixedText': 'CHAR({} CHAR)'.format(length), 'date': 'DATE',
@@ -244,7 +336,13 @@ def renderType(targetType: DatabaseType, portable: PortableType, isKey: bool) ->
 
     # SQLite: declared names that give each value the right affinity.
     if kind == 'decimal':
-        return ('DECIMAL({},{})'.format(precision, scale or 0) if precision else 'NUMERIC'), note
+        # TEXT, not DECIMAL: SQLite has no exact decimal type, and a column
+        # whose declared name gives it NUMERIC affinity converts the value to
+        # an integer or a float as it is stored. 123456789012345678.123456789
+        # came back as 123456789012345680, silently. Text keeps every digit,
+        # and the drivers that read the copy parse it back.
+        return 'TEXT', ('SQLite has no exact decimal type; stored as text, which keeps every digit, rather than as the '
+                        'float a DECIMAL column would hold')
     return {
         'smallint': 'SMALLINT', 'integer': 'INTEGER', 'bigint': 'BIGINT', 'float': 'REAL', 'boolean': 'BOOLEAN',
         'text': 'VARCHAR({})'.format(length) if length else 'TEXT', 'fixedText': 'CHAR({})'.format(length), 'date': 'DATE',
@@ -252,18 +350,33 @@ def renderType(targetType: DatabaseType, portable: PortableType, isKey: bool) ->
         }[kind], note
 
 
+def tableKey(table: str) -> str:
+    """A table name as this module matches it: each part without the quotes a
+    reserved word or a mixed-case name needs, and upper-cased, since the
+    catalogs a source's foreign keys come from report names bare.
+    """
+
+    schema, name = splitTableName(table)
+
+    return '.'.join(bareName(part) for part in ([schema, name] if schema else [name])).upper()
+
+
 def readTable(database: Any, table: str, foreignKeys: Sequence[ForeignKey]) -> TableDefinition:
-    """A table's shape from a live source Database."""
+    """A table's shape from a live source Database, under the name asked for.
+
+    Spelling the name as a matching foreign key does instead spelled one table
+    the way the catalog holds it (upper case on Oracle) and the next the way it
+    was asked for, so one invocation emitted CREATE TABLE CUSTOMERS beside
+    CREATE TABLE type_zoo, and jobs written against the lower-case names then
+    found only half of them.
+    """
 
     columns = database.getColumnDefinitions(table)
     if not columns:
         raise SchemaError('table {} was not found in the source database'.format(table))
 
-    name = next((foreignKey.table for foreignKey in foreignKeys if foreignKey.table.upper() == table.upper()), None) \
-        or next((foreignKey.referencedTable for foreignKey in foreignKeys if foreignKey.referencedTable.upper() == table.upper()), table)
-
-    return TableDefinition(name=name, columns=columns, primaryKey=database.getPrimaryColumnNames(table),
-                           foreignKeys=[foreignKey for foreignKey in foreignKeys if foreignKey.table.upper() == table.upper()])
+    return TableDefinition(name=table, columns=columns, primaryKey=database.getPrimaryColumnNames(table),
+                           foreignKeys=[foreignKey for foreignKey in foreignKeys if tableKey(foreignKey.table) == tableKey(table)])
 
 
 def orderParentsFirst(tables: Iterable[str], foreignKeys: Sequence[ForeignKey]) -> List[str]:
@@ -273,11 +386,11 @@ def orderParentsFirst(tables: Iterable[str], foreignKeys: Sequence[ForeignKey]) 
     ordered at all, and raises.
     """
 
-    byName = {table.upper(): table for table in tables}
+    byName = {tableKey(table): table for table in tables}
     parents: Dict[str, Set[str]] = {name: set() for name in byName}
 
     for foreignKey in foreignKeys:
-        child, parent = foreignKey.table.upper(), foreignKey.referencedTable.upper()
+        child, parent = tableKey(foreignKey.table), tableKey(foreignKey.referencedTable)
         if child in byName and parent in byName and child != parent:
             parents[child].add(parent)
 
@@ -287,8 +400,9 @@ def orderParentsFirst(tables: Iterable[str], foreignKeys: Sequence[ForeignKey]) 
     while remaining:
         ready = sorted(name for name in remaining if not parents[name] & remaining)
         if not ready:
-            raise SchemaError('foreign keys form a cycle among: {}. Leave the foreign keys out (--no-foreign-keys), '
-                              'or add them yourself once both tables exist'.format(', '.join(sorted(byName[name] for name in remaining))))
+            raise SchemaError('foreign keys form a cycle among: {}, so no order puts every table after the tables it references. '
+                              'Take those tables one at a time, or leave one of the keys out of the set'.format(
+                                  ', '.join(sorted(byName[name] for name in remaining))))
         ordered += ready
         remaining -= set(ready)
 
@@ -299,30 +413,72 @@ def createStatements(sourceType: DatabaseType, targetType: DatabaseType, tables:
                      includeForeignKeys: bool = True, stageSuffix: Optional[str] = None, stagesOnly: bool = False) -> List[Statement]:
     """CREATE TABLE statements for `tables`, parents first. Foreign keys only
     between tables in the set; stage tables (`<table><stageSuffix>`) get none.
+
+    A stage table cannot carry them: a key follows the table it was declared
+    on, so once its parent is swapped the key checks the emptied old table and
+    every row is refused, and a key to the parent's own stage table would check
+    the rows that swap displaced. See how a swap works in docs/design.md.
     """
 
     order = orderParentsFirst([table.name for table in tables], [foreignKey for table in tables for foreignKey in table.foreignKeys]
                               if includeForeignKeys else [])
-    byName = {table.name.upper(): table for table in tables}
-    names = {table.name.upper() for table in tables}
+    byName = {tableKey(table.name): table for table in tables}
+    names = {tableKey(table.name): table.name for table in tables}
+    unique = _uniqueConstraints(tables, names) if includeForeignKeys else {}
+    taken: Set[str] = set()
     statements = []
 
     for name in order:
-        table = byName[name.upper()]
+        table = byName[tableKey(name)]
         if not stagesOnly:
-            statements.append(_createTable(sourceType, targetType, table, table.name, includeForeignKeys, names))
+            statements.append(_createTable(sourceType, targetType, table, table.name, includeForeignKeys, names,
+                                           unique.get(tableKey(name), []), taken))
         if stageSuffix:
-            statements.append(_createTable(sourceType, targetType, table, table.name + stageSuffix, False, names))
+            # No foreign keys, so none of the unique constraints they need either.
+            statements.append(_createTable(sourceType, targetType, table, table.name + stageSuffix, False, names, (), taken))
 
     return statements
 
 
+def _uniqueConstraints(tables: Sequence[TableDefinition], created: Dict[str, str]) -> Dict[str, List[Tuple[str, ...]]]:
+    """Per table, the column groups a foreign key in the set references that its
+    primary key doesn't already cover.
+
+    Every dialect requires a unique constraint behind a foreign key, and a
+    source can declare one on a UNIQUE column that isn't the primary key --
+    `sku_aliases.sku -> products.sku`. Only the primary key is copied
+    otherwise, and the key is then refused.
+    """
+
+    required: Dict[str, List[Tuple[str, ...]]] = {}
+
+    for table in tables:
+        for foreignKey in table.foreignKeys:
+            parentName = tableKey(foreignKey.referencedTable)
+            parent = next((candidate for candidate in tables if tableKey(candidate.name) == parentName), None)
+            if parent is None or parentName not in created:
+                continue
+            columns = tuple(column.upper() for column in foreignKey.referencedColumns)
+            # Order doesn't matter: the primary key's own index covers its columns in any order.
+            if set(columns) == {column.upper() for column in parent.primaryKey}:
+                continue
+            groups = required.setdefault(parentName, [])
+            if columns not in groups:
+                groups.append(columns)
+
+    return required
+
+
 def _createTable(sourceType: DatabaseType, targetType: DatabaseType, table: TableDefinition, name: str,
-                 includeForeignKeys: bool, created: Set[str]) -> Statement:
+                 includeForeignKeys: bool, created: Dict[str, str], unique: Sequence[Tuple[str, ...]], taken: Set[str]) -> Statement:
 
     keyColumns = {column.upper() for column in table.primaryKey}
     for foreignKey in table.foreignKeys:
         keyColumns.update(column.upper() for column in foreignKey.columns)
+    # The columns another table's foreign key references, which carry the
+    # unique constraints below: a key and what it references must be collated
+    # alike, or MySQL and SQL Server refuse the key outright.
+    keyColumns.update(column.upper() for group in unique for column in group)
 
     lines = []
     notes = []
@@ -342,31 +498,58 @@ def _createTable(sourceType: DatabaseType, targetType: DatabaseType, table: Tabl
     if table.primaryKey:
         lines.append('PRIMARY KEY ({})'.format(quoted(table.primaryKey)))
 
+    spelled = {column.name.upper(): column.name for column in table.columns}
+    for columns in unique:
+        lines.append('UNIQUE ({})'.format(quoted(spelled.get(column, column) for column in columns)))
+
     if includeForeignKeys:
         for foreignKey in table.foreignKeys:
-            if foreignKey.referencedTable.upper() not in created:
+            if tableKey(foreignKey.referencedTable) not in created:
                 notes.append('foreign key {} -> {} left out: {} is not being created'.format(
                     ', '.join(foreignKey.columns), foreignKey.referencedTable, foreignKey.referencedTable))
                 continue
             lines.append('CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({})'.format(
-                _constraintName(targetType, foreignKey.name), quoted(foreignKey.columns), foreignKey.referencedTable,
-                quoted(foreignKey.referencedColumns)))
+                _constraintName(targetType, foreignKey.name, taken), quoted(foreignKey.columns),
+                quoteFoldedTable(targetType, created[tableKey(foreignKey.referencedTable)]), quoted(foreignKey.referencedColumns)))
 
-    sql = 'CREATE TABLE {} (\n    {}\n)'.format(name, ',\n    '.join(lines))
+    tooLong = tooLongName(targetType, name)
+    if tooLong is not None:
+        notes.append('name: {}'.format(tooLong))
+
+    # Quoted like the columns, so a table named for a reserved word -- `group`,
+    # `order` -- is created rather than failing to parse.
+    sql = 'CREATE TABLE {} (\n    {}\n)'.format(quoteFoldedTable(targetType, name), ',\n    '.join(lines))
 
     return Statement(table=name, sql=sql, notes=notes)
 
 
-def _constraintName(targetType: DatabaseType, name: str) -> str:
+def _constraintName(targetType: DatabaseType, name: str, taken: Set[str]) -> str:
     """Source constraint names, with anything outside [A-Za-z0-9_] replaced and
     cut to 63 characters, the shortest limit among the dialects.
+
+    A name already used gets a numbered suffix: constraint names are per table
+    on PostgreSQL and SQLite but must be unique across the schema on MySQL,
+    MariaDB, Oracle and SQL Server, and cutting to the limit makes two long
+    names that share a prefix equal. Either way `--apply` would fail partway
+    and leave half a schema behind. Names are compared upper-cased, since
+    Oracle and MySQL fold them.
     """
 
     cleaned = re.sub(r'[^A-Za-z0-9_]', '_', name)
     if not re.match(r'[A-Za-z]', cleaned):
         cleaned = 'fk_' + cleaned
 
-    return cleaned[:63 if targetType != DatabaseType.MYSQL else 64]
+    limit = 63 if targetType != DatabaseType.MYSQL else 64
+    chosen = cleaned[:limit]
+    attempt = 1
+    while chosen.upper() in taken:
+        attempt += 1
+        suffix = '_{}'.format(attempt)
+        chosen = cleaned[:limit - len(suffix)] + suffix
+
+    taken.add(chosen.upper())
+
+    return chosen
 
 
 def renderScript(statements: Sequence[Statement], heading: Sequence[str]) -> str:
@@ -398,7 +581,7 @@ def clearTables(database: Any, tables: Sequence[str]) -> List[Tuple[str, int]]:
 
     try:
         for table in order:
-            database.cursor.execute('DELETE FROM {}'.format(table))
+            database.cursor.execute('DELETE FROM {}'.format(database.statementName(table)))
             cleared.append((table, database.cursor.rowcount))
         database.connection.commit()
     except Exception:

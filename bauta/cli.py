@@ -27,7 +27,7 @@ import yaml
 from .configuration import (Configuration, ConfigurationError, DatabaseConnectionConfig, DataJobConfig, DataJobsFile, StorageLocation, TableLocation,
                             expandEnvironmentVariables)
 from .database import DIALECTS, Database
-from .databaseDialects import ForeignKey, quoteIdentifier
+from .databaseDialects import ForeignKey, bareName, catalogTable, quoteIdentifier, quoteTableName, unqualifiedName
 from .dependencyGraph import DependencyGraph
 from .log import Log
 from .masking import MaskingError, keyFingerprint, sealManifest, verifyManifest
@@ -526,8 +526,26 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, Dat
 
                 if job.insertStrategy.value == 'upsert' and not database.getPrimaryColumnNames(table=job.targetTableFinal):
                     problems.append('{}: target {} has no primary key, so insertStrategy: upsert cannot match rows'.format(name, job.targetTableFinal))
+
+
         except Exception as error:
             problems.append('{}: target {} is not readable -- {}'.format(name, job.targetTableFinal, describeError(error)))
+            continue
+
+        # The stage table is where the rows actually land, so a run fails at
+        # once without it -- which a dry run used to pass, looking only at the
+        # table the job names as its target.
+        if job.targetTableStage:
+            try:
+                with Database(connectionSettings=databaseConfiguration[job.targetDatabase]) as database:
+                    staged = {column.upper() for column in database.getAllColumnNames(table=job.targetTableStage)}
+                log.logging.info('{}: stage table {} has {} column(s)'.format(name, job.targetTableStage, len(staged)))
+                missing = [column for column in columns if column.upper() not in staged]
+                if missing:
+                    problems.append('{}: stage table {} is missing column(s) {}, which the load writes'.format(
+                        name, job.targetTableStage, ', '.join(missing)))
+            except Exception as error:
+                problems.append('{}: stage table {} is not readable -- {}'.format(name, job.targetTableStage, describeError(error)))
 
         if job.masking is not None and not any(problem.startswith(job.sourceDatabase + ':') for problem in problems):
             problem = _checkMaskingCoverage(name, job, databaseConfiguration, log)
@@ -686,19 +704,24 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
             foreignKeys = database.getForeignKeys()
         except NotImplementedError:
             foreignKeys = []
-        requested = {table.upper(): table for table in arguments.table}
-        for table in arguments.table:
+        # Named as the catalog holds them, so a table written in quotes -- the
+        # only way to name a reserved word -- matches its own foreign keys, and
+        # gives a job and a key domain the same name a bare one would.
+        tables = [catalogTable(database.type, table) for table in arguments.table]
+        requested = {table.upper(): table for table in tables}
+        for table in tables:
             log.logging.info('Sampling up to {} row(s) of {}'.format(arguments.sample, table))
             proposal = proposeTable(database, table, sampleSize=arguments.sample, foreignKeys=foreignKeys, rules=rules)
             # Parents first, so a target that enforces foreign keys accepts the load.
             parents = sorted({requested[foreignKey.referencedTable.upper()] for foreignKey in foreignKeys
                               if foreignKey.table.upper() == table.upper() and foreignKey.referencedTable.upper() in requested
                               and foreignKey.referencedTable.upper() != table.upper()})
-            drafts.append(JobDraft(table=table, sourceQuery='SELECT * FROM {}'.format(table), predecessors=parents, proposal=proposal))
+            drafts.append(JobDraft(table=table, sourceQuery='SELECT * FROM {}'.format(database.statementName(table)),
+                                   predecessors=parents, proposal=proposal))
 
     heading = _generatedHeading('discover', arguments.database, target) + _nextSteps(arguments.database, target, arguments.table)
     _writeOutput(renderJobs(drafts, arguments.database, target, heading, keyVariable=arguments.key_variable,
-                            chunkSize=arguments.chunk_size), arguments.output)
+                            chunkSize=arguments.chunk_size, targetType=databaseConfiguration[target].type), arguments.output)
 
     return EXIT_SUCCESS
 
@@ -725,7 +748,8 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
         try:
             plan = planSubset(foreignKeys, root=arguments.root, where=arguments.where, followChildren=not arguments.no_children,
                               ignore=arguments.ignore_foreign_key or [], materialize=database.dialect.supportsMaterializedSelections(),
-                              quote=lambda name: quoteIdentifier(database.type, name))
+                              quote=lambda name: quoteIdentifier(database.type, name),
+                              quoteTable=lambda name: quoteTableName(database.type, name))
         except SubsetError as error:
             raise UsageError(str(error)) from error
 
@@ -745,7 +769,7 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
         '',
         ] + _nextSteps(arguments.database, arguments.target, [arguments.root], related=True)
     _writeOutput(renderJobs(drafts, arguments.database, arguments.target, heading, keyVariable=arguments.key_variable,
-                            chunkSize=arguments.chunk_size), arguments.output)
+                            chunkSize=arguments.chunk_size, targetType=databaseConfiguration[arguments.target].type), arguments.output)
 
     return EXIT_SUCCESS
 
@@ -908,6 +932,12 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
 
     for alias, tables in sorted(tablesByDatabase.items()):
         with Database(connectionSettings=databaseConfiguration[alias]) as database:
+            # Checked before the plan is printed, or it lists tables that
+            # aren't there and the run it describes fails.
+            missing = [table for table in tables if not database.tableExists(table)]
+            if missing:
+                raise UsageError('{}: {} is not in the target, so there is nothing to empty. Create it with bauta schema, '
+                                 'or leave its job out with --job'.format(alias, ', '.join(missing)))
             try:
                 if arguments.dry_run:
                     print('{}: would empty, in order: {}'.format(alias, ', '.join(clearOrder(tables, database.getForeignKeys()))))
@@ -935,6 +965,51 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
     return EXIT_SUCCESS
 
 
+def _commandVerifyReferences(arguments: argparse.Namespace, log: Log) -> int:
+    """Counts the rows in each target whose foreign key points at nothing: the
+    keys the target declares, and those of the sources copied into it, which a
+    copy often lacks. Reads the sources' catalogs only, never their rows.
+
+    Exits 1 if any key has orphaned rows or couldn't be checked.
+    """
+
+    import datetime
+
+    from .references import referencesReport, renderReferences, summarize, verifyReferences
+
+    jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+    jobs = {name: job for name, job in _selectJobs(jobsFile.jobs, arguments.job, log).items() if arguments.job or job.active}
+    keysByAlias: Dict[str, List[ForeignKey]] = {}
+
+    for alias in sorted({job.sourceDatabase for job in jobs.values()}):
+        try:
+            with Database(connectionSettings=databaseConfiguration[alias]) as database:
+                keysByAlias[alias] = database.getForeignKeys()
+        except Exception as error:
+            log.logging.warning('{}: could not read foreign keys, so only the target\'s own are checked -- {}'.format(alias, describeError(error)))
+
+    results = []
+    for target in sorted({job.targetDatabase for job in jobs.values()}):
+        targetJobs = [job for job in jobs.values() if job.targetDatabase == target]
+        # Keyed bare, as the catalogs report names: a job naming a reserved
+        # word writes it quoted, and a quoted key matched nothing.
+        loaded = {bareName(unqualifiedName(job.targetTableFinal)).upper(): job.targetTableFinal for job in targetJobs}
+        sourceKeys = [foreignKey for alias in sorted({job.sourceDatabase for job in targetJobs} - {target})
+                      for foreignKey in keysByAlias.get(alias, [])]
+        with Database(connectionSettings=databaseConfiguration[target]) as database:
+            results.extend(verifyReferences(database, target, loaded, sourceKeys))
+
+    generatedAt = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
+    text = json.dumps(referencesReport(results, generatedAt), indent=2, default=str) + '\n' if arguments.format == 'json' else renderReferences(results)
+    _writeOutput(text, arguments.output)
+    log.logging.info(summarize(results))
+
+    if any(result.orphans != 0 for result in results):
+        return EXIT_JOBS_DID_NOT_SUCCEED
+
+    return EXIT_SUCCESS
+
+
 def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
     """Reports what each job does with data, and anything a reviewer should
     question. Offline unless --connect, which also resolves each masked
@@ -952,6 +1027,7 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
     unreachable: Dict[str, str] = {}
     encryption: Dict[str, Optional[bool]] = {}
     foreignKeys: Dict[str, List[ForeignKey]] = {}
+    declaredForeignKeys: Dict[str, List[ForeignKey]] = {}
 
     if arguments.connect:
         for name, job in jobs.items():
@@ -990,9 +1066,11 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
                               foreignKey.referencedTable.upper(), tuple(column.upper() for column in foreignKey.referencedColumns))
                     unique.setdefault(folded, foreignKey)
             foreignKeys[target] = list(unique.values())
+            declaredForeignKeys[target] = keysByAlias.get(target, [])
 
     report = auditJobs(jobs, returnedColumns=returnedColumns, encryption=encryption, unreachable=unreachable,
-                       targetColumns=targetColumns, foreignKeys=foreignKeys, rules=_discoveryRules(arguments))
+                       targetColumns=targetColumns, foreignKeys=foreignKeys, declaredForeignKeys=declaredForeignKeys,
+                       rules=_discoveryRules(arguments))
     _writeOutput(json.dumps(report, indent=2, default=str) + '\n' if arguments.format == 'json' else renderAudit(report), arguments.output)
 
     if report['summary']['error'] or (arguments.strict and report['summary']['warning']):
@@ -1195,6 +1273,13 @@ def _buildParser() -> argparse.ArgumentParser:
     auditParser.add_argument('--output', help='write the report here instead of stdout; must not already exist')
     _addRulesArgument(auditParser)
     auditParser.set_defaults(handler=_commandAudit)
+
+    referencesParser = subparsers.add_parser('verify-references', help='count rows in each target whose foreign key points at nothing')
+    _addCommonArguments(referencesParser, memory=False)
+    referencesParser.add_argument('--job', action='append', help='check only this job\'s target table (repeatable)')
+    referencesParser.add_argument('--format', default='text', choices=['text', 'json'], help='default: text')
+    referencesParser.add_argument('--output', help='write the report here instead of stdout; must not already exist')
+    referencesParser.set_defaults(handler=_commandVerifyReferences)
 
     verifyParser = subparsers.add_parser('verify-manifest', help='check that a manifest is unaltered, and who signed it')
     verifyParser.add_argument('manifest', nargs='?', help='a manifest file (default: --manifest-database, else jobs.yaml\'s `manifest`)')

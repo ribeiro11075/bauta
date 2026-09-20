@@ -135,6 +135,25 @@ def test_propose_table_reads_the_schema_and_a_sample(sampleDatabase):
     assert orders['id'] == {'strategy': 'keep'}
 
 
+def test_two_tables_that_would_share_a_job_name_get_different_ones():
+    """`orders` and `Orders`, or the same table in two schemas, both became
+    maskOrders -- the second silently replacing the first as a duplicate key.
+    """
+    drafts = [JobDraft(table, 'SELECT * FROM {}'.format(table), [], None) for table in ('orders', 'Orders', 'sales.orders')]
+
+    text = renderJobs(drafts, 'prod', 'staging', [])
+
+    names = [line.strip().rstrip(':') for line in text.splitlines() if line.startswith('  mask')]
+    assert names == ['maskOrders', 'maskOrders_2', 'maskSales_orders']
+    assert len(set(names)) == len(names)
+
+
+def test_a_predecessor_is_named_as_its_own_job_is():
+    drafts = [JobDraft('orders', 'SELECT 1', [], None), JobDraft('Orders', 'SELECT 1', ['orders'], None)]
+
+    assert '    - maskOrders\n' in renderJobs(drafts, 'prod', 'staging', [])
+
+
 def test_rendered_jobs_are_valid_configuration_and_carry_their_reasons(sampleDatabase, monkeypatch):
     drafts = [
         JobDraft('customers', 'SELECT * FROM customers', [], proposeTable(sampleDatabase, 'customers')),

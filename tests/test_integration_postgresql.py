@@ -375,3 +375,22 @@ def test_a_swap_repoints_views_at_the_new_target(liveDatabase):
         for statement in ('DROP VIEW IF EXISTS {} '.format(summary), 'DROP VIEW IF EXISTS {}'.format(view), 'DROP TABLE IF EXISTS {}'.format(target),
                           'DROP TABLE IF EXISTS {}'.format(stage), 'DROP ROLE IF EXISTS {}'.format(role)):
             liveDatabase.alter(statement)
+
+
+def test_a_json_column_is_copied_rather_than_refused(liveDatabase):
+    """psycopg reads a json or jsonb column as a dict and then refuses to write
+    one back ("cannot adapt type 'dict'"), so a table with a JSON column failed
+    at its first chunk. Arrays, which are lists like a JSON array, still load.
+    """
+    table = 'json_{}'.format(uuid.uuid4().hex[:8])
+    liveDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, doc JSONB, plain JSON, tags TEXT[])'.format(table))
+
+    try:
+        documents = [(1, {'name': 'a', 'tags': [1, 2]}, {'b': None}, ['x', 'y']), (2, None, None, [])]
+        liveDatabase.insert(table=table, data=documents)
+        liveDatabase.upsert(table=table, data=[(1, {'name': 'b'}, {'c': 1}, ['z'])])
+
+        assert liveDatabase.query('SELECT id, doc, plain, tags FROM {} ORDER BY id'.format(table)) == [
+            (1, {'name': 'b'}, {'c': 1}, ['z']), (2, None, None, [])]
+    finally:
+        liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))

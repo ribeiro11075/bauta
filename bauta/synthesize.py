@@ -133,7 +133,7 @@ class _Synthesizer:
                 choices = ('F', 'M', 'X') if words & {'gender', 'sex'} else ('A', 'B', 'C', 'D')
                 return (lambda row: choices[int(self._unit(row, name) * len(choices))]), 'one of {}'.format(', '.join(choices))
             if strategy == 'null' and textual:
-                return (lambda row: self._sentence(row, name)), 'words'
+                return (lambda row: self._sentence(row, name, portable.length)), 'words'
 
         return None
 
@@ -158,11 +158,25 @@ class _Synthesizer:
         return generate
 
 
-    def _sentence(self, row: int, column: str) -> str:
+    def _sentence(self, row: int, column: str, limit: Optional[int] = None) -> str:
+        """Words ending in the row's own number, within `limit` characters.
+
+        The number is what keeps two rows apart: cut to a short column, the
+        words alone repeat within a few hundred rows, and a UNIQUE column
+        refuses the second of them.
+        """
 
         count = 3 + int(self._unit(row, column + '#count') * 8)
+        words = ' '.join(_WORDS[int(self._unit(row, '{}#{}'.format(column, index)) * len(_WORDS))] for index in range(count)).capitalize()
+        tail = ' {}.'.format(row + 1)
 
-        return ' '.join(_WORDS[int(self._unit(row, '{}#{}'.format(column, index)) * len(_WORDS))] for index in range(count)).capitalize() + '.'
+        if limit is None:
+            return words + tail
+        if limit < len(tail):
+            # Too narrow even for the sentence's shape; the number alone has to keep the rows apart.
+            return str(row + 1)[-limit:]
+
+        return words[:limit - len(tail)] + tail
 
 
     def byType(self, column: ColumnDefinition, portable: PortableType) -> Tuple[Generator, str]:
@@ -199,7 +213,7 @@ class _Synthesizer:
                 '{} letters'.format(width)
         if kind == 'text':
             limit = portable.length
-            return (lambda row: self._sentence(row, name)), 'words' + (', at most {} characters'.format(limit) if limit else '')
+            return (lambda row: self._sentence(row, name, limit)), 'words' + (', at most {} characters'.format(limit) if limit else '')
         if kind == 'date':
             return (lambda row: _EPOCH + datetime.timedelta(days=int(unit(row, name) * _RECENT_DAYS))), 'a date since 2015'
         if kind in ('timestamp', 'timestampTz'):
@@ -268,6 +282,10 @@ def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: 
     if not definitions:
         raise SynthesisError('table {} was not found'.format(table))
 
+    # Every generator is indexed by the row's number within the run, so a
+    # second run starts where the first stopped: from row 0 again it would
+    # regenerate the first run's values, which any UNIQUE column then refuses.
+    existing = int(database.query('SELECT count(*) FROM {}'.format(table))[0][0])
     primaryKey = {column.upper() for column in database.getPrimaryColumnNames(table)}
     foreignKeys = [foreignKey for foreignKey in (foreignKeys if foreignKeys is not None else database.getForeignKeys())
                    if foreignKey.table.upper() == table.split('.')[-1].upper()]
@@ -298,7 +316,7 @@ def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: 
                 if not keys:
                     return None
                 return keys[int(synthesizer._unit(row, name) * len(keys))][index]
-            generators[column] = pick
+            generators[column] = _offset(pick, existing)
             description = 'NULL, as {} has no rows'.format(foreignKey.referencedTable) if not parentKeys and not selfReference \
                 else 'an existing {} key'.format(foreignKey.referencedTable)
             if selfReference:
@@ -322,13 +340,10 @@ def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: 
             generators[name.upper()] = _sequential(start)
             plans[name.upper()] = ColumnPlan(name, 'primary key', 'sequential, from {}'.format(start))
         elif portable.kind == 'uuid':
-            # Offset by the rows already there, so a second run doesn't repeat the first's keys.
-            existing = int(database.query('SELECT count(*) FROM {}'.format(table))[0][0])
             generator, _ = synthesizer.byType(definition, portable)
             generators[name.upper()] = _offset(generator, existing)
             plans[name.upper()] = ColumnPlan(name, 'primary key', 'a unique UUID')
         elif portable.kind in ('text', 'fixedText'):
-            existing = int(database.query('SELECT count(*) FROM {}'.format(table))[0][0])
             width = portable.length or 12
             if len('S{}'.format(existing + rows)) > width:
                 raise SynthesisError('{}.{} holds only {} characters, too few for {} unique keys'.format(table, name, width, rows))
@@ -354,7 +369,7 @@ def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: 
         else:
             generator, description = synthesizer.byType(definition, portable)
             plans[name] = ColumnPlan(definition.name, 'type', description + (', sometimes NULL' if definition.nullable else ''))
-        generators[name] = synthesizer.orNull(_fitting(generator, definition.length), definition)
+        generators[name] = _offset(synthesizer.orNull(_fitting(generator, definition.length), definition), existing)
 
     columns = [definition.name for definition in definitions]
     ordered = [generators[column.upper()] for column in columns]
@@ -401,7 +416,13 @@ def synthesizeTable(database: Any, table: str, rows: int, seed: int = 0, foreign
     inserted = 0
 
     for chunk in _chunks(makeRow, rows, available, keyIndexes, seen, chunkSize):
-        database.insert(table=table, data=chunk, chunkSize=chunkSize, columns=columns)
+        try:
+            database.insert(table=table, data=chunk, chunkSize=chunkSize, columns=columns)
+        except Exception as error:
+            # Each chunk commits, so what came before is already in the table.
+            raise SynthesisError('{} refused a generated row after {} inserted ({}). Primary keys are made unique, and generated text '
+                                 'ends in the row\'s number, but a UNIQUE constraint on a column with too few distinct values -- a short '
+                                 'column, a name, a number -- cannot be satisfied'.format(table, inserted, error)) from error
         inserted += len(chunk)
 
     return inserted

@@ -113,16 +113,32 @@ class MemoryBackend(ABC):
         """Records the fingerprint `job` completed under; None forgets it."""
 
 
-def _yamlSafe(value: Any) -> Any:
-    """Coerce a driver's value into something YAML round-trips. Only Decimal,
-    which Oracle returns for every NUMBER, needs it: an integral one becomes
-    an exact int, a fractional one a float.
+class _MemoryLoader(yaml.SafeLoader):
+    """SafeLoader that also reads `!decimal` scalars."""
+
+
+class _MemoryDumper(yaml.SafeDumper):
+    """SafeDumper that also writes Decimal, which Oracle returns for every NUMBER.
+
+    A Decimal used to be written as a float, which rounds: a watermark of
+    12345678901234567.1 came back as 1.2345678901234568e+16, *above* the
+    highest row read, so the rows in between were never extracted again --
+    the one direction run state must never move in.
     """
 
-    if isinstance(value, decimal.Decimal):
-        return int(value) if value == value.to_integral_value() else float(value)
 
-    return value
+def _representDecimal(dumper: yaml.SafeDumper, value: decimal.Decimal) -> yaml.ScalarNode:
+
+    return dumper.represent_scalar('!decimal', str(value))
+
+
+def _constructDecimal(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> decimal.Decimal:
+
+    return decimal.Decimal(str(loader.construct_scalar(node)))
+
+
+_MemoryDumper.add_representer(decimal.Decimal, _representDecimal)
+_MemoryLoader.add_constructor('!decimal', _constructDecimal)
 
 
 SECTIONS = ('lastRun', 'watermarks', 'maskingKeys')
@@ -139,6 +155,7 @@ class FileMemory(MemoryBackend):
           loadOrders: 1726400000.0
         watermarks:
           loadOrders: 2026-09-15 10:00:00
+          loadEvents: !decimal '12345678901234567.1'
         maskingKeys:
           maskCustomers: d5930cf83dea
 
@@ -157,7 +174,7 @@ class FileMemory(MemoryBackend):
 
         try:
             with open(self.memoryFile) as file:
-                document = yaml.safe_load(file) or {}
+                document = yaml.load(file, Loader=_MemoryLoader) or {}
         except FileNotFoundError:
             document = {}
 
@@ -194,9 +211,9 @@ class FileMemory(MemoryBackend):
                 document[section][job] = value
 
             with open(temporary, 'w') as file:
-                # safe_dump refuses a type safe_load couldn't read back, so an
+                # The dumper refuses a type the loader couldn't read back, so an
                 # unsupported watermark fails here rather than corrupting the file.
-                yaml.safe_dump(document, file)
+                yaml.dump(document, file, Dumper=_MemoryDumper, default_flow_style=False)
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(temporary, self.memoryFile)
@@ -219,7 +236,7 @@ class FileMemory(MemoryBackend):
 
     def recordWatermark(self, job: str, value: Any) -> None:
 
-        self._write('watermarks', job, _yamlSafe(value))
+        self._write('watermarks', job, value)
 
 
     def readKeyFingerprints(self) -> Dict[str, str]:

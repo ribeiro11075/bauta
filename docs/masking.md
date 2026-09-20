@@ -72,14 +72,14 @@ A NULL stays NULL under every strategy except `constant` and `null`.
 | `constant` | `value` in every row, NULLs included. | `value` (required) |
 | `hash` | An opaque hex token, e.g. `cust_9f86d081884c7d65`. | `length` (12–64, default 16), `prefix` |
 | `email` | Still an email address, e.g. `u9f86d081884c@example.test`. Keyed on the lower-cased address. | `length` (8–40, default 12), `mailDomain` (default `example.test`), `keepDomain` |
-| `digits` | Each digit replaced, everything else kept: `+1 (555) 010-9999` → `+1 (831) 402-5517`. Keyed on the digits alone, so formatting doesn't matter. Integers keep their digit count. Digits in any script (full-width `１２３`, Arabic-Indic `١٢٣`) are masked too, and written back in their own script. | `keepLeading`, `keepTrailing` (e.g. `4` for a card number) |
+| `digits` | Each digit replaced, everything else kept: `+1 (555) 010-9999` → `+1 (831) 402-5517`. Keyed on the digits alone, so formatting doesn't matter. Integers keep their digit count. Digits in any script (full-width `１２３`, Arabic-Indic `١٢٣`) are masked too, and written back in their own script. A value the keeps cover entirely fails the job rather than being copied through: `555-0100` under `keepLeading: 3, keepTrailing: 4`. | `keepLeading`, `keepTrailing` (e.g. `4` for a card number) |
 | `number` | A number of the same type and precision, either within `variance` of the original (default `0.1`) or within `min`–`max`. A value the variance would round back to itself, such as a small integer, moves one step instead; zero stays zero. | `min` + `max`, or `variance` (0–1); `decimals` |
-| `dateShift` | Moved by a keyed number of whole days, never zero. Times of day are kept. ISO 8601 text, which is how SQLite stores dates, is written back in the same format. `0001-01-01` and `9999-12-31` are kept, since they mean "no date" or "forever"; a date near either is shifted away from it. | `maxDays` (default 30) |
+| `dateShift` | Moved by a keyed number of whole days, never zero. The shift is keyed on the day, so a date, a timestamp and ISO text of that same day all move to the same day. Times of day are kept. ISO 8601 text, which is how SQLite stores dates, is written back in the same format. `0001-01-01` and `9999-12-31` are kept, since they mean "no date" or "forever"; a date near either is shifted away from it. | `maxDays` (default 30) |
 | `key` | A one-to-one mapping, safe for primary and foreign keys. See below. | `charset`: `alphanumeric` (default), `digits`, `hex` |
 | `fpe` | Like `key`, but using NIST's FF1 format-preserving encryption, for policies that must name a standard. See below. | `charset`: `alphanumeric` (default), `digits`, `hex`; `strict` |
 | `fakeName`, `fakeFirstName`, `fakeLastName`, `fakeCity`, `fakeCompany`, `fakeStreetAddress` | Realistic values from bundled lists. Not unique. | `maxLength`; `locale`, below |
 | `redact` | Free text with each recognisable identifier replaced: emails, phone numbers, US SSNs, card numbers and IBANs (both checksum-verified), IPv4 addresses. **Names aren't found.** See below. | `replacement`: `label` (default) or `mask`; `detect`: a list of `email`, `phone`, `ssn`, `card`, `iban`, `ip`; `patterns`: extra regular expressions |
-| `shuffle` | The column's values rearranged among rows in the same chunk. **Not anonymization:** every real value is still in the table, and a small chunk barely moves them. See [limits](#limits). | none |
+| `shuffle` | The column's values rearranged among rows in the same chunk. **Not anonymization:** every real value is still in the table, and a small chunk barely moves them. It moves values between rows rather than mapping them, so it breaks a key and its references even where both are shuffled alike; `audit` warns. See [limits](#limits). | none |
 
 A value a strategy can't handle fails the job, for example text given to `number`. The error names the column and the value's type, never the value itself.
 
@@ -90,7 +90,7 @@ A value a strategy can't handle fails the job, for example text given to `number
 The output has the same shape as the input:
 
 - An integer keeps its sign and number of digits.
-- Text keeps its length, and every character that isn't masked stays put. With `alphanumeric`, digits map to digits and letters to letters of the same case. `digits` masks only digits. `hex` masks `0-9a-f`, case-insensitively, which suits UUIDs and hex tokens.
+- Text keeps its length, and every character that isn't masked stays put. With `alphanumeric`, digits map to digits and letters to letters of the same case. `digits` masks only digits. `hex` masks hex characters the same way — digits to digits, `a-f` to `a-f`, `A-F` to `A-F` — which suits UUIDs and hex tokens, and keeps two spellings of one value apart.
 - A UUID object stays a UUID. Its version digit isn't preserved.
 
 `charset` is set once per column rather than detected from each value, because detection could give two different shapes the same output.
@@ -101,11 +101,18 @@ The output has the same shape as the input:
 
 `number` handles ordinary numeric columns. `key` is for identifiers, whose values have to stay distinct.
 
+**A mask can be wider than the column.** Keeping a value's shape is not the same as fitting where it came from:
+
+- `key` keeps an integer's digit count, and a column's range doesn't stop at a digit boundary. A 10-digit value in an `INT` column masks to another 10-digit value, and most of those are above 2147483647 — the load then fails with the database's own "out of range". A `BIGINT` has the same problem at 19 digits. Mask such a key into a wider column, or with `hash` where it need not stay a number.
+- `number` varies a value that may already be at its column's limit: `9999999999.99` in a `DECIMAL(12,2)` with the default variance overflows about half the time. Bound it with `min` and `max`, which is what they are for. SQLite is the exception, and not in your favour: it ignores a column's declared precision and stores the wider value as it is.
+
+The mask is the same for a given value, key and domain wherever it appears, so it cannot be narrowed to fit one column without breaking the joins it exists to keep. A job that fails this way logs which of the two is likely responsible.
+
 ### `fpe`
 
 `fpe` is `key`'s alternative for when a security review asks for a published algorithm: FF1 from NIST SP 800-38G Rev. 1, with AES-256. It is checked against NIST's sample vectors, and needs the `cryptography` package (`pip install "bauta[fpe]"`; the `oracle` extra already brings it).
 
-- It keeps shapes the way `key` does: integers keep sign and digit count, text keeps its length and every character outside `charset`. With `alphanumeric`, letters and digits share one alphabet, so a letter may become a digit; `key` keeps each character's class.
+- It keeps shapes the way `key` does: integers keep sign and digit count, text keeps its length and every character outside `charset`. FF1 needs one alphabet for every position, so with `alphanumeric` a letter may become a digit, and with `hex` a masked value may mix cases (`2cAB74Ce`); `key` keeps each character's class and case.
 - The masking key is turned into an AES key per domain, and the domain goes into FF1's tweak.
 - **FF1 needs at least a million possible values**: six digits, five hex characters or four alphanumerics. Shorter values are masked with `key`'s permutation instead, and still never collide with longer ones, since lengths are kept. **`strict: true`** fails the job on a shorter value instead, for policies that require FF1 for every value; the error gives the minimum length, never the value. `audit` notes each `fpe` column without `strict`.
 - It is slower than `key`. With two `fpe` columns among six, a million rows run at 11,000 rows a second in pure Python, against 17,000 with `key`; the native masker takes it to 115,000. Repeated values are remembered, as described under [speed](#speed).
@@ -331,7 +338,7 @@ Masked rows stream into the stage table, and the stage is then swapped with the 
 
 Use `swap` rather than `upsert` for this if any key column is masked. An upsert matches rows by primary key, and a masked key would add new rows instead of replacing the old ones.
 
-`swap` renames tables. Views follow on every database, but foreign keys from other tables, and PostgreSQL's materialized views, don't; see [how a swap works](design.md#how-a-swap-works). For a table that other tables reference, copy into a separate database instead.
+`swap` renames tables. Views follow on every database, but foreign keys from other tables, and PostgreSQL's materialized views, don't; see [how a swap works](design.md#how-a-swap-works). For a table that other tables reference, copy into a separate database instead. `audit --connect` reports a swap of a table the target's foreign keys reference as an error.
 
 
 ## The manifest
@@ -424,6 +431,8 @@ bauta audit --connect --strict   # also asks the databases; fails on warnings
 | --- | --- |
 | error | A masked query returns a column the policy doesn't cover, or names one it doesn't return (`--connect`). |
 | error | A masked query couldn't be run to check (`--connect`). |
+| error | A `swap` job replaces a table that a foreign key declared in the target references, or one an earlier swap left on its stage table. The key stays on the old table, now the stage, and the next run can't empty the stage (`--connect`). |
+| warning | A `swap` job replaces a table that declares foreign keys of its own. Its stage table has none, so after a run the copy stops enforcing them (`--connect`). |
 | warning | A column is kept unmasked although its name suggests personal data (`email`, `ssn`, `phone`, ...), by the built-in rules or [your own](#your-own-rules-discoveryyaml). |
 | warning | `defaultStrategy` is `keep`, so any column added to the source later is copied unmasked. |
 | warning | A job copies from a database without masking while other jobs mask what they read from it. |
@@ -431,11 +440,19 @@ bauta audit --connect --strict   # also asks the databases; fails on warnings
 | warning | `shuffle` on an incremental job, whose small chunks leave values near their own rows. |
 | warning | A domain is masked two ways, or under two keys, in one target database, so its masks won't match across the columns that share it. Copies in different target databases may use different keys. |
 | warning | A foreign-key column isn't masked exactly like the key it references (strategy, options, domain and key), so the copied references won't match (`--connect`). |
+| warning | A foreign key and the key it references are both masked with `shuffle`, which moves values between rows, so the references point at other rows (`--connect`). |
+| error | `watermarkColumn` falls to a `defaultStrategy` that masks it: the watermark is read before masking and kept in run state and logs (`--connect`). A column the policy masks by name is refused by `validate`. |
+| warning | A job copies only part of a table that another job's table references (it has a `watermarkColumn`, or its `sourceQuery` has a `WHERE`), and the referencing job isn't limited to match, so the copy can reference rows it lacks (`--connect`). A query counts as partial when it has a `WHERE`, `LIMIT`, `TOP` or `FETCH FIRST`, or joins another table. |
+| warning | A job's table references another job's table, and the job can load before the other: it doesn't wait for it through `predecessors`, the other is inactive, or a job on the way has a longer `refresh` (`--connect`). |
 | note | Columns that fall to `defaultStrategy`, by name (`--connect`). |
 
 Without `--connect`, columns are shown as declared. With it, each masked query is run for a single row, discarded unexamined, to list the columns it really returns and the policy each one gets.
 
 The foreign-key check reads the foreign keys of each target database and of the sources copied into it, since a copy often declares none. A key's tables are matched to jobs by `targetTableFinal`'s name, without its schema, and a masked job's target columns to its query's columns by position, as the load matches them. A job that doesn't mask copies every column as it is, and so does `keep`; a reference masked with `null` points at nothing, so it can't break.
+
+The check for a parent copied in part uses the same keys and the same matching by table name. It doesn't parse SQL. A pair of jobs counts as matched when either query names the other's table: a child limited by `EXISTS` over its parent, as [`subset`](#copying-a-subset-subset) generates, or a parent that also selects what its children reference, as in [tables that reference each other](design.md#tables-that-reference-each-other). A table that references itself is left to `subset`, which reports it as a cycle. Whether a job waits for another is decided as a run decides it: through active predecessors only, and in the cycles each runs in (see [refresh and predecessors](design.md#refresh-and-predecessors)).
+
+The check on `swap` jobs reads only the keys the target declares, since a key only the source has constrains nothing in the copy. A job whose `postTargetAdhocQueries` name the referencing table is taken to recreate its keys there. See [how a swap works](design.md#how-a-swap-works).
 
 `audit` exits 1 on an error, and with `--strict` on a warning too, so it can gate a CI pipeline. `--format json` writes the same report for other tools, and `--output FILE` writes it to a file. `--job` narrows it.
 
@@ -540,7 +557,9 @@ bauta subset --database prod --target staging \
 
 Each job's `sourceQuery` is plain SQL: a `WITH` clause defining each table's selection once, joined by `EXISTS`. It runs unchanged on all six databases (MySQL from 8.0, MariaDB from 10.2). On PostgreSQL and SQLite the selections are marked `MATERIALIZED`, so each is computed once. Jobs load parents before children, so the target can keep its foreign keys enabled. `--mask` adds a proposed policy for each table, as `discover` does.
 
-**Cycles** can't be followed in SQL that works on every database. This includes a table that references itself, like `employees.manager_id`. `subset` reports the cycle and stops. Break it with `--ignore-foreign-key employees.manager_id`, and make sure the ignored column is nullable or masked to `'null'` in the target. Otherwise a row may point at one that wasn't copied.
+**Cycles** can't be followed in SQL that works on every database. This includes a table that references itself, like `employees.manager_id`. `subset` reports the cycle and stops. Break it with `--ignore-foreign-key employees.manager_id`.
+
+An ignored key is a key the subset stops following, so the rows it copies may point at rows it didn't. A nullable column doesn't help by itself — the value is still there, still pointing at nothing. Either mask the column to `'null'`, which needs it to be nullable, or leave that foreign key out of the target. `verify-references` counts what is left pointing at nothing either way. Naming any one column of a composite key ignores the whole key.
 
 **Depth is limited.** A subset may follow a chain of up to 16 tables (`customers` → `orders` → `order_items` → ... is a chain of three). MySQL refuses deeper ones, and SQL Server takes seconds to plan them and fails past about 24, so `subset` refuses them up front rather than generating queries that fail. For a deeper schema, root the subset lower down, use `--no-children`, or split it into subsets rooted at different tables.
 
@@ -559,11 +578,12 @@ bauta schema --database prod --target staging --table customers --related --appl
 
 `schema` reads the source's tables and creates matching tables in the target, **in the target's own dialect**: an Oracle `NUMBER(12,2)` becomes `NUMERIC(12,2)` on PostgreSQL, and `NVARCHAR(MAX)` on SQL Server becomes `CLOB` on Oracle.
 
-- **What it copies:** columns, nullability, the primary key, and foreign keys between the tables being created. Not indexes, defaults, check constraints, triggers or permissions. A non-production copy rarely needs them, and translating them between databases is where schema tools go wrong.
-- **Which tables:** `--table` names them. `--related` adds every table a subset rooted there would copy, which is what the headers of generated subset jobs suggest. `--no-children` narrows that to the tables `--table` references.
+- **What it copies:** columns, nullability, the primary key, foreign keys between the tables being created, and the `UNIQUE` constraints those keys need — a key may reference a unique column that isn't the primary key, and every dialect refuses one with nothing unique behind it. Not indexes, defaults, check constraints, triggers or permissions. A non-production copy rarely needs them, and translating them between databases is where schema tools go wrong.
+- **Which tables:** `--table` names them. `--related` adds every table a subset rooted there would copy, which is what the headers of generated subset jobs suggest. `--no-children` narrows that to the tables `--table` references. Each is created under the name you asked for, not the case its catalog happens to hold (Oracle's is upper case), so the jobs that follow find every one of them.
+- **Constraint names:** a foreign key keeps its source name where that fits the target's length limit and no other key in the run has taken it; otherwise it gets a numbered suffix (`fk_parent_2`). PostgreSQL and SQLite name constraints per table, while MySQL, MariaDB, Oracle and SQL Server need them unique across the schema.
 - **Without `--apply`,** it prints the SQL, or writes it to `--output`, for you to review or hand to a DBA. Each lossy choice is a comment above its table.
 - **With `--apply`,** it creates the tables in dependency order and **skips any that already exist**. It never alters or drops anything, so it's safe to re-run.
-- **`--stage-suffix _stage`** also creates `<table>_stage` tables for `swap` jobs, with the same columns and key but no foreign keys. When `--target` is the source database itself, as for [masking in place](#masking-in-place), only the stage tables are created.
+- **`--stage-suffix _stage`** also creates `<table>_stage` tables for `swap` jobs, with the same columns and key but **no foreign keys**, and none of the unique constraints those keys need: a key follows the table it was declared on, so once the parent is swapped it would check the emptied old table and refuse every row. The consequence is that a swapped table's keys alternate — see [how a swap works](design.md#how-a-swap-works). When `--target` is the source database itself, as for [masking in place](#masking-in-place), only the stage tables are created.
 - **`--no-foreign-keys`** leaves foreign keys out. Use it when tables reference each other in a cycle; add those keys yourself once both tables exist.
 
 A few conversions change what a column can hold, and the generated SQL notes each one:
@@ -571,13 +591,43 @@ A few conversions change what a column can hold, and the generated SQL notes eac
 | Source | Target | Becomes |
 | --- | --- | --- |
 | Oracle `DATE` | anything else | a timestamp, since Oracle's `DATE` includes a time of day |
-| any `TIME` | Oracle | `VARCHAR2(16 CHAR)`, since Oracle has no time-of-day type |
+| MySQL `TIME` | anything | it is a duration, not a time of day — `-838:59:59` is a legal value — and it is written as `[-]HH:MM:SS[.ffffff]` text, which every database parses back. A `TIME` column elsewhere holds only a time of day, so a value outside one is refused as it loads rather than stored as something else |
+| any `TIME` | Oracle | `VARCHAR2(32 CHAR)`, since Oracle has no time-of-day type; wide enough for the day-long values MySQL's `TIME` allows |
+| a time-zone-aware timestamp | Oracle | `TIMESTAMP WITH TIME ZONE`, which keeps the offset of the session that loads the row, not the source's, so the instant moves unless that session is UTC |
+| SQLite `INTEGER` | anything else | that target's `INT`, which is narrower: SQLite stores an integer in up to 8 bytes whatever the column is called |
+| MySQL `INT UNSIGNED` | anything | a signed 32-bit integer; values above 2147483647 are refused as they load |
+| MySQL `BIGINT UNSIGNED` | anything | a signed 64-bit integer; values above 9223372036854775807 are refused as they load |
+| any decimal | sqlite | `TEXT`, which keeps every digit. SQLite has no exact decimal type, and a column declared `DECIMAL(p,s)` holds a float: it would keep about 15 digits and round the rest away as the row is written |
+| a decimal declaring no precision | mysql, mariadb, mssql | `DECIMAL(65,30)` or `DECIMAL(38,10)`, which round anything longer |
+| a decimal wider than the target allows | mysql, mariadb, oracle, mssql | the widest that target has, so whole digits or decimal places are lost |
 | a time-zone-aware timestamp | MySQL, MariaDB | `DATETIME(6)`, and the offset is lost |
 | unbounded text in a key | MySQL, SQL Server, Oracle | 255 characters, since those can't index unbounded text |
 | a boolean stored as an integer (SQLite, MySQL, Oracle `NUMBER(1)`) | anything | a small integer, since PostgreSQL won't load an integer into `BOOLEAN` |
 | a type it doesn't recognize | anything | text |
 
+Both are noted on the table `schema` creates, since MySQL and MariaDB report `unsigned` as part of the column's type. No target has an unsigned integer, so the values above a signed one's range are refused as they load rather than wrapping.
+
 Every combination of the six databases is tested: tables are created on the target and a copy then loads into them.
+
+### `verify-references`: checking the copy's references
+
+```
+bauta run && bauta verify-references
+```
+
+`verify-references` counts, for each foreign key on a table the jobs load, the rows whose key matches no row of the table it references. It's the check that proves a copy intact, where [`audit`](#reviewing-policies-audit) can only predict from the configuration.
+
+- **Which keys:** those the target declares, and those of the sources copied into it, matched to the copy by table name as `audit` matches them. A declared key doesn't rule orphans out: MySQL loads can turn checks off, and SQL Server, Oracle and PostgreSQL constraints can be disabled or never validated. A key only a source declares is matched to the target's own spelling of each column.
+- **Which tables:** each active job's `targetTableFinal`, with every key it declares, and the tables those reference. `--job` narrows it, and names inactive jobs too.
+- **What it costs:** one `NOT EXISTS` query per key, which scans the child table once and looks each key up in the parent's primary key. The source is read for its catalog only, never its rows.
+- **What it reports:** a count per key, never a value, since some keys are copied as they are. A key whose columns include a NULL points at nothing and isn't counted, as databases don't enforce it. A key that can't be checked, because the target lacks its table or a column, or refused the query, is reported with the reason.
+- **Exit status:** 1 if any key has orphaned rows or couldn't be checked, so it can follow `run` in CI. `--format json` and `--output FILE` work as for `audit`.
+
+```
+OK       staging: orders (customer_id) -> customers (id): 0 orphaned row(s)
+ORPHANS  staging: order_items (product_id) -> products (id) [not declared]: 12 orphaned row(s)
+Checked 2 foreign key(s): 1 with orphaned rows, 0 not checked
+```
 
 ### `clear`: emptying the copy before a refresh
 
@@ -620,12 +670,13 @@ customers: 1000 row(s)
 ```
 
 - **Keys are unique.** Integer keys continue after the table's current maximum; text keys run `S1`, `S2`, ... after the current row count (`S0001`, `S0002`, ... in a fixed-width column, so each stays distinct at full width); UUID keys are generated.
+- **Values continue between runs.** Every generator is indexed by the row's number, counted from the rows already in the table, so a second run neither repeats the first's values nor collides with them. Generated text ends in that number, so a `UNIQUE` column of any reasonable width keeps taking rows.
 - **Foreign keys resolve.** Values are drawn from the parent's existing rows, so parents are filled first; `--table` order doesn't matter. A table whose key is made only of foreign keys gets as many rows as its parents allow, which may be fewer than asked.
 - **Names drive realism.** Columns whose names suggest personal data (email, names, phone, postal code, birth date, city, company, address...) get realistic values, from the same rules `discover` uses, [your own](#your-own-rules-discoveryyaml) included. Everything else is random within its type: numbers within their precision, text within its length, dates since 2015. Nullable columns are NULL about one time in ten.
 - **Reproducible.** The same `--seed` on the same starting tables makes the same rows.
 - `--rows` sets the count for any `--table` given without one. Nothing is written without `--yes`.
 
-**Limits:** a table that references itself through a NOT NULL column can't be filled, since its first row would have nothing to point at; a nullable self-reference is left NULL. Values are plausible, not statistically like production: there are no correlations between columns, and no skew. Tables must exist first; `schema` creates them from a source's definitions.
+**Limits:** a table that references itself through a NOT NULL column can't be filled, since its first row would have nothing to point at; a nullable self-reference is left NULL. A `UNIQUE` constraint on a column that isn't the primary key is satisfied only where the column's type has room for one value per row: generated text ends in the row's number, but a name, a short code or a number can repeat. Where the database refuses such a row, `synthesize` says which table refused it and how many rows were inserted before it, since each chunk is already committed. Values are plausible, not statistically like production: there are no correlations between columns, and no skew. Tables must exist first; `schema` creates them from a source's definitions.
 
 
 ## Limits
@@ -634,7 +685,7 @@ customers: 1000 row(s)
 - **Scripts other than Latin.** `key` and `fpe` refuse letters and digits outside ASCII rather than copy them; `digits` and `redact` handle digits in any script. `redact` finds only email addresses written in ASCII.
 - **Unique columns** need enough bits to avoid collisions. `hash` enforces a minimum length for that reason. The `fake*` strategies are never unique. For a unique column, use `key`, which never collides.
 - **`number` with `variance`** keeps magnitudes realistic, which also reveals them roughly. Use `min`/`max` if the magnitude itself is sensitive.
-- **`dateShift`** is keyed on the date, so everyone born on the same day still shares a birthday after masking. That's what keeps the data consistent, and it means dates are shifted, not randomized.
+- **`dateShift`** is keyed on the date, so everyone born on the same day still shares a birthday after masking, and a day's events stay a day's events whether the column holds a date or a timestamp. That's what keeps the data consistent, and it means dates are shifted, not randomized.
 - **`shuffle` needs large chunks.** Values only move within a chunk, so a row keeps its own value with probability 1/chunk size, and a chunk of one row isn't shuffled at all. The last chunk of a load and a small incremental run are both small. Don't use `shuffle` on incremental jobs.
 - **Masking hides values, not patterns.** Row counts, NULL rates and relationships are all preserved, which is the point, and a combination of kept columns (zip code, birth year and gender) can still identify someone. Review what you `keep`.
 - **Hard deletes** aren't propagated by incremental loads, masked or not. See [design.md](design.md#deletes).

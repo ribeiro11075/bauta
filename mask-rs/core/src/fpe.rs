@@ -18,7 +18,7 @@ use crate::KeyedHash;
 fn alphabetFor(charset: Charset) -> &'static [u8] {
     match charset {
         Charset::Digits => b"0123456789",
-        Charset::Hex => b"0123456789abcdef",
+        Charset::Hex => b"0123456789abcdefABCDEF",
         Charset::Alphanumeric => b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
     }
 }
@@ -91,14 +91,9 @@ impl FpeStrategy {
         }
 
         let alphabet = alphabetFor(self.charset);
-        let lowered: Vec<u8> = if self.charset == Charset::Hex {
-            bytes.iter().map(|byte| byte.to_ascii_lowercase()).collect()
-        } else {
-            bytes.to_vec()
-        };
 
         let positions: Vec<usize> =
-            (0..bytes.len()).filter(|index| alphabet.contains(&lowered[*index])).collect();
+            (0..bytes.len()).filter(|index| alphabet.contains(&bytes[*index])).collect();
 
         if positions.len() < self.textCipher.minimumLength {
             if self.strict {
@@ -124,7 +119,7 @@ impl FpeStrategy {
 
         let numerals: Vec<u32> = positions
             .iter()
-            .map(|index| alphabet.iter().position(|entry| *entry == lowered[*index]).unwrap() as u32)
+            .map(|index| alphabet.iter().position(|entry| *entry == bytes[*index]).unwrap() as u32)
             .collect();
         let encrypted = self.textCipher.encrypt(&numerals, &tweak);
 
@@ -132,15 +127,6 @@ impl FpeStrategy {
         for (index, numeral) in positions.iter().zip(&encrypted) {
             characters[*index] = alphabet[*numeral as usize];
         }
-        let result = String::from_utf8(characters).expect("ASCII in, ASCII out");
-
-        if self.charset == Charset::Hex
-            && text.bytes().any(|byte| (b'A'..=b'F').contains(&byte))
-            && !text.bytes().any(|byte| (b'a'..=b'f').contains(&byte))
-        {
-            return Ok(result.to_ascii_uppercase());
-        }
-
-        Ok(result)
+        Ok(String::from_utf8(characters).expect("ASCII in, ASCII out"))
     }
 }

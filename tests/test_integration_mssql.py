@@ -17,6 +17,8 @@ no equivalent of MYSQL_DATABASE/POSTGRES_DB/ORACLE_DATABASE env vars, and every
 test already uses a uniquely-named table, so there's nothing to isolate beyond
 that.
 """
+import datetime
+import decimal
 import uuid
 
 import pytest
@@ -351,3 +353,42 @@ def test_bulk_loads_round_trip_awkward_values(liveDatabase):
         assert liveDatabase.query('SELECT count(*) FROM {}'.format(table)) == [(2503,)]
     finally:
         liveDatabase.alter('DROP TABLE {}'.format(table))
+
+
+@pytest.fixture
+def oddTable(liveDatabase):
+    name = 't_{}'.format(uuid.uuid4().hex[:8])
+    liveDatabase.alter('CREATE TABLE {} (id INT NOT NULL PRIMARY KEY, code NVARCHAR(50), exact DECIMAL(38,10), '
+                       'moment DATETIME2(6), clock TIME(6))'.format(name))
+
+    yield name
+
+    liveDatabase.alter('DROP TABLE {}'.format(name))
+
+
+def test_a_chunk_mixing_text_and_numbers_keeps_the_text(liveDatabase, oddTable):
+    """One VALUES list takes one type per column, so an integer beside '00001'
+    used to store it as '1'. Such a chunk goes row by row instead.
+    """
+    liveDatabase.insert(table=oddTable, data=[(1, '00001', None, None, None), (2, 0, None, None, None)], chunkSize=10)
+
+    assert [row[0] for row in liveDatabase.query('SELECT code FROM {} ORDER BY id'.format(oddTable))] == ['00001', '0']
+
+
+def test_a_decimal_spelled_with_an_exponent_does_not_round_its_neighbours(liveDatabase, oddTable):
+    """'1E-10' in a VALUES list types the column float, which rounded the
+    28-digit value beside it.
+    """
+    big, small = decimal.Decimal('9999999999999999999999999999.9999999999'), decimal.Decimal('0.0000000001')
+    liveDatabase.insert(table=oddTable, data=[(1, None, big, None, None), (2, None, small, None, None)], chunkSize=10)
+
+    assert [row[0] for row in liveDatabase.query('SELECT exact FROM {} ORDER BY id'.format(oddTable))] == [big, small]
+
+
+def test_microseconds_survive_an_insert_and_an_upsert(liveDatabase, oddTable):
+    """pymssql renders a bound datetime with milliseconds only; ISO text converts exactly."""
+    moment, clock = datetime.datetime(2026, 1, 1, 10, 0, 7, 123456), datetime.time(23, 59, 59, 999999)
+    liveDatabase.insert(table=oddTable, data=[(1, None, None, moment, clock)], chunkSize=10)
+    liveDatabase.upsert(table=oddTable, data=[(2, None, None, moment, clock)], chunkSize=10)
+
+    assert liveDatabase.query('SELECT moment, clock FROM {} ORDER BY id'.format(oddTable)) == [(moment, clock), (moment, clock)]

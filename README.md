@@ -50,9 +50,9 @@ Edit `configuration/database.yaml` and `configuration/jobs.yaml` for your databa
 ```
 export SOURCE_DB_PASSWORD=...  TARGET_DB_PASSWORD=...  MASKING_KEY=...
 
-bauta validate          # check the configuration, offline
+bauta validate           # check the configuration, offline
 bauta run --dry-run     # check connections and tables, moving nothing
-bauta run               # run every job once
+bauta run                # run every job once
 ```
 
 To see it work without any of that, the demos in a clone of this repository use throwaway SQLite databases:
@@ -71,21 +71,22 @@ python example/native-masking/demo.py    # Python against Rust, and Rust on one 
 ## The command
 
 ```
-bauta run              run every job that's due, once
-bauta validate         check the configuration, without connecting
-bauta jobs             show the job graph and which jobs are due
-bauta history          show recent job outcomes
+bauta run                run every job that's due, once
+bauta validate           check the configuration, without connecting
+bauta jobs               show the job graph and which jobs are due
+bauta history            show recent job outcomes
 
-bauta discover         propose a masking policy for tables
-bauta subset           generate jobs that copy a referentially complete subset
-bauta schema           create target tables from source ones, in the target's dialect
-bauta synthesize       fill tables with generated rows, for data that can't be copied
-bauta clear            empty the jobs' target tables, children first
+bauta discover           propose a masking policy for tables
+bauta subset             generate jobs that copy a referentially complete subset
+bauta schema             create target tables from source ones, in the target's dialect
+bauta synthesize         fill tables with generated rows, for data that can't be copied
+bauta clear              empty the jobs' target tables, children first
 
-bauta audit            report what each job does with data, and what to question
-bauta verify-manifest  check a masking manifest is unaltered, and who signed it
+bauta audit              report what each job does with data, and what to question
+bauta verify-manifest    check a masking manifest is unaltered, and who signed it
+bauta verify-references  count rows in the copy whose foreign key points at nothing
 
-bauta --version        print the version, and which masker it would use
+bauta --version          print the version, and which masker it would use
 ```
 
 | Exit code | Meaning |

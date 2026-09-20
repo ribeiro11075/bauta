@@ -73,7 +73,7 @@ def test_upsert_from_stage_executes_for_every_dialect(dbType):
     (DatabaseType.POSTGRESQL, 2),  # the dependent-views lookup, then the renames
     (DatabaseType.ORACLE, 3),
     (DatabaseType.MSSQL, 1),
-    (DatabaseType.SQLITE, 4),
+    (DatabaseType.SQLITE, 6),  # legacy_alter_table on, BEGIN, the renames, then off
     (DatabaseType.MARIADB, 1),
     ])
 def test_swap_executes_the_right_number_of_statements(dbType, expectedStatementCount):
@@ -145,17 +145,17 @@ def test_an_upsert_into_a_table_without_a_primary_key_fails_rather_than_guessing
     database.cursor.executemany.assert_not_called()
 
 
-@pytest.mark.parametrize('target,stage,expectedTemp', [
-    ('people', 'people_stage', 'people_tmp'),
-    ('sales.people', 'sales.people_stage', 'sales.people_tmp'),
+@pytest.mark.parametrize('target,stage,expectedTarget,expectedStage,expectedTemp', [
+    ('people', 'people_stage', '`people`', '`people_stage`', '`people_tmp`'),
+    ('sales.people', 'sales.people_stage', '`sales`.`people`', '`sales`.`people_stage`', '`sales`.`people_tmp`'),
     ])
-def test_swap_puts_the_temporary_table_in_the_stage_tables_schema(target, stage, expectedTemp):
+def test_swap_puts_the_temporary_table_in_the_stage_tables_schema(target, stage, expectedTarget, expectedStage, expectedTemp):
     database = _mockedDatabase(DatabaseType.MYSQL)
     database.dialect = MagicMock()
 
     database.swap(targetTable=target, stageTable=stage)
 
-    database.dialect.swap.assert_called_once_with(database.cursor, targetTable=target, stageTable=stage, tempTable=expectedTemp)
+    database.dialect.swap.assert_called_once_with(database.cursor, targetTable=expectedTarget, stageTable=expectedStage, tempTable=expectedTemp)
 
 
 def test_postgresql_inserts_through_copy_one_batch_at_a_time():
@@ -163,8 +163,8 @@ def test_postgresql_inserts_through_copy_one_batch_at_a_time():
 
     database.insert(table='people', data=[(1, 'a'), (2, 'b'), (3, 'c')], chunkSize=2, columns=['id', 'name'])
 
-    assert _copies(database.cursor) == [('COPY people ("id", "name") FROM STDIN', '1\ta\n2\tb\n'),
-                                        ('COPY people ("id", "name") FROM STDIN', '3\tc\n')]
+    assert _copies(database.cursor) == [('COPY "people" ("id", "name") FROM STDIN', '1\ta\n2\tb\n'),
+                                        ('COPY "people" ("id", "name") FROM STDIN', '3\tc\n')]
     database.cursor.executemany.assert_not_called()
     assert database.connection.commit.call_count == 2
 
@@ -181,8 +181,8 @@ def test_a_copied_upsert_sends_only_the_last_row_of_each_key():
     assert written == '1\tc\n2\tb\n'
     statements = [call.args[0] for call in database.cursor.execute.call_args_list]
     assert statements[0].startswith('CREATE TEMPORARY TABLE IF NOT EXISTS bauta_upsert_')
-    assert 'ON COMMIT DELETE ROWS AS SELECT "id", "name" FROM people WITH NO DATA' in statements[0]
-    assert statements[1].startswith('INSERT INTO people ("id", "name") SELECT "id", "name" FROM bauta_upsert_')
+    assert 'ON COMMIT DELETE ROWS AS SELECT "id", "name" FROM "people" WITH NO DATA' in statements[0]
+    assert statements[1].startswith('INSERT INTO "people" ("id", "name") SELECT "id", "name" FROM bauta_upsert_')
     assert statements[1].endswith('ON CONFLICT("id") DO UPDATE SET "name"=excluded."name"')
 
 
@@ -246,12 +246,12 @@ def test_chunk_insert_does_nothing_for_empty_data():
 
 
 @pytest.mark.parametrize('dbType,expectedQuery', [
-    (DatabaseType.MYSQL, 'TRUNCATE TABLE people'),
-    (DatabaseType.POSTGRESQL, 'TRUNCATE TABLE people'),
-    (DatabaseType.ORACLE, 'TRUNCATE TABLE people'),
-    (DatabaseType.MSSQL, 'TRUNCATE TABLE people'),
-    (DatabaseType.MARIADB, 'TRUNCATE TABLE people'),
-    (DatabaseType.SQLITE, 'DELETE FROM people'),  # SQLite has no TRUNCATE statement
+    (DatabaseType.MYSQL, 'TRUNCATE TABLE `people`'),
+    (DatabaseType.POSTGRESQL, 'TRUNCATE TABLE "people"'),
+    (DatabaseType.ORACLE, 'TRUNCATE TABLE "PEOPLE"'),
+    (DatabaseType.MSSQL, 'TRUNCATE TABLE [people]'),
+    (DatabaseType.MARIADB, 'TRUNCATE TABLE `people`'),
+    (DatabaseType.SQLITE, 'DELETE FROM "people"'),  # SQLite has no TRUNCATE statement
     ])
 def test_truncate_uses_the_dialects_truncate_query(dbType, expectedQuery):
     database = _mockedDatabase(dbType)

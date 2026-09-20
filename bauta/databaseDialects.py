@@ -3,14 +3,18 @@ from __future__ import annotations
 import datetime
 import decimal
 import hashlib
+import logging
 import math
 import re
 import uuid
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from .configuration import IDENTIFIER, ConfigurationError, DatabaseConnectionConfig, DatabaseType
+from .log import LOGGER_NAME
+
+logger = logging.getLogger(LOGGER_NAME)
 
 
 class ForeignKey(NamedTuple):
@@ -75,22 +79,6 @@ def _columnDefinitions(rows: Sequence[Sequence[Any]]) -> List[ColumnDefinition]:
         ]
 
 
-def splitTableName(table: str) -> Tuple[Optional[str], str]:
-    """`schema.table` -> ('schema', 'table'); a bare `table` -> (None, 'table'),
-    None meaning the connection's current schema.
-    """
-
-    schema, _, name = table.rpartition('.')
-
-    return schema or None, name
-
-
-def unqualifiedName(table: str) -> str:
-    """The name without its schema -- what `RENAME TO` and sp_rename take."""
-
-    return splitTableName(table)[1]
-
-
 class ColumnCategory(str, Enum):
     NUMBER = 'number'
     DATE = 'date'
@@ -121,6 +109,22 @@ _IDENTIFIER_QUOTES = {DatabaseType.MYSQL: ('`', '`'), DatabaseType.MARIADB: ('`'
 # written. The others compare identifiers case-insensitively anyway.
 _UNQUOTED_CASE = {DatabaseType.ORACLE: str.upper, DatabaseType.POSTGRESQL: str.lower}
 
+# Every quoting style the dialects use, for reading a name written in any of
+# them. No database allows these characters in a name written without quotes,
+# so a name carrying one was quoted.
+_QUOTE_PAIRS = dict([('"', '"')] + list(_IDENTIFIER_QUOTES.values()))
+
+# The longest name each database keeps, and whether it counts bytes or
+# characters. A longer name isn't refused: it is silently cut to the limit, so
+# two names alike up to it become one table. SQLite has no limit.
+IDENTIFIER_LIMITS = {
+    DatabaseType.POSTGRESQL: (63, 'bytes'),
+    DatabaseType.MYSQL: (64, 'characters'),
+    DatabaseType.MARIADB: (64, 'characters'),
+    DatabaseType.ORACLE: (128, 'bytes'),
+    DatabaseType.MSSQL: (128, 'characters'),
+    }
+
 
 def quoteIdentifier(databaseType: DatabaseType, name: str) -> str:
     """`name`, quoted, so a reserved word (`rank`, `order`) works as a column
@@ -146,8 +150,201 @@ def quoteFolded(databaseType: DatabaseType, name: str) -> str:
     return quoteIdentifier(databaseType, name)
 
 
+def durationText(value: datetime.timedelta) -> str:
+    """A duration as `[-]HH:MM:SS[.ffffff]`, the way MySQL writes a TIME.
+
+    MySQL's TIME is a duration, from -838:59:59 to 838:59:59, and its driver
+    returns a timedelta. Nothing else takes one: SQL Server's and SQLite's
+    drivers refuse it outright, psycopg writes it as an interval -- which
+    PostgreSQL then squeezed into a TIME column as a wrong time of day, without
+    a word -- and Oracle stored Python's own `-35 days, 1:00:01`. Every
+    database parses this spelling back into whatever the column is.
+    """
+
+    sign = '-' if value < datetime.timedelta(0) else ''
+    magnitude = abs(value)
+    hours, rest = divmod(int(magnitude.total_seconds()), 3600)
+    minutes, seconds = divmod(rest, 60)
+    fraction = '.{:06d}'.format(magnitude.microseconds) if magnitude.microseconds else ''
+
+    return '{}{:02d}:{:02d}:{:02d}{}'.format(sign, hours, minutes, seconds, fraction)
+
+
+def splitTableName(table: str) -> Tuple[Optional[str], str]:
+    """`schema.table` -> ('schema', 'table'); a bare `table` -> (None, 'table'),
+    None meaning the connection's current schema. Both parts keep the spelling
+    they were written in, quotes and all, so they can go back into a statement.
+
+    A dot inside quotes belongs to the name: `dbo.[a.b]` is one table `a.b` in
+    schema `dbo`, not a schema `dbo.[a`.
+    """
+
+    parts: List[str] = []
+    current: List[str] = []
+    closing = None
+
+    for character in table:
+        if closing is not None:
+            closing = None if character == closing else closing
+        elif character in _QUOTE_PAIRS:
+            closing = _QUOTE_PAIRS[character]
+        elif character == '.':
+            parts.append(''.join(current))
+            current = []
+            continue
+        current.append(character)
+
+    parts.append(''.join(current))
+    schema = '.'.join(parts[:-1])
+
+    return schema or None, parts[-1]
+
+
+def unqualifiedName(table: str) -> str:
+    """The name without its schema -- what `RENAME TO` and sp_rename take."""
+
+    return splitTableName(table)[1]
+
+
+def _isQuoted(databaseType: DatabaseType, name: str) -> bool:
+
+    opening, closing = _IDENTIFIER_QUOTES.get(databaseType, ('"', '"'))
+
+    return len(name) > 1 and name.startswith(opening) and name.endswith(closing)
+
+
+def catalogName(databaseType: DatabaseType, name: str) -> str:
+    """`name` as the catalog holds it: a quoted name unquoted, and a name
+    written without quotes folded the way this database folds one.
+
+    Catalog queries bind these, so a table a person can only name in quotes --
+    a reserved word, mixed case on Oracle or PostgreSQL, a space -- is found
+    rather than looked up with its quotes still on, which used to report every
+    such table as having no columns and no primary key.
+
+    A name no database would accept without quotes is taken as it is written,
+    since there is no unquoted spelling of it to fold -- the same rule
+    quoteFolded follows, so the two agree on what a written name means.
+    """
+
+    if _isQuoted(databaseType, name):
+        return bareName(name)
+
+    fold = _UNQUOTED_CASE.get(databaseType)
+
+    return fold(name) if fold is not None and IDENTIFIER.match(name) else name
+
+
+def bareName(name: str) -> str:
+    """`name` without whatever quotes it was written in, whichever database's
+    style they are.
+
+    For matching a name written in one database's spelling against a name read
+    from another's, which audit and verify-references do ignoring case. A
+    lookup against one database binds catalogName instead.
+    """
+
+    closing = _QUOTE_PAIRS.get(name[:1])
+    if closing is not None and len(name) > 1 and name.endswith(closing):
+        return name[1:-1].replace(closing * 2, closing)
+
+    return name
+
+
+def catalogTableName(databaseType: DatabaseType, table: str) -> Tuple[Optional[str], str]:
+    """The schema and table a catalog query binds, from a name as written."""
+
+    schema, name = splitTableName(table)
+
+    return (None if schema is None else catalogName(databaseType, schema)), catalogName(databaseType, name)
+
+
+def _quotedParts(databaseType: DatabaseType, table: str, quote: Callable[[DatabaseType, str], str]) -> str:
+
+    schema, name = splitTableName(table)
+    # A part written in quotes is spelled exactly as it means to be, whichever
+    # quoting the caller asked for; only a bare part is the caller's to fold.
+    parts = [quoteIdentifier(databaseType, bareName(part)) if _isQuoted(databaseType, part) else quote(databaseType, part)
+             for part in ([schema, name] if schema else [name])]
+
+    return '.'.join(parts)
+
+
+def tooLongName(databaseType: DatabaseType, table: str) -> Optional[str]:
+    """Says which part of `table` this database would cut, and to what, or None.
+
+    PostgreSQL cutting a name to 63 bytes is silent: two jobs whose targets
+    differ only past that loaded the same table, and the second swap then
+    renamed over the first's rows.
+    """
+
+    limit = IDENTIFIER_LIMITS.get(databaseType)
+    if limit is None:
+        return None
+
+    length, unit = limit
+    for part in catalogTableName(databaseType, table):
+        if part is None:
+            continue
+        measured = len(part.encode('utf-8')) if unit == 'bytes' else len(part)
+        if measured > length:
+            return '{} is {} {} long, and {} keeps only {}, so it names whatever other table shares its first {}'.format(
+                part, measured, unit, databaseType.value, length, length)
+
+    return None
+
+
+def catalogTable(databaseType: DatabaseType, table: str) -> str:
+    """A table name as the catalog holds it, schema and all: catalogTableName
+    written back as one name.
+    """
+
+    schema, name = catalogTableName(databaseType, table)
+
+    return '{}.{}'.format(schema, name) if schema else name
+
+
+def quoteTableName(databaseType: DatabaseType, table: str) -> str:
+    """A table name a catalog reported, quoted part by part for a statement --
+    so `group` becomes `"group"` and stays one identifier, and a qualified name
+    stays two. The spelling is kept as it is, which is how the catalog holds it.
+    """
+
+    return _quotedParts(databaseType, table, quoteIdentifier)
+
+
+def quoteFoldedTable(databaseType: DatabaseType, table: str) -> str:
+    """quoteTableName for a table being created, whose name is folded the way
+    this database folds an unquoted one -- see quoteFolded -- so it answers to
+    the same name unquoted. A name already quoted keeps its own spelling.
+    """
+
+    return _quotedParts(databaseType, table, quoteFolded)
+
+
+def suffixedName(databaseType: DatabaseType, table: str, suffix: str) -> str:
+    """`table` with `suffix` on its own name, keeping the spelling it was
+    written in: a quoted name grows inside its quotes, since `[group]_tmp` is
+    not a name SQL Server can parse.
+    """
+
+    schema, name = splitTableName(table)
+    if _isQuoted(databaseType, name):
+        name = quoteIdentifier(databaseType, bareName(name) + suffix)
+    else:
+        name += suffix
+
+    return '{}.{}'.format(schema, name) if schema else name
+
+
 class DatabaseDialect(ABC):
-    """Everything that differs between database types lives here, not in Database."""
+    """Everything that differs between database types lives here, not in Database.
+
+    `databaseType` lets a dialect read a name the way its own database writes
+    one, for the catalog lookups and the statements it builds.
+    """
+
+    databaseType: DatabaseType
 
     @abstractmethod
     def connect(self, settings: DatabaseConnectionConfig) -> Tuple[Any, Any]:
@@ -181,6 +378,17 @@ class DatabaseDialect(ABC):
         """
 
         return connection.cursor()
+
+
+    def prepareValues(self, rows: List[Tuple[Any, ...]]) -> List[Tuple[Any, ...]]:
+        """A batch as this driver must receive it. Every dialect writes a
+        duration as text; PostgreSQL and SQL Server have more to do.
+        """
+
+        if not any(isinstance(value, datetime.timedelta) for row in rows for value in row):
+            return rows
+
+        return [tuple(durationText(value) if isinstance(value, datetime.timedelta) else value for value in row) for row in rows]
 
 
     def discardRemaining(self, connection: Any, cursor: Any) -> None:
@@ -235,7 +443,8 @@ class DatabaseDialect(ABC):
         return None
 
     # The three catalog queries below each bind two parameters, the schema and
-    # the table, from splitTableName. A NULL schema means the current one.
+    # the table, from catalogTableName: unquoted, and folded as this database
+    # folds a name written without quotes. A NULL schema means the current one.
 
     def primaryKeyQuery(self) -> str:
         """One table's declared primary-key columns, in key order. Not UNIQUE
@@ -258,7 +467,7 @@ class DatabaseDialect(ABC):
 
     def _catalog(self, cursor: Any, query: str, table: str) -> List[Any]:
 
-        cursor.execute(query.format(*self.placeholders(2)), splitTableName(table))
+        cursor.execute(query.format(*self.placeholders(2)), catalogTableName(self.databaseType, table))
 
         return cursor.fetchall()
 
@@ -347,6 +556,8 @@ class _OnConflictDialect(DatabaseDialect):
 
 class MySQLDialect(DatabaseDialect):
 
+    databaseType = DatabaseType.MYSQL
+
     _NUMBER_TYPES = {'INT', 'BIGINT'}
     _DATE_TYPES = {'DATETIME', 'TIMESTAMP', 'DATE'}
     _TEXT_TYPES = {'TEXT', 'VARCHAR', 'CHAR'}
@@ -417,15 +628,23 @@ class MySQLDialect(DatabaseDialect):
 
     def foreignKeysQuery(self) -> str:
 
-        return ("SELECT table_name, column_name, referenced_table_name, referenced_column_name, constraint_name "
+        return ("SELECT table_name, column_name, "
+                "CASE WHEN referenced_table_schema = DATABASE() THEN referenced_table_name "
+                "ELSE CONCAT(referenced_table_schema, '.', referenced_table_name) END, "
+                "referenced_column_name, constraint_name "
                 "FROM information_schema.key_column_usage "
                 "WHERE table_schema = DATABASE() AND referenced_table_name IS NOT NULL "
                 "ORDER BY table_name, constraint_name, ordinal_position")
 
 
     def columnsQuery(self) -> str:
+        """column_type rather than data_type, since only the first says
+        `unsigned` -- an `INT UNSIGNED` column holds values no target's `INT`
+        can, and looked exactly like an `INT` here. It carries the declared
+        size too (`varchar(20)`, `enum('x','y')`), which portableType drops.
+        """
 
-        return ("SELECT column_name, data_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable "
+        return ("SELECT column_name, column_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable "
                 "FROM information_schema.columns WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {} ORDER BY ordinal_position")
 
 
@@ -529,6 +748,8 @@ def _copyIn(cursor: Any, statement: str, text: str) -> None:
 
 
 class PostgreSQLDialect(_OnConflictDialect):
+
+    databaseType = DatabaseType.POSTGRESQL
 
     _NUMBER_OIDS = {20, 21, 23}
     _DATE_OIDS = {1114, 1018}
@@ -644,11 +865,14 @@ class PostgreSQLDialect(_OnConflictDialect):
         composite key's columns with the columns they reference.
         """
 
-        return ("SELECT cl.relname, att.attname, rcl.relname, ratt.attname, con.conname "
+        return ("SELECT cl.relname, att.attname, "
+                "CASE WHEN rns.nspname = current_schema() THEN rcl.relname ELSE rns.nspname || '.' || rcl.relname END, "
+                "ratt.attname, con.conname "
                 "FROM pg_constraint con "
                 "JOIN pg_class cl ON cl.oid = con.conrelid "
                 "JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
                 "JOIN pg_class rcl ON rcl.oid = con.confrelid "
+                "JOIN pg_namespace rns ON rns.oid = rcl.relnamespace "
                 "CROSS JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS k(attnum, refattnum, position) "
                 "JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = k.attnum "
                 "JOIN pg_attribute ratt ON ratt.attrelid = con.confrelid AND ratt.attnum = k.refattnum "
@@ -656,14 +880,15 @@ class PostgreSQLDialect(_OnConflictDialect):
                 "ORDER BY cl.relname, con.conname, k.position")
 
 
-    # The lookups fold names to lower case, as PostgreSQL does unquoted ones.
-    # ::text gives a NULL schema the type lower() needs.
+    # The bound names arrive folded, so the lookups compare them as they are;
+    # a name quoted in a job keeps the case it was quoted with. ::text gives a
+    # NULL schema a type COALESCE can use.
 
     def columnsQuery(self) -> str:
 
         return ("SELECT column_name, data_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable "
-                "FROM information_schema.columns WHERE table_schema = COALESCE(lower({}::text), current_schema()) "
-                "AND table_name = lower({}::text) ORDER BY ordinal_position")
+                "FROM information_schema.columns WHERE table_schema = COALESCE({}::text, current_schema()) "
+                "AND table_name = {}::text ORDER BY ordinal_position")
 
 
     def primaryKeyQuery(self) -> str:
@@ -673,14 +898,35 @@ class PostgreSQLDialect(_OnConflictDialect):
                 "JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
                 "CROSS JOIN LATERAL unnest(idx.indkey) WITH ORDINALITY AS k(attnum, position) "
                 "JOIN pg_attribute att ON att.attrelid = cl.oid AND att.attnum = k.attnum "
-                "WHERE idx.indisprimary AND ns.nspname = COALESCE(lower({}::text), current_schema()) AND cl.relname = lower({}::text) "
+                "WHERE idx.indisprimary AND ns.nspname = COALESCE({}::text, current_schema()) AND cl.relname = {}::text "
                 "ORDER BY k.position")
 
 
     def tableExistsQuery(self) -> str:
 
         return ("SELECT count(*) FROM information_schema.tables "
-                "WHERE table_schema = COALESCE(lower({}::text), current_schema()) AND table_name = lower({}::text)")
+                "WHERE table_schema = COALESCE({}::text, current_schema()) AND table_name = {}::text")
+
+
+    def prepareValues(self, rows: List[Tuple[Any, ...]]) -> List[Tuple[Any, ...]]:
+        """Dictionaries as JSON, which is what they came from.
+
+        psycopg reads a `json` or `jsonb` column as a dict and then refuses to
+        write one back ("cannot adapt type 'dict'"), so copying a table with a
+        JSON column failed at the first chunk. A list is left alone: psycopg
+        writes one as an array, which is what a `text[]` column needs, and it
+        can't be told apart from a JSON array here. A `jsonb` column holding
+        one has to be selected as text.
+        """
+
+        rows = super().prepareValues(rows)
+
+        if not any(isinstance(value, dict) for row in rows for value in row):
+            return rows
+
+        from psycopg.types.json import Jsonb
+
+        return [tuple(Jsonb(value) if isinstance(value, dict) else value for value in row) for row in rows]
 
 
     def swapQueries(self, targetTable: str, stageTable: str, tempTable: str) -> List[str]:
@@ -718,10 +964,33 @@ class PostgreSQLDialect(_OnConflictDialect):
             cursor.execute('CREATE OR REPLACE VIEW {} AS {}'.format(name, definition))
 
 
-def _oracleLobsAsValues(cursor: Any, metadata: Any) -> Any:
-    """Fetch CLOB, NCLOB and BLOB columns as str and bytes, not LOB handles,
-    which no other driver can bind. Per connection, rather than oracledb's
-    process-wide default, so an embedding application keeps its own setting.
+def _oracleDatetimesAsTimestamps(cursor: Any, value: Any, arraysize: int) -> Any:
+    """Bind a datetime as a TIMESTAMP, keeping its fraction of a second.
+
+    oracledb binds one as DB_TYPE_DATE, which holds whole seconds only, so
+    microseconds were silently dropped even into a TIMESTAMP(6) column. A
+    DATE column still takes a TIMESTAMP bind, truncating as Oracle's own
+    conversion does.
+    """
+
+    import oracledb
+
+    if isinstance(value, datetime.datetime):
+        return cursor.var(oracledb.DB_TYPE_TIMESTAMP_TZ if value.tzinfo else oracledb.DB_TYPE_TIMESTAMP, arraysize=arraysize)
+
+    return None
+
+
+def _oracleValues(cursor: Any, metadata: Any) -> Any:
+    """How a column is fetched, per connection rather than through oracledb's
+    process-wide defaults, so an embedding application keeps its own.
+
+    CLOB, NCLOB and BLOB come back as str and bytes, not LOB handles, which no
+    other driver can bind. A NUMBER with a scale comes back as a Decimal:
+    oracledb's default is a float, which loses digits an Oracle NUMBER holds
+    (123456789012345.6789 arrived as 123456789012345.67) and turns a large
+    value into one no target can store. A scale of 0 stays an int, and
+    BINARY_FLOAT and BINARY_DOUBLE stay floats, which is what they are.
     """
 
     import oracledb
@@ -732,20 +1001,37 @@ def _oracleLobsAsValues(cursor: Any, metadata: Any) -> Any:
         oracledb.DB_TYPE_BLOB: oracledb.DB_TYPE_LONG_RAW,
         }
     conversion = conversions.get(metadata.type_code)
+    if conversion is not None:
+        return cursor.var(conversion, arraysize=cursor.arraysize)
 
-    return cursor.var(conversion, arraysize=cursor.arraysize) if conversion is not None else None
+    if metadata.type_code is oracledb.DB_TYPE_NUMBER and metadata.scale != 0:
+        return cursor.var(decimal.Decimal, arraysize=cursor.arraysize)
+
+    return None
+
+
+def _renameSteps(targetTable: str, stageTable: str, tempTable: str) -> List[Tuple[str, str]]:
+    """The three renames a swap is, as (from, to) pairs: the stage out of the
+    way, the target into its place, and the stage into the target's name.
+    """
+
+    return [(stageTable, tempTable), (targetTable, stageTable), (tempTable, targetTable)]
+
+
+def _renameStatement(fromTable: str, toTable: str) -> str:
+    """RENAME TO takes the new name unqualified; the table stays in its schema."""
+
+    return 'ALTER TABLE {} RENAME TO {}'.format(fromTable, unqualifiedName(toTable))
 
 
 def _renameInThreeSteps(targetTable: str, stageTable: str, tempTable: str) -> List[str]:
 
-    return [
-        'ALTER TABLE {} RENAME TO {}'.format(stageTable, unqualifiedName(tempTable)),
-        'ALTER TABLE {} RENAME TO {}'.format(targetTable, unqualifiedName(stageTable)),
-        'ALTER TABLE {} RENAME TO {}'.format(tempTable, unqualifiedName(targetTable)),
-        ]
+    return [_renameStatement(*step) for step in _renameSteps(targetTable, stageTable, tempTable)]
 
 
 class OracleDialect(DatabaseDialect):
+
+    databaseType = DatabaseType.ORACLE
 
     _NUMBER_TYPE_NAMES = {'DB_TYPE_NUMBER', 'DB_TYPE_BINARY_INTEGER', 'DB_TYPE_BINARY_FLOAT', 'DB_TYPE_BINARY_DOUBLE'}
     _DATE_TYPE_NAMES = {'DB_TYPE_DATE', 'DB_TYPE_TIMESTAMP', 'DB_TYPE_TIMESTAMP_TZ', 'DB_TYPE_TIMESTAMP_LTZ'}
@@ -763,7 +1049,8 @@ class OracleDialect(DatabaseDialect):
         import oracledb
 
         connection = oracledb.connect(**self.connectArguments(settings))
-        connection.outputtypehandler = _oracleLobsAsValues
+        connection.outputtypehandler = _oracleValues
+        connection.inputtypehandler = _oracleDatetimesAsTimestamps
         cursor = connection.cursor()
         cursor.execute(self.SESSION_FORMATS)
 
@@ -814,25 +1101,33 @@ class OracleDialect(DatabaseDialect):
 
 
     def foreignKeysQuery(self) -> str:
+        """From all_* views in the session's current schema: user_* views read
+        the login's own schema, whatever currentSchema says. Constraint names
+        are unique per owner only, so every join matches the owner too.
+        """
 
-        return ("SELECT c.table_name, cc.column_name, rc.table_name, rcc.column_name, c.constraint_name "
-                "FROM user_constraints c "
-                "JOIN user_cons_columns cc ON cc.constraint_name = c.constraint_name "
-                "JOIN user_constraints rc ON rc.constraint_name = c.r_constraint_name "
-                "JOIN user_cons_columns rcc ON rcc.constraint_name = rc.constraint_name AND rcc.position = cc.position "
-                "WHERE c.constraint_type = 'R' "
+        return ("SELECT c.table_name, cc.column_name, "
+                "CASE WHEN rc.owner = c.owner THEN rc.table_name ELSE rc.owner || '.' || rc.table_name END, "
+                "rcc.column_name, c.constraint_name "
+                "FROM all_constraints c "
+                "JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name "
+                "JOIN all_constraints rc ON rc.owner = c.r_owner AND rc.constraint_name = c.r_constraint_name "
+                "JOIN all_cons_columns rcc ON rcc.owner = rc.owner AND rcc.constraint_name = rc.constraint_name AND rcc.position = cc.position "
+                "WHERE c.constraint_type = 'R' AND c.owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') "
                 "ORDER BY c.table_name, c.constraint_name, cc.position")
 
 
     # all_* views filtered to the bound schema or the session's current one,
     # which user_* views wouldn't follow after ALTER SESSION SET CURRENT_SCHEMA.
-    OWNER = "COALESCE(UPPER({}), SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'))"
+    # The bound names arrive folded, so a table quoted in a job -- the only way
+    # to name a lower-case one on Oracle -- is looked up as it is spelled.
+    OWNER = "COALESCE({}, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'))"
 
     def columnsQuery(self) -> str:
         """CHAR_LENGTH rather than DATA_LENGTH, which is in bytes."""
 
         return ("SELECT column_name, data_type, CASE WHEN char_length > 0 THEN char_length END, data_precision, data_scale, nullable "
-                "FROM all_tab_columns WHERE owner = " + self.OWNER + " AND table_name = UPPER({}) ORDER BY column_id")
+                "FROM all_tab_columns WHERE owner = " + self.OWNER + " AND table_name = {} ORDER BY column_id")
 
 
     def isEncrypted(self, cursor: Any) -> Optional[bool]:
@@ -847,12 +1142,12 @@ class OracleDialect(DatabaseDialect):
 
         return ("SELECT cols.column_name FROM all_constraints cons "
                 "JOIN all_cons_columns cols ON cols.owner = cons.owner AND cols.constraint_name = cons.constraint_name "
-                "WHERE cons.constraint_type = 'P' AND cons.owner = " + self.OWNER + " AND cons.table_name = UPPER({}) ORDER BY cols.position")
+                "WHERE cons.constraint_type = 'P' AND cons.owner = " + self.OWNER + " AND cons.table_name = {} ORDER BY cols.position")
 
 
     def tableExistsQuery(self) -> str:
 
-        return "SELECT count(*) FROM all_tables WHERE owner = " + self.OWNER + " AND table_name = UPPER({})"
+        return "SELECT count(*) FROM all_tables WHERE owner = " + self.OWNER + " AND table_name = {}"
 
 
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
@@ -878,7 +1173,38 @@ class OracleDialect(DatabaseDialect):
         return _renameInThreeSteps(targetTable, stageTable, tempTable)
 
 
+    def swap(self, cursor: Any, targetTable: str, stageTable: str, tempTable: str) -> None:
+        """Renames one at a time, undoing the ones that worked if one fails.
+
+        Oracle commits every DDL statement, so there is no transaction to roll
+        back. A rename that failed part-way -- another session holding the
+        table, which is ORA-00054 -- used to leave the stage table under the
+        temporary name, so the stage table was gone and every later run failed
+        with ORA-00942 until someone renamed it back by hand.
+
+        An undo that fails is left for the error about the swap itself, which
+        says more about what went wrong.
+        """
+
+        undo: List[Tuple[str, str]] = []
+
+        for fromTable, toTable in _renameSteps(targetTable, stageTable, tempTable):
+            try:
+                cursor.execute(_renameStatement(fromTable, toTable))
+            except Exception:
+                for undoFrom, undoTo in reversed(undo):
+                    try:
+                        cursor.execute(_renameStatement(undoTo, undoFrom))
+                    except Exception:
+                        logger.warning('could not undo the rename of {} to {} after the swap failed; the tables are '
+                                       'as the failure left them'.format(undoFrom, undoTo))
+                raise
+            undo.append((fromTable, toTable))
+
+
 class MSSQLDialect(DatabaseDialect):
+
+    databaseType = DatabaseType.MSSQL
 
     def connect(self, settings: DatabaseConnectionConfig) -> Tuple[Any, Any]:
 
@@ -909,14 +1235,16 @@ class MSSQLDialect(DatabaseDialect):
 
     def foreignKeysQuery(self) -> str:
 
-        return ("SELECT tp.name, cp.name, tr.name, cr.name, fk.name "
+        return ("SELECT CASE WHEN sp.name = SCHEMA_NAME() THEN tp.name ELSE sp.name + '.' + tp.name END, cp.name, "
+                "CASE WHEN sr.name = SCHEMA_NAME() THEN tr.name ELSE sr.name + '.' + tr.name END, cr.name, fk.name "
                 "FROM sys.foreign_keys fk "
                 "JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id "
                 "JOIN sys.tables tp ON tp.object_id = fkc.parent_object_id "
                 "JOIN sys.columns cp ON cp.object_id = fkc.parent_object_id AND cp.column_id = fkc.parent_column_id "
                 "JOIN sys.tables tr ON tr.object_id = fkc.referenced_object_id "
                 "JOIN sys.columns cr ON cr.object_id = fkc.referenced_object_id AND cr.column_id = fkc.referenced_column_id "
-                "WHERE tp.schema_id = SCHEMA_ID() "
+                "JOIN sys.schemas sp ON sp.schema_id = tp.schema_id "
+                "JOIN sys.schemas sr ON sr.schema_id = tr.schema_id "
                 "ORDER BY tp.name, fk.name, fkc.constraint_column_id")
 
 
@@ -966,8 +1294,65 @@ class MSSQLDialect(DatabaseDialect):
     # 2100-parameter limit doesn't apply.
     VALUES_ROW_LIMIT = 1000
 
+    def prepareValues(self, rows: List[Tuple[Any, ...]]) -> List[Tuple[Any, ...]]:
+        """Times as ISO text, which SQL Server converts exactly: pymssql renders
+        a bound datetime with milliseconds only, so the microseconds a
+        DATETIME2 column holds were silently lost.
+        """
+
+        def text(value: Any) -> Any:
+            if isinstance(value, datetime.datetime):
+                return value.isoformat(sep=' ')
+            if isinstance(value, datetime.time):
+                return value.isoformat()
+            return value
+
+        rows = super().prepareValues(rows)
+
+        if not any(isinstance(value, (datetime.datetime, datetime.time)) for row in rows for value in row):
+            return rows
+
+        return [tuple(text(value) for value in row) for row in rows]
+
+
+    @staticmethod
+    def _multiRowSafe(rows: Sequence[Sequence[Any]]) -> bool:
+        """Whether one VALUES list can carry `rows` unchanged.
+
+        A table value constructor takes one type per column, by SQL Server's
+        data-type precedence, and converts the rest to it: a single integer in
+        a text column turns '00001' into '1'. A Decimal that spells itself with
+        an exponent ('1E-10') types the column float, which rounds every exact
+        value beside it. Both go to the row-by-row path, which converts each
+        value on its own.
+        """
+
+        kinds: Dict[int, str] = {}
+
+        for row in rows:
+            for index, value in enumerate(row):
+                if value is None:
+                    continue
+                if isinstance(value, decimal.Decimal) and 'E' in str(value).upper():
+                    return False
+                if isinstance(value, bytes):
+                    kind = 'bytes'
+                elif isinstance(value, str):
+                    kind = 'text'
+                elif isinstance(value, (bool, int, float, decimal.Decimal)):
+                    kind = 'number'
+                else:
+                    kind = 'other'
+                if kinds.setdefault(index, kind) != kind:
+                    return False
+
+        return True
+
     def bulkInsert(self, cursor: Any, table: str, columns: List[str], rows: Sequence[Sequence[Any]]) -> bool:
         """Multi-row INSERT ... VALUES: pymssql's executemany sends a statement per row."""
+
+        if not self._multiRowSafe(rows):
+            return False
 
         rowValues = '({})'.format(', '.join(self.placeholders(len(columns))))
 
@@ -984,6 +1369,9 @@ class MSSQLDialect(DatabaseDialect):
         """One MERGE per thousand rows. `rows` hold one row per key, which MERGE
         requires: it refuses to update a target row twice.
         """
+
+        if not self._multiRowSafe(rows):
+            return False
 
         for offset in range(0, len(rows), self.VALUES_ROW_LIMIT):
             batch = rows[offset:offset + self.VALUES_ROW_LIMIT]
@@ -1002,11 +1390,15 @@ class MSSQLDialect(DatabaseDialect):
 
     def swapQueries(self, targetTable: str, stageTable: str, tempTable: str) -> List[str]:
         """One execute(), inside the transaction, so atomic. sp_rename takes the
-        new name literally, so it must be unqualified.
+        new name literally, so it must be unqualified, and bare: brackets in it
+        would become part of the name, and an unbalanced one is a syntax error.
         """
 
+        def renamed(table: str) -> str:
+            return bareName(unqualifiedName(table))
+
         return ["EXEC sp_rename '{}', '{}'; EXEC sp_rename '{}', '{}'; EXEC sp_rename '{}', '{}';".format(
-            stageTable, unqualifiedName(tempTable), targetTable, unqualifiedName(stageTable), tempTable, unqualifiedName(targetTable))]
+            stageTable, renamed(tempTable), targetTable, renamed(stageTable), tempTable, renamed(targetTable))]
 
     # No columnCategory: pymssql's type codes can't be told apart without
     # importing it, so discovery samples values instead.
@@ -1016,6 +1408,8 @@ class MariaDBDialect(MySQLDialect):
     """MySQL's dialect and driver, unchanged: MariaDB is compatible with
     everything this uses.
     """
+
+    databaseType = DatabaseType.MARIADB
 
 
 def _registerSqliteAdapters(sqlite3: Any) -> None:
@@ -1039,6 +1433,8 @@ class SQLiteDialect(_OnConflictDialect):
     sqlite3 reports no column types.
     """
 
+    databaseType = DatabaseType.SQLITE
+
     def connect(self, settings: DatabaseConnectionConfig) -> Tuple[Any, Any]:
 
         import sqlite3
@@ -1050,6 +1446,9 @@ class SQLiteDialect(_OnConflictDialect):
         # the file, and needs a local filesystem, not NFS or SMB.
         connection = sqlite3.connect(**self.connectArguments(settings))
         connection.execute('PRAGMA journal_mode=WAL')
+        # Declared foreign keys are enforced, as on every other database.
+        # SQLite leaves them off unless each connection asks.
+        connection.execute('PRAGMA foreign_keys=ON')
         cursor = connection.cursor()
 
         return connection, cursor
@@ -1081,10 +1480,11 @@ class SQLiteDialect(_OnConflictDialect):
 
     # SQLite describes tables through pragma table-valued functions, whose
     # optional second argument is the attached database -- SQLite's schema.
+    # Both are bound unquoted, since a pragma takes a name, not a statement.
 
     def primaryKey(self, cursor: Any, table: str) -> List[str]:
 
-        schema, name = splitTableName(table)
+        schema, name = catalogTableName(self.databaseType, table)
         cursor.execute('SELECT name FROM pragma_table_info(?, ?) WHERE pk > 0 ORDER BY pk', (name, schema or 'main'))
 
         return [row[0] for row in cursor.fetchall()]
@@ -1095,7 +1495,7 @@ class SQLiteDialect(_OnConflictDialect):
         `DECIMAL(10,2)`; the length, precision and scale are parsed out of it.
         """
 
-        schema, name = splitTableName(table)
+        schema, name = catalogTableName(self.databaseType, table)
         cursor.execute('SELECT name, type, "notnull", pk FROM pragma_table_info(?, ?) ORDER BY cid', (name, schema or 'main'))
         definitions = []
 
@@ -1114,8 +1514,9 @@ class SQLiteDialect(_OnConflictDialect):
 
     def tableExists(self, cursor: Any, table: str) -> bool:
 
-        schema, name = splitTableName(table)
-        cursor.execute("SELECT count(*) FROM {}.sqlite_master WHERE type = 'table' AND lower(name) = lower(?)".format(schema or 'main'), (name,))
+        schema, name = catalogTableName(self.databaseType, table)
+        cursor.execute("SELECT count(*) FROM {}.sqlite_master WHERE type = 'table' AND lower(name) = lower(?)".format(
+            quoteIdentifier(self.databaseType, schema) if schema else 'main'), (name,))
 
         return bool(cursor.fetchone()[0])
 
@@ -1157,3 +1558,22 @@ class SQLiteDialect(_OnConflictDialect):
         """
 
         return ['BEGIN'] + _renameInThreeSteps(targetTable, stageTable, tempTable)
+
+
+    def swap(self, cursor: Any, targetTable: str, stageTable: str, tempTable: str) -> None:
+        """Renames with legacy_alter_table on, so a view built on the target
+        keeps reading the target.
+
+        SQLite rewrites the views and triggers that name a renamed table, to
+        follow it. A swap renames the table out of the way, so every view on
+        the target was rewritten to read the stage table -- the old rows, and
+        emptied by the next run -- and stayed that way. Renaming the name
+        rather than the table is what a swap means; see "How a swap works" in
+        docs/design.md.
+        """
+
+        cursor.execute('PRAGMA legacy_alter_table=ON')
+        try:
+            super().swap(cursor, targetTable, stageTable, tempTable)
+        finally:
+            cursor.execute('PRAGMA legacy_alter_table=OFF')

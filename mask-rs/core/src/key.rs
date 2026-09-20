@@ -20,7 +20,9 @@ use crate::KeyedHash;
 pub const DIGITS: &[u8] = b"0123456789";
 pub const LOWERCASE: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
 pub const UPPERCASE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-pub const HEX_DIGITS: &[u8] = b"0123456789abcdef";
+/// Per case, so a hex value keeps each character's case and two spellings of
+/// one value never share a mask. `builtinMasking._HEX_CLASSES`.
+const HEX_CLASSES: [&[u8]; 3] = [DIGITS, b"abcdef", b"ABCDEF"];
 
 /// `builtinMasking._ALPHANUMERIC_CLASSES`, in order: a character is masked within the
 /// first class it belongs to, which is what keeps a digit a digit and a case a
@@ -56,10 +58,7 @@ impl Charset {
     /// `KeyStrategy._alphabets`.
     fn alphabetFor(&self, character: u8) -> Option<&'static [u8]> {
         match self {
-            Charset::Hex => {
-                let lowered = character.to_ascii_lowercase();
-                HEX_DIGITS.contains(&lowered).then_some(HEX_DIGITS)
-            }
+            Charset::Hex => HEX_CLASSES.into_iter().find(|class| class.contains(&character)),
             Charset::Digits => character.is_ascii_digit().then_some(DIGITS),
             Charset::Alphanumeric => ALPHANUMERIC_CLASSES.into_iter().find(|class| class.contains(&character)),
         }
@@ -113,17 +112,9 @@ impl KeyStrategy {
         let alphabets: Vec<Option<&'static [u8]>> =
             bytes.iter().map(|character| self.charset.alphabetFor(*character)).collect();
 
-        // `hex` masks case-insensitively, so the value is read lower-cased and
-        // the original's case decides the result's, below.
-        let lowered: Vec<u8> = if self.charset == Charset::Hex {
-            bytes.iter().map(|character| character.to_ascii_lowercase()).collect()
-        } else {
-            bytes.to_vec()
-        };
-
         let mut size = BigUint::one();
         let mut number = BigUint::zero();
-        for (character, alphabet) in lowered.iter().zip(&alphabets) {
+        for (character, alphabet) in bytes.iter().zip(&alphabets) {
             if let Some(alphabet) = alphabet {
                 size *= alphabet.len();
                 number = number * alphabet.len() + alphabet.iter().position(|entry| entry == character).unwrap();
@@ -163,18 +154,7 @@ impl KeyStrategy {
             }
         }
 
-        let result = String::from_utf8(characters).expect("ASCII in, ASCII out");
-
-        // An all-upper-case hex value stays upper case; a mixed or lower one
-        // doesn't. Python decides this on the original text, not the result.
-        if self.charset == Charset::Hex
-            && text.bytes().any(|character| (b'A'..=b'F').contains(&character))
-            && !text.bytes().any(|character| (b'a'..=b'f').contains(&character))
-        {
-            return Ok(result.to_ascii_uppercase());
-        }
-
-        Ok(result)
+        Ok(String::from_utf8(characters).expect("ASCII in, ASCII out"))
     }
 }
 

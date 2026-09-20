@@ -138,7 +138,7 @@ These follow from masking being deterministic and shape-preserving. They are why
 
 The configuration is trusted: whoever can change it controls what the tool does.
 
-- **SQL.** `sourceQuery`, subset `--where` filters, adhoc queries, table and column names, and `currentSchema` are written into SQL as given (`currentSchema` must be a plain identifier). Data values are always bound as parameters.
+- **SQL.** `sourceQuery`, subset `--where` filters, adhoc queries and `currentSchema` are written into SQL as given (`currentSchema` must be a plain identifier). Table and column names are quoted into the statements bauta builds, which makes them one identifier each but is not a defence: a name is configuration, not data. Data values are always bound as parameters.
 - **Code.** Transformer references and custom masking strategies import and run Python modules named in the configuration. Transformer arguments are limited to literals.
 - **Commands.** `passwordCommand` runs a program named in the configuration, without a shell.
 - **Files.** `${file:...}` reads any file the process can read.

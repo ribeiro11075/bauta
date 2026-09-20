@@ -9,14 +9,14 @@ from __future__ import annotations
 import datetime
 import decimal
 import re
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
 import yaml
 
 from . import builtinDiscovery
 from .builtinDiscovery import isIsoDate
-from .configuration import DiscoveryRulesFile
-from .databaseDialects import ColumnCategory, ForeignKey
+from .configuration import DatabaseType, DiscoveryRulesFile
+from .databaseDialects import ColumnCategory, ForeignKey, quoteFoldedTable
 
 DEFAULT_SAMPLE_SIZE = 1000
 
@@ -319,7 +319,7 @@ def proposeTable(database: Any, table: str, sampleSize: int = DEFAULT_SAMPLE_SIZ
     `rules` is discoveryRules(), with a discovery.yaml's rules or without.
     """
 
-    columns, rows = database.sample('SELECT * FROM {}'.format(table), sampleSize)
+    columns, rows = database.sample('SELECT * FROM {}'.format(database.statementName(table)), sampleSize)
     types = database.getAllColumnTypes(table=table)
     primaryKey = database.getPrimaryColumnNames(table=table)
 
@@ -348,9 +348,27 @@ def proposeTable(database: Any, table: str, sampleSize: int = DEFAULT_SAMPLE_SIZ
     return TableProposal(table=table, columns=suggestions)
 
 
-def jobName(table: str) -> str:
+def jobName(table: str, taken: Optional[Set[str]] = None) -> str:
+    """The job a table's draft is written under.
 
-    return 'mask' + table[:1].upper() + table[1:]
+    `taken` holds the names already used, and a name in it gets a numbered
+    suffix: two tables differing only in the case of their first letter, or in
+    the schema they are in, would otherwise share a job name, and the second
+    would silently replace the first as a duplicate key in the YAML.
+    """
+
+    name = 'mask' + table[:1].upper() + table[1:].replace('.', '_')
+
+    if taken is None:
+        return name
+
+    chosen, counter = name, 1
+    while chosen in taken:
+        counter += 1
+        chosen = '{}_{}'.format(name, counter)
+    taken.add(chosen)
+
+    return chosen
 
 
 def _scalar(value: Any) -> str:
@@ -373,22 +391,32 @@ class JobDraft(NamedTuple):
 
 
 def renderJobs(drafts: Sequence[JobDraft], sourceDatabase: str, targetDatabase: str, heading: Sequence[str],
-               keyVariable: str = 'MASKING_KEY', chunkSize: int = 5000) -> str:
+               keyVariable: str = 'MASKING_KEY', chunkSize: int = 5000, targetType: Optional[DatabaseType] = None) -> str:
     """A jobs.yaml document, with each suggestion's reason as a comment, which
     yaml.dump can't emit. Masking in place swaps, since upserting a masked key
     would add rows rather than replace them.
+
+    A job's target tables go into statements as they are written here, so with
+    `targetType` they are quoted for that database -- a table named for a
+    reserved word, or one whose case the target would fold, is then loaded
+    rather than failing to parse. Quoted the way `bauta schema` creates them.
     """
+
+    def target(table: str) -> str:
+        return table if targetType is None else quoteFoldedTable(targetType, table)
 
     inPlace = sourceDatabase == targetDatabase
     lines = ['# ' + line if line else '#' for line in heading]
     lines += ['workers: 2', 'jobs:']
+    taken: Set[str] = set()
+    names = {draft.table: jobName(draft.table, taken) for draft in drafts}
 
     for draft in drafts:
-        lines.append('  {}:'.format(_scalar(jobName(draft.table))))
+        lines.append('  {}:'.format(_scalar(names[draft.table])))
         lines.append('    active: true')
         if draft.predecessors:
             lines.append('    predecessors:')
-            lines += ['    - {}'.format(_scalar(jobName(predecessor))) for predecessor in draft.predecessors]
+            lines += ['    - {}'.format(_scalar(names[predecessor])) for predecessor in draft.predecessors]
         lines.append('    sourceDatabase: {}'.format(_scalar(sourceDatabase)))
 
         if '\n' in draft.sourceQuery:
@@ -401,11 +429,11 @@ def renderJobs(drafts: Sequence[JobDraft], sourceDatabase: str, targetDatabase: 
         if inPlace:
             lines.append('    # Masking in place: rows load into the stage table, which is then swapped')
             lines.append('    # with the original. Create it first, with the same shape.')
-            lines.append('    targetTableStage: {}'.format(_scalar(draft.table + '_masked_stage')))
-            lines.append('    targetTableFinal: {}'.format(_scalar(draft.table)))
+            lines.append('    targetTableStage: {}'.format(_scalar(target(draft.table + '_masked_stage'))))
+            lines.append('    targetTableFinal: {}'.format(_scalar(target(draft.table))))
             lines.append('    insertStrategy: swap')
         else:
-            lines.append('    targetTableFinal: {}'.format(_scalar(draft.table)))
+            lines.append('    targetTableFinal: {}'.format(_scalar(target(draft.table))))
             lines.append('    insertStrategy: upsert')
         lines.append('    chunkSize: {}'.format(chunkSize))
 

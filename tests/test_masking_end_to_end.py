@@ -159,6 +159,18 @@ def test_masking_in_place_swaps_through_a_stage_table(databases, tmp_path):
     assert all(email.endswith('@example.test') for email in emails)
 
 
+def test_a_masked_swap_leaves_nothing_unmasked_in_the_stage_table(databases, tmp_path):
+    """The swap moves what the target held into the stage; masking in place
+    that is the unmasked original, which used to stay readable there.
+    """
+    inPlace = job('customers', CUSTOMER_POLICY, targetDatabase='prod', insertStrategy='swap', targetTableStage='customers_stage')
+
+    _, result = run(databases, tmp_path, {'maskInPlace': inPlace})
+
+    assert result.succeeded, result.outcomes
+    assert rows(databases['prod'], 'SELECT * FROM customers_stage') == []
+
+
 def test_the_manifest_describes_what_was_applied(databases, tmp_path):
     jobsFile, result = run(databases, tmp_path, {
         'maskCustomers': job('customers', CUSTOMER_POLICY),
@@ -183,13 +195,25 @@ def test_the_manifest_describes_what_was_applied(databases, tmp_path):
 
 
 def test_masking_composes_with_an_incremental_load(databases, tmp_path):
-    """The watermark is read from the raw rows, so masking the watermark column
-    itself can't move the next run's starting point.
+    """The watermark is read from the raw rows, before masking, so it is the
+    source's own value that decides the next run's starting point.
+    """
+    policy = dict(CUSTOMER_POLICY, id='keep')
+    incremental = job('customers', policy, sourceQuery='SELECT * FROM customers WHERE id > {{ watermark }}',
+                      watermarkColumn='id', watermarkInitial=0)
+
+    run(databases, tmp_path, {'maskCustomers': incremental})
+
+    assert FileMemory(memoryFile=tmp_path / 'memory.yaml').readWatermarks() == {'maskCustomers': 20}
+
+
+def test_a_masked_watermark_column_is_refused(databases, tmp_path):
+    """It is read before masking and then logged and kept in run state, so it
+    would leak the value the job exists to hide.
     """
     policy = dict(CUSTOMER_POLICY, birth_date={'strategy': 'dateShift', 'maxDays': 400})
     incremental = job('customers', policy, sourceQuery='SELECT * FROM customers WHERE birth_date > {{ watermark }}',
                       watermarkColumn='birth_date', watermarkInitial='1900-01-01')
 
-    run(databases, tmp_path, {'maskCustomers': incremental})
-
-    assert FileMemory(memoryFile=tmp_path / 'memory.yaml').readWatermarks() == {'maskCustomers': '1990-01-21'}
+    with pytest.raises(Exception, match='watermarkColumn "birth_date" is masked with dateShift'):
+        run(databases, tmp_path, {'maskCustomers': incremental})

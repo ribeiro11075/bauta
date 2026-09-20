@@ -119,6 +119,11 @@ def test_current_schema_decides_where_unqualified_names_resolve(name):
                 assert [column.lower() for column in database.getPrimaryColumnNames('people')] == ['id']
                 assert database.tableExists('people')
 
+                # Keys too: Oracle's used to come from the login's own schema.
+                database.alter('CREATE TABLE pets (id INT PRIMARY KEY, owner_id INT, CONSTRAINT fk_pets_owner FOREIGN KEY (owner_id) '
+                               'REFERENCES people (id))')
+                assert [(key.table.lower(), key.referencedTable.lower()) for key in database.getForeignKeys()] == [('pets', 'people')]
+
             assert admin.query('SELECT id, name FROM {}.people'.format(schema)) == [(1, 'Bo')]
             assert not admin.tableExists('people')
         finally:

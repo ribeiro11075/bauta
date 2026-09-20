@@ -7,7 +7,8 @@ with a real data job, and compares the values. It's the only way to find the
 problems that live between two drivers: a boolean one returns as an integer
 that the other refuses, a date one returns as text that the other can't parse.
 
-Then `clear` empties the target, children first, under a live foreign key.
+Then `clear` empties the target, children first, under a live foreign key, and
+a swap through `schema`'s stage tables keeps the target's foreign keys.
 
 Servers that aren't reachable are skipped. Run with `pytest -m integration`.
 """
@@ -166,8 +167,6 @@ def test_clear_rolls_back_when_a_table_outside_the_set_still_references_it(name,
     parent, child, other = 'clr_parent_{}'.format(suffix), 'clr_child_{}'.format(suffix), 'clr_other_{}'.format(suffix)
 
     with Database(connectionSettings=settings) as database:
-        if settings.type == DatabaseType.SQLITE:
-            database.alter('PRAGMA foreign_keys = ON')
         database.alter('CREATE TABLE {} (id INT PRIMARY KEY)'.format(parent))
         for table in (child, other):
             database.alter('CREATE TABLE {0} (id INT PRIMARY KEY, parent_id INT, CONSTRAINT fk_{0} FOREIGN KEY (parent_id) REFERENCES {1} (id))'.format(
@@ -184,4 +183,163 @@ def test_clear_rolls_back_when_a_table_outside_the_set_still_references_it(name,
             assert database.query('SELECT count(*) FROM {}'.format(parent))[0][0] == 1
         finally:
             for table in (child, other, parent):
+                database.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
+@pytest.mark.parametrize('name', NAMES)
+def test_schema_applies_a_key_to_a_unique_column_and_constraint_names_that_repeat(name, tmp_path_factory):
+    """Two shapes that left half a schema behind: a foreign key to a UNIQUE
+    column that isn't the primary key, which `subset --root products` makes,
+    and two tables whose source constraints share a name, which MySQL,
+    MariaDB, Oracle and SQL Server require to be unique across the schema.
+    """
+    settings = connect(name, tmp_path_factory)
+    suffix = uuid.uuid4().hex[:6]
+    parent, first, second = 'unq_p_{}'.format(suffix), 'unq_a_{}'.format(suffix), 'unq_b_{}'.format(suffix)
+    copies = {table.upper(): table + '_c' for table in (parent, first, second)}
+    integer, text = SOURCE_TYPES[settings.type][0], SOURCE_TYPES[settings.type][4]
+
+    try:
+        with Database(connectionSettings=settings) as database:
+            database.alter('CREATE TABLE {} (id {} NOT NULL, code {} NOT NULL, PRIMARY KEY (id), UNIQUE (code))'.format(parent, integer, text))
+            for child in (first, second):
+                database.alter('CREATE TABLE {0} (id {1} NOT NULL, code {2} NOT NULL, PRIMARY KEY (id), '
+                               'CONSTRAINT fk_{0} FOREIGN KEY (code) REFERENCES {3} (code))'.format(child, integer, text, parent))
+
+            foreignKeys = database.getForeignKeys()
+            # The same constraint name on both children, as two PostgreSQL or
+            # SQLite tables may well have.
+            definitions = [
+                definition._replace(name=copies[definition.name.upper()], foreignKeys=[
+                    foreignKey._replace(table=copies[foreignKey.table.upper()], referencedTable=copies[foreignKey.referencedTable.upper()],
+                                        name='fk_shared_{}'.format(suffix))
+                    for foreignKey in definition.foreignKeys])
+                for definition in (readTable(database, table, foreignKeys) for table in (parent, first, second))
+                ]
+
+            for statement in createStatements(settings.type, settings.type, definitions):
+                database.alter(statement.sql)
+
+            database.insert(table=copies[parent.upper()], data=[(1, 'abc')])
+            database.insert(table=copies[first.upper()], data=[(1, 'abc')])
+            database.insert(table=copies[second.upper()], data=[(2, 'abc')])
+
+            children = {copies[first.upper()].lower(), copies[second.upper()].lower()}
+            declared = [foreignKey for foreignKey in database.getForeignKeys() if foreignKey.table.lower() in children]
+
+            assert len(declared) == 2
+            assert len({foreignKey.name.upper() for foreignKey in declared}) == 2
+    finally:
+        with Database(connectionSettings=settings) as database:
+            for table in list(copies.values())[::-1] + [second, first, parent]:
+                database.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
+def _copyJob(sourceQuery, final, **fields):
+    job = {'active': True, 'sourceDatabase': 'db', 'targetDatabase': 'db', 'sourceQuery': sourceQuery, 'targetTableFinal': final,
+           'insertStrategy': 'upsert', 'chunkSize': 10}
+    job.update(fields)
+    return Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'copy': job}}, DataJobsFile).jobs['copy']
+
+
+@pytest.mark.parametrize('name', NAMES)
+def test_a_swap_through_schema_stage_tables_loads_and_drops_the_targets_keys(name, tmp_path_factory):
+    """Stage tables carry no foreign keys, so the load always completes, and
+    the live table's keys alternate: the former stage declares none, the
+    original still does. `audit --connect` reports it. A stage that carried
+    them would fail as soon as its parent was swapped too.
+    """
+    settings = connect(name, tmp_path_factory)
+    suffix = uuid.uuid4().hex[:6]
+    parent, child = 'stg_parent_{}'.format(suffix), 'stg_child_{}'.format(suffix)
+    parentCopy, childCopy, childStage = parent + '_c', child + '_c', child + '_c_s'
+    integer = SOURCE_TYPES[settings.type][0]
+    tables = (childStage, childCopy, parentCopy, child, parent)
+
+    try:
+        with Database(connectionSettings=settings) as database:
+            database.alter('CREATE TABLE {} (id {} NOT NULL, PRIMARY KEY (id))'.format(parent, integer))
+            database.alter('CREATE TABLE {0} (id {1} NOT NULL, parent_id {1}, PRIMARY KEY (id), '
+                           'CONSTRAINT fk_{0} FOREIGN KEY (parent_id) REFERENCES {2} (id))'.format(child, integer, parent))
+            database.insert(table=parent, data=[(1,), (2,)])
+            database.insert(table=child, data=[(10, 1), (11, 2)])
+
+            foreignKeys = database.getForeignKeys()
+            renamed = {parent.upper(): parentCopy, child.upper(): childCopy}
+            definitions = [
+                definition._replace(name=renamed[definition.name.upper()], foreignKeys=[
+                    foreignKey._replace(table=renamed[foreignKey.table.upper()], referencedTable=renamed[foreignKey.referencedTable.upper()],
+                                        name=foreignKey.name + '_c')
+                    for foreignKey in definition.foreignKeys])
+                for definition in (readTable(database, table, foreignKeys) for table in (parent, child))
+                ]
+            for statement in createStatements(settings.type, settings.type, definitions, stageSuffix='_s'):
+                database.alter(statement.sql)
+
+        def referenced(table):
+            with Database(connectionSettings=settings) as database:
+                return {foreignKey.referencedTable.lower() for foreignKey in database.getForeignKeys() if foreignKey.table.lower() == table.lower()}
+
+        def count(table):
+            with Database(connectionSettings=settings) as database:
+                return database.query('SELECT count(*) FROM {}'.format(table))[0][0]
+
+        assert referenced(childCopy) == {parentCopy.lower()}
+        assert referenced(childStage) == set()
+
+        databases = {'db': settings}
+        _executeDataJob('copy', _copyJob('SELECT id FROM {}'.format(parent), parentCopy), databases)
+        swapChild = _copyJob('SELECT id, parent_id FROM {}'.format(child), childCopy, insertStrategy='swap', targetTableStage=childStage)
+
+        # Both runs load. The live table alternates between the former stage,
+        # which declares no keys, and the original, which does.
+        for expected in (set(), {parentCopy.lower()}):
+            _executeDataJob('copy', swapChild, databases)
+            assert count(childCopy) == 2
+            assert referenced(childCopy) == expected
+    finally:
+        with Database(connectionSettings=settings) as database:
+            for table in tables:
+                database.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
+@pytest.mark.parametrize('name', NAMES)
+def test_schema_keeps_text_keys_that_differ_only_in_case_apart(name, tmp_path_factory):
+    """MySQL, MariaDB and SQL Server compare text loosely by default: `a` and
+    `A`, and `ss` and the German sharp s, are one value, so four source keys
+    became two rows in the copy -- or a primary-key violation once a chunk held
+    both. A key column is created with a collation that compares exactly, on
+    both sides of a foreign key, which the two must share.
+    """
+    settings = connect(name, tmp_path_factory)
+    suffix = uuid.uuid4().hex[:6]
+    parent, child = 'coll_p_{}'.format(suffix), 'coll_c_{}'.format(suffix)
+    copies = {table.upper(): table + '_c' for table in (parent, child)}
+    integer, text = SOURCE_TYPES[settings.type][0], SOURCE_TYPES[settings.type][4]
+    keys = [('a',), ('A',), ('ss',), ('ß',)]
+
+    try:
+        with Database(connectionSettings=settings) as database:
+            database.alter('CREATE TABLE {} (code {} NOT NULL, PRIMARY KEY (code))'.format(parent, text))
+            database.alter('CREATE TABLE {0} (id {1} NOT NULL, code {2} NOT NULL, PRIMARY KEY (id), '
+                           'CONSTRAINT fk_{0} FOREIGN KEY (code) REFERENCES {3} (code))'.format(child, integer, text, parent))
+
+            foreignKeys = database.getForeignKeys()
+            definitions = [
+                definition._replace(name=copies[definition.name.upper()], foreignKeys=[
+                    foreignKey._replace(table=copies[foreignKey.table.upper()], referencedTable=copies[foreignKey.referencedTable.upper()],
+                                        name='fk_copy_{}'.format(suffix))
+                    for foreignKey in definition.foreignKeys])
+                for definition in (readTable(database, table, foreignKeys) for table in (parent, child))
+                ]
+
+            for statement in createStatements(settings.type, settings.type, definitions):
+                database.alter(statement.sql)
+
+            database.insert(table=copies[parent.upper()], data=keys)
+
+            assert len(database.query('SELECT code FROM {}'.format(database.statementName(copies[parent.upper()])))) == len(keys)
+    finally:
+        with Database(connectionSettings=settings) as database:
+            for table in [copies[child.upper()], copies[parent.upper()], child, parent]:
                 database.alter('DROP TABLE IF EXISTS {}'.format(table))

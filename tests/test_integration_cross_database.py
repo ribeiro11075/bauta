@@ -101,3 +101,53 @@ def test_data_moves_from_mysql_to_postgresql_with_a_transform_applied(postgresql
 
     rows = postgresqlDatabase.query('SELECT id, name, amount FROM {} ORDER BY id'.format(targetTable))
     assert rows == [(1, 'alice', '$100.00'), (2, 'bob', '$200.00')]
+
+
+DURATIONS = [(1, '12:34:56.123456'), (2, '-838:59:59'), (3, '838:59:59')]
+
+
+@pytest.fixture
+def mysqlDurations(mysqlDatabase):
+    table = 'durations_{}'.format(uuid.uuid4().hex[:8])
+    mysqlDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, tm TIME(6))'.format(table))
+    mysqlDatabase.alter("INSERT INTO {} VALUES {}".format(table, ', '.join("({}, '{}')".format(*row) for row in DURATIONS)))
+
+    yield table
+
+    mysqlDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
+def test_a_mysql_time_keeps_its_value_in_a_text_column_elsewhere(mysqlDatabase, postgresqlDatabase, mysqlDurations):
+    """MySQL's TIME is a duration, and its driver returns a timedelta. Nothing
+    else takes one: SQL Server's and SQLite's drivers refuse it, Oracle stored
+    Python's own `-35 days, 1:00:01`, and PostgreSQL squeezed a day-long value
+    into a TIME column as a wrong time of day without a word.
+    """
+    rows = mysqlDatabase.query('SELECT id, tm FROM {} ORDER BY id'.format(mysqlDurations))
+    table = mysqlDurations
+
+    postgresqlDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, tm VARCHAR(32))'.format(table))
+    try:
+        postgresqlDatabase.insert(table=table, data=rows)
+
+        assert postgresqlDatabase.query('SELECT id, tm FROM {} ORDER BY id'.format(table)) == DURATIONS
+    finally:
+        postgresqlDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
+def test_a_day_long_mysql_time_is_refused_by_a_time_column_rather_than_stored_wrong(mysqlDatabase, postgresqlDatabase, mysqlDurations):
+    """`schema` maps TIME to TIME, which holds a time of day. -838:59:59 isn't
+    one, and used to arrive as 01:00:01.
+    """
+    rows = mysqlDatabase.query('SELECT id, tm FROM {} WHERE id = 2'.format(mysqlDurations))
+    table = mysqlDurations
+
+    postgresqlDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, tm TIME)'.format(table))
+    try:
+        with pytest.raises(Exception, match='out of range'):
+            postgresqlDatabase.insert(table=table, data=rows)
+        postgresqlDatabase.connection.rollback()
+
+        assert postgresqlDatabase.query('SELECT count(*) FROM {}'.format(table)) == [(0,)]
+    finally:
+        postgresqlDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))

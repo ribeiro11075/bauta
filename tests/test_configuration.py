@@ -192,7 +192,8 @@ def test_a_swap_stage_table_must_share_the_targets_schema():
         Configuration.validateJobConfiguration(raw, DataJobsFile)
 
 
-@pytest.mark.parametrize('final,stage', [('orders', 'orders_stage'), ('sales.orders', 'SALES.orders_stage')])
+@pytest.mark.parametrize('final,stage', [('orders', 'orders_stage'), ('sales.orders', 'SALES.orders_stage'),
+                                        ('"sales"."group"', 'sales."group_stage"')])
 def test_a_swap_stage_table_in_the_same_schema_is_accepted(final, stage):
     raw = {'workers': 1, 'jobs': {'j': _job(insertStrategy='swap', targetTableFinal=final, targetTableStage=stage)}}
 
@@ -310,7 +311,7 @@ def test_a_chunk_size_below_one_is_rejected(chunkSize):
 
 
 @pytest.mark.parametrize('strategy', ['upsert', 'swap'])
-@pytest.mark.parametrize('stage', ['t', 'T'])
+@pytest.mark.parametrize('stage', ['t', 'T', '"t"', '[t]'])
 def test_a_stage_table_that_is_the_target_is_rejected(strategy, stage):
     """The stage table is emptied first, so it would empty the target."""
     with pytest.raises(ConfigurationError, match='different table from targetTableFinal'):

@@ -68,6 +68,13 @@ pub fn maskEmail(hash: &KeyedHash, value: &str, length: usize, mailDomain: &str,
 
 /// The keyed replacement for a run of ASCII digits. `DigitsStrategy._maskDigits`.
 fn maskDigitRun(hash: &KeyedHash, digits: &[u8], keepLeading: usize, keepTrailing: usize) -> Masked<Vec<u8>> {
+    // Python refuses a value the keeps cover entirely, which would otherwise be
+    // returned as it is while the manifest said it was masked. Handing the
+    // value back raises its message rather than repeating it here.
+    if !digits.is_empty() && digits.len() <= keepLeading + keepTrailing {
+        return Err(MaskError::Unsupported);
+    }
+
     let stream = hash.expand(digits, 2 * digits.len() + 32, b"");
     // Bytes at or above 250 are dropped rather than folded, which would bias
     // the low digits. Python would divide by zero if none survived; that cannot

@@ -5,7 +5,7 @@ import re
 import shlex
 import subprocess
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Type, TypeVar, Union
+from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple, Type, TypeVar, Union
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 
@@ -327,6 +327,22 @@ class MaskingConfig(BaseModel):
         return None if policy is None else validateColumnPolicy(policy)
 
 
+def _names(table: str) -> Tuple[str, str]:
+    """A table's schema and name, upper-cased and without the quotes a
+    reserved word or a folded name needs, for comparing two names a job gives.
+
+    databaseDialects is imported here rather than at the top because it
+    imports this module; which database a job's alias names isn't known at
+    validation time either, so the case a quoted name asked for is set aside.
+    """
+
+    from .databaseDialects import bareName, splitTableName
+
+    schema, name = splitTableName(table)
+
+    return (bareName(schema).upper() if schema else ''), bareName(name).upper()
+
+
 class DataJobConfig(BaseJobConfig):
     sourceDatabase: str
     sourceQuery: str
@@ -349,11 +365,12 @@ class DataJobConfig(BaseJobConfig):
     @model_validator(mode='after')
     def _requireSeparateStageTable(self) -> 'DataJobConfig':
         """A stage table naming the target would have the target truncated
-        before each load. Compared case-insensitively; a qualified and an
-        unqualified name for the same table still slip through.
+        before each load. Compared case-insensitively and without the quotes a
+        name may need; a qualified and an unqualified name for the same table
+        still slip through.
         """
 
-        if self.targetTableStage is not None and self.targetTableStage.upper() == self.targetTableFinal.upper():
+        if self.targetTableStage is not None and _names(self.targetTableStage) == _names(self.targetTableFinal):
             raise ValueError('targetTableStage must be a different table from targetTableFinal: the stage table is emptied before each load')
 
         return self
@@ -371,7 +388,7 @@ class DataJobConfig(BaseJobConfig):
         if not self.targetTableStage:
             raise ValueError('targetTableStage is required when insertStrategy is swap')
 
-        stageSchema, finalSchema = (table.rpartition('.')[0].upper() for table in (self.targetTableStage, self.targetTableFinal))
+        stageSchema, finalSchema = (_names(table)[0] for table in (self.targetTableStage, self.targetTableFinal))
         if stageSchema != finalSchema:
             raise ValueError('targetTableStage and targetTableFinal must be in the same schema for insertStrategy: swap, '
                              'since a rename cannot move a table between schemas')
@@ -406,6 +423,23 @@ class DataJobConfig(BaseJobConfig):
 
         if self.watermarkColumn and self.watermarkInitial is None:
             raise ValueError('watermarkInitial is required when watermarkColumn is set -- the first run has no stored watermark to bind')
+
+        return self
+
+
+    @model_validator(mode='after')
+    def _rejectMaskedWatermarkColumn(self) -> 'DataJobConfig':
+        """The watermark is read from the raw rows, before masking, and then
+        logged, kept in run state and shown by `bauta jobs`. A masked column
+        there would leak the values the job exists to hide.
+        """
+
+        if self.watermarkColumn and self.masking is not None:
+            policy = next((policy for column, policy in self.masking.columns.items() if column.upper() == self.watermarkColumn.upper()), None)
+            if policy is not None and policy['strategy'] != 'keep':
+                raise ValueError('watermarkColumn "{}" is masked with {} -- the watermark is read before masking and kept in run state and logs, '
+                                 'so it would leak the unmasked value. Watermark on a column masked with keep, or on another column'.format(
+                                     self.watermarkColumn, policy['strategy']))
 
         return self
 

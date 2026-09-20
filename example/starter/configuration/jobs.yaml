@@ -85,7 +85,9 @@ jobs:
     targetTableFinal: orders
     insertStrategy: upsert
     watermarkColumn: updatedAt
-    watermarkInitial: '1970-01-01 00:00:00'
+    # Unquoted, so YAML reads it as a timestamp: quoted it is text, which
+    # PostgreSQL and Oracle refuse to subtract an interval from.
+    watermarkInitial: 1970-01-01 00:00:00
     chunkSize: 5000
     preTargetAdhocQueries:
     postTargetAdhocQueries:
