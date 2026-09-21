@@ -12,10 +12,15 @@ updates:
       actions:
         patterns: ["*"]
 
-  # The root only: constraints/lowest.txt pins the lowest versions the ranges
-  # allow, and moving it up would stop CI testing them.
+  # pyproject.toml only. constraints/lowest.txt pins the lowest versions the
+  # ranges allow, and moving it up would stop CI testing them. image.txt is one
+  # resolved set, regenerated whole with the command at its top: edited a pin at
+  # a time it stops resolving, as when pydantic-core was moved past the version
+  # pydantic requires exactly.
   - package-ecosystem: pip
     directory: /
+    exclude-paths:
+      - "constraints/**"
     schedule:
       interval: weekly
     groups:
@@ -32,3 +37,9 @@ updates:
     groups:
       rust:
         patterns: ["*"]
+    ignore:
+      # PyO3 converts integers through num-bigint 0.4, and a BigInt from any
+      # other version is a different type to it: the extension stops building.
+      # Lift this with the PyO3 release whose num-bigint feature moves.
+      - dependency-name: num-bigint
+        versions: [">=0.5"]
