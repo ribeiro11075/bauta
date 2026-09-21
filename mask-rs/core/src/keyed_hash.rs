@@ -48,22 +48,7 @@ impl KeyedHash {
         // The subkey is a SHA-256 digest, so it is always shorter than the
         // 64-byte block and is zero-padded rather than hashed first -- the
         // same assumption the Python makes, and asserted there too.
-        let mut padded = [0u8; BLOCK_SIZE];
-        padded[..32].copy_from_slice(subkey.as_ref());
-
-        let mut innerPad = padded;
-        let mut outerPad = padded;
-        for index in 0..BLOCK_SIZE {
-            innerPad[index] ^= 0x36;
-            outerPad[index] ^= 0x5c;
-        }
-
-        let mut inner = digest::Context::new(&digest::SHA256);
-        inner.update(&innerPad);
-        let mut outer = digest::Context::new(&digest::SHA256);
-        outer.update(&outerPad);
-
-        Self { inner, outer }
+        Self::fromSubkey(subkey.as_ref().try_into().expect("a SHA-256 digest is 32 bytes"))
     }
 
     /// A KeyedHash from an already-derived subkey.
@@ -153,39 +138,61 @@ impl KeyedHash {
     /// its choice to round the width up to an even number of bits -- which
     /// costs cycle-walking passes, and is deliberately kept, because changing
     /// it would change every mask.
+    ///
+    /// Run in machine integers where each half fits a u64, which is any domain
+    /// up to 2**128 and so every identifier in practice: the same bytes are
+    /// hashed, without a BigUint allocated per round. That was 40% of an
+    /// 11-character `key` mask. Wider domains take the BigUint path.
     pub fn permute(&self, size: &BigUint, value: &BigUint, purpose: &[u8]) -> BigUint {
         if size <= &BigUint::from(1u8) {
             return value.clone();
         }
 
-        let mut bits = std::cmp::max(2, (size - 1u8).bits() as usize);
-        bits += bits % 2;
-        let half = bits / 2;
+        let mut network = Network::new(size, purpose);
+        if network.half <= 64 {
+            BigUint::from(self.permuteNarrow(&mut network, size, value))
+        } else {
+            self.permuteWide(&mut network, size, value)
+        }
+    }
+
+    /// `permute` with each half in a u64.
+    fn permuteNarrow(&self, network: &mut Network, size: &BigUint, value: &BigUint) -> u128 {
+        let half = network.half;
+        let halfBytes = network.halfBytes;
+        // size - 1, since a domain of exactly 2**128 is itself one past a u128.
+        let last = u128::try_from(size - 1u8).expect("halves of at most 64 bits bound size by 2**128");
+        let halfMask = u64::MAX >> (64 - half);
+        let mut expanded = [0u8; 32];
+        let mut result = u128::try_from(value).expect("value is below size");
+
+        loop {
+            let mut left = (result >> half) as u64;
+            let mut right = result as u64 & halfMask;
+
+            for round in 0..FEISTEL_ROUNDS {
+                self.roundBytes(network, round, &right.to_be_bytes()[8 - halfBytes..], &mut expanded);
+
+                let mut word = [0u8; 8];
+                word[8 - halfBytes..].copy_from_slice(&expanded[..halfBytes]);
+                let next = left ^ (u64::from_be_bytes(word) & halfMask);
+                left = right;
+                right = next;
+            }
+
+            result = (u128::from(left) << half) | u128::from(right);
+
+            if result <= last {
+                return result;
+            }
+        }
+    }
+
+    /// `permute` in BigUints, for halves wider than 64 bits.
+    fn permuteWide(&self, network: &mut Network, size: &BigUint, value: &BigUint) -> BigUint {
+        let half = network.half;
+        let halfBytes = network.halfBytes;
         let halfMask = (BigUint::from(1u8) << half) - 1u8;
-        let halfBytes = half.div_ceil(8);
-
-        // Python writes `size` with the fewest bytes that hold it, so a domain
-        // of 2**128 takes 17 -- the boundary a fixed-width integer would miss.
-        let sizeBytes = (size.bits() as usize).div_ceil(8);
-        let mut prefix = Vec::with_capacity(purpose.len() + 1 + sizeBytes);
-        prefix.extend_from_slice(purpose);
-        prefix.push(b'|');
-        prefix.extend_from_slice(&leftPad(&size.to_bytes_be(), sizeBytes));
-
-        // The round function's whole purpose string, laid out once:
-        //
-        //     purpose | '|' | size | round | '#' | counter
-        //
-        // Only the round byte and the counter change per digest, so the loop
-        // below writes those two places rather than rebuilding the buffer. At
-        // roughly forty digests a value, the allocations this saves cost more
-        // than the hashing does.
-        let roundIndex = prefix.len();
-        prefix.push(0);
-        prefix.push(b'#');
-        prefix.extend_from_slice(&0u32.to_be_bytes());
-        let counterIndex = prefix.len() - 4;
-
         let mut message = vec![0u8; halfBytes];
         let mut expanded = vec![0u8; halfBytes.next_multiple_of(32)];
         let mut result = value.clone();
@@ -195,17 +202,8 @@ impl KeyedHash {
             let mut right = &result & &halfMask;
 
             for round in 0..FEISTEL_ROUNDS {
-                prefix[roundIndex] = round;
                 writeLeftPadded(&right, &mut message);
-
-                let mut counter: u32 = 0;
-                let mut written = 0;
-                while written < halfBytes {
-                    prefix[counterIndex..].copy_from_slice(&counter.to_be_bytes());
-                    expanded[written..written + 32].copy_from_slice(&self.digest(&message, &prefix));
-                    written += 32;
-                    counter += 1;
-                }
+                self.roundBytes(network, round, &message, &mut expanded);
 
                 let roundValue = BigUint::from_bytes_be(&expanded[..halfBytes]);
 
@@ -220,6 +218,63 @@ impl KeyedHash {
                 return result;
             }
         }
+    }
+
+    /// The round function: `halfBytes` bytes of `expand(message)` under the
+    /// round's purpose, written to the front of `expanded`.
+    fn roundBytes(&self, network: &mut Network, round: u8, message: &[u8], expanded: &mut [u8]) {
+        network.prefix[network.roundIndex] = round;
+
+        let mut counter: u32 = 0;
+        let mut written = 0;
+        while written < network.halfBytes {
+            network.prefix[network.counterIndex..].copy_from_slice(&counter.to_be_bytes());
+            expanded[written..written + 32].copy_from_slice(&self.digest(message, &network.prefix));
+            written += 32;
+            counter += 1;
+        }
+    }
+}
+
+/// What `permute` works out once per value: the halves' width, and the round
+/// function's purpose string.
+struct Network {
+    half: usize,
+    halfBytes: usize,
+    prefix: Vec<u8>,
+    roundIndex: usize,
+    counterIndex: usize,
+}
+
+impl Network {
+    fn new(size: &BigUint, purpose: &[u8]) -> Self {
+        let mut bits = std::cmp::max(2, (size - 1u8).bits() as usize);
+        bits += bits % 2;
+        let half = bits / 2;
+
+        // Python writes `size` with the fewest bytes that hold it, so a domain
+        // of 2**128 takes 17 -- the boundary a fixed-width integer would miss.
+        let sizeBytes = (size.bits() as usize).div_ceil(8);
+        let mut prefix = Vec::with_capacity(purpose.len() + 1 + sizeBytes + 6);
+        prefix.extend_from_slice(purpose);
+        prefix.push(b'|');
+        prefix.extend_from_slice(&leftPad(&size.to_bytes_be(), sizeBytes));
+
+        // The round function's whole purpose string, laid out once:
+        //
+        //     purpose | '|' | size | round | '#' | counter
+        //
+        // Only the round byte and the counter change per digest, so each round
+        // writes those two places rather than rebuilding the buffer. At
+        // roughly forty digests a value, the allocations this saves cost more
+        // than the hashing does.
+        let roundIndex = prefix.len();
+        prefix.push(0);
+        prefix.push(b'#');
+        prefix.extend_from_slice(&0u32.to_be_bytes());
+        let counterIndex = prefix.len() - 4;
+
+        Network { half, halfBytes: half.div_ceil(8), prefix, roundIndex, counterIndex }
     }
 }
 
@@ -280,5 +335,27 @@ mod tests {
         assert_eq!(leftPad(&[0x01], 4), vec![0, 0, 0, 1]);
         assert_eq!(leftPad(&BigUint::from(0u8).to_bytes_be(), 3), vec![0, 0, 0]);
         assert_eq!(leftPad(&[0xff, 0xff], 2), vec![0xff, 0xff]);
+    }
+
+    #[test]
+    fn narrow_and_wide_permutations_agree() {
+        // Every domain `permute` sends down the u64 path, run down the BigUint
+        // one as well: small ones, each whole byte of half width, and the
+        // edges at 2**128, whose size alone is past a u128.
+        let hash = KeyedHash::new("a-test-key-that-is-long-enough", "paths");
+        let two = BigUint::from(2u8);
+        let mut sizes: Vec<BigUint> = (2u32..40).map(BigUint::from).collect();
+        for bits in [15u32, 16, 17, 63, 64, 65, 126, 127, 128] {
+            sizes.extend([two.pow(bits) - 1u8, two.pow(bits), two.pow(bits) + 1u8]);
+        }
+        sizes.retain(|size| Network::new(size, b"").half <= 64);
+
+        for size in sizes {
+            for value in [BigUint::from(0u8), &size / 3u8, &size - 1u8] {
+                let narrow = hash.permuteNarrow(&mut Network::new(&size, b"t"), &size, &value);
+                let wide = hash.permuteWide(&mut Network::new(&size, b"t"), &size, &value);
+                assert_eq!(BigUint::from(narrow), wide, "permute({size}, {value})");
+            }
+        }
     }
 }

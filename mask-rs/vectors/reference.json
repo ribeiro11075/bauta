@@ -2592,6 +2592,497 @@
    }
   ]
  },
+ "pythonOnly": {
+  "dateShift {\"maxDays\": 10}": [
+   {
+    "masked": "2020-02-24",
+    "maskedType": "date",
+    "type": "date",
+    "value": "2020-02-29"
+   },
+   {
+    "masked": "1970-01-10",
+    "maskedType": "date",
+    "type": "date",
+    "value": "1970-01-01"
+   },
+   {
+    "masked": "0001-01-01",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-01"
+   },
+   {
+    "masked": "9999-12-31",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-31"
+   },
+   {
+    "masked": "0001-01-11",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-02"
+   },
+   {
+    "masked": "9999-12-22",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-30"
+   },
+   {
+    "masked": "2026-09-23 16:30:05",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 16:30:05"
+   },
+   {
+    "masked": "2026-09-23 23:59:59.999999",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 23:59:59.999999"
+   },
+   {
+    "masked": "2026-09-23",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21"
+   },
+   {
+    "masked": "2026-09-23T16:30:05",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21T16:30:05"
+   },
+   {
+    "masked": "2026-09-23 16:30:05",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21 16:30:05"
+   },
+   {
+    "masked": "2026-09-23T16:30:05+02:00",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21T16:30:05+02:00"
+   },
+   {
+    "masked": "0001-01-01",
+    "maskedType": "str",
+    "type": "str",
+    "value": "0001-01-01"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the dateShift strategy needs a date, a timestamp or ISO 8601 text, got int",
+    "type": "int",
+    "value": "20260921"
+   }
+  ],
+  "dateShift {}": [
+   {
+    "masked": "2020-03-16",
+    "maskedType": "date",
+    "type": "date",
+    "value": "2020-02-29"
+   },
+   {
+    "masked": "1970-01-10",
+    "maskedType": "date",
+    "type": "date",
+    "value": "1970-01-01"
+   },
+   {
+    "masked": "0001-01-01",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-01"
+   },
+   {
+    "masked": "9999-12-31",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-31"
+   },
+   {
+    "masked": "0001-01-14",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-02"
+   },
+   {
+    "masked": "9999-12-22",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-30"
+   },
+   {
+    "masked": "2026-10-13 16:30:05",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 16:30:05"
+   },
+   {
+    "masked": "2026-10-13 23:59:59.999999",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 23:59:59.999999"
+   },
+   {
+    "masked": "2026-10-13",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21"
+   },
+   {
+    "masked": "2026-10-13T16:30:05",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21T16:30:05"
+   },
+   {
+    "masked": "2026-10-13 16:30:05",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21 16:30:05"
+   },
+   {
+    "masked": "2026-10-13T16:30:05+02:00",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21T16:30:05+02:00"
+   },
+   {
+    "masked": "0001-01-01",
+    "maskedType": "str",
+    "type": "str",
+    "value": "0001-01-01"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the dateShift strategy needs a date, a timestamp or ISO 8601 text, got int",
+    "type": "int",
+    "value": "20260921"
+   }
+  ],
+  "redact {\"detect\": [\"email\"], \"patterns\": [\"ACC-\\\\d{6}\"], \"replacement\": \"mask\"}": [
+   {
+    "masked": "Called Ann at +1 (555) 010-9999, email uda2456fd0327@example.test; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3."
+   },
+   {
+    "masked": "reach me at uda2456fd0327@example.test about redacted-c761b97297fe",
+    "maskedType": "str",
+    "type": "str",
+    "value": "reach me at ann.lee@CORP.example.com about ACC-123456"
+   },
+   {
+    "masked": "no identifiers here",
+    "maskedType": "str",
+    "type": "str",
+    "value": "no identifiers here"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   }
+  ],
+  "redact {\"replacement\": \"mask\"}": [
+   {
+    "masked": "Called Ann at +0 (263) 204-5622, email uda2456fd0327@example.test; card 5226 2769 1448 1111 SSN 131-13-8212 IBAN GB68 UHUE 3445 6278 2739 84 from 10.21.45.89. Order 2026-01-02, qty 12, v1.2.3.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3."
+   },
+   {
+    "masked": "reach me at uda2456fd0327@example.test about ACC-123456",
+    "maskedType": "str",
+    "type": "str",
+    "value": "reach me at ann.lee@CORP.example.com about ACC-123456"
+   },
+   {
+    "masked": "no identifiers here",
+    "maskedType": "str",
+    "type": "str",
+    "value": "no identifiers here"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   }
+  ],
+  "redact {}": [
+   {
+    "masked": "Called Ann at [PHONE], email [EMAIL]; card [CARD] SSN [SSN] IBAN [IBAN] from [IP]. Order 2026-01-02, qty 12, v1.2.3.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3."
+   },
+   {
+    "masked": "reach me at [EMAIL] about ACC-123456",
+    "maskedType": "str",
+    "type": "str",
+    "value": "reach me at ann.lee@CORP.example.com about ACC-123456"
+   },
+   {
+    "masked": "no identifiers here",
+    "maskedType": "str",
+    "type": "str",
+    "value": "no identifiers here"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   }
+  ],
+  "shuffle {}": [
+   {
+    "chunk": 0,
+    "column": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19
+    ],
+    "masked": [
+     7,
+     14,
+     11,
+     0,
+     9,
+     13,
+     18,
+     10,
+     8,
+     6,
+     19,
+     5,
+     12,
+     4,
+     3,
+     1,
+     2,
+     15,
+     17,
+     16
+    ]
+   },
+   {
+    "chunk": 0,
+    "column": [
+     "v0",
+     "v1",
+     "v2",
+     "v3",
+     "v4",
+     "v5",
+     "v6"
+    ],
+    "masked": [
+     "v1",
+     "v2",
+     "v0",
+     "v3",
+     "v6",
+     "v5",
+     "v4"
+    ]
+   },
+   {
+    "chunk": 0,
+    "column": [
+     1,
+     2
+    ],
+    "masked": [
+     1,
+     2
+    ]
+   },
+   {
+    "chunk": 1,
+    "column": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19
+    ],
+    "masked": [
+     0,
+     18,
+     1,
+     5,
+     16,
+     11,
+     15,
+     19,
+     9,
+     10,
+     7,
+     4,
+     17,
+     12,
+     14,
+     6,
+     3,
+     2,
+     8,
+     13
+    ]
+   },
+   {
+    "chunk": 1,
+    "column": [
+     "v0",
+     "v1",
+     "v2",
+     "v3",
+     "v4",
+     "v5",
+     "v6"
+    ],
+    "masked": [
+     "v1",
+     "v5",
+     "v6",
+     "v4",
+     "v0",
+     "v2",
+     "v3"
+    ]
+   },
+   {
+    "chunk": 1,
+    "column": [
+     1,
+     2
+    ],
+    "masked": [
+     1,
+     2
+    ]
+   },
+   {
+    "chunk": 7,
+    "column": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19
+    ],
+    "masked": [
+     17,
+     10,
+     5,
+     15,
+     4,
+     7,
+     6,
+     18,
+     13,
+     2,
+     14,
+     11,
+     8,
+     12,
+     1,
+     19,
+     16,
+     3,
+     0,
+     9
+    ]
+   },
+   {
+    "chunk": 7,
+    "column": [
+     "v0",
+     "v1",
+     "v2",
+     "v3",
+     "v4",
+     "v5",
+     "v6"
+    ],
+    "masked": [
+     "v1",
+     "v3",
+     "v4",
+     "v6",
+     "v5",
+     "v0",
+     "v2"
+    ]
+   },
+   {
+    "chunk": 7,
+    "column": [
+     1,
+     2
+    ],
+    "masked": [
+     1,
+     2
+    ]
+   }
+  ]
+ },
  "strategies": {
   "digits {}": [
    {
@@ -21743,6 +22234,1216 @@
     "message": "the key strategy cannot mask a bool",
     "type": "bool",
     "value": "True"
+   }
+  ],
+  "number {\"decimals\": 2}": [
+   {
+    "masked": "0",
+    "maskedType": "int",
+    "type": "int",
+    "value": "0"
+   },
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1"
+   },
+   {
+    "masked": "0",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1"
+   },
+   {
+    "masked": "10",
+    "maskedType": "int",
+    "type": "int",
+    "value": "9"
+   },
+   {
+    "masked": "11",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10"
+   },
+   {
+    "masked": "-9",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-10"
+   },
+   {
+    "masked": "109",
+    "maskedType": "int",
+    "type": "int",
+    "value": "99"
+   },
+   {
+    "masked": "97",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100"
+   },
+   {
+    "masked": "12953",
+    "maskedType": "int",
+    "type": "int",
+    "value": "12345"
+   },
+   {
+    "masked": "-12932",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-12345"
+   },
+   {
+    "masked": "924259",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000"
+   },
+   {
+    "masked": "990902799648402577",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000000000000000"
+   },
+   {
+    "masked": "-1071565533264743886",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1000000000000000000"
+   },
+   {
+    "masked": "92003781579853169958482794754672795534",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100000000000000000000000000000000000000"
+   },
+   {
+    "masked": "9995336764890655922854989512416068464518",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10000000000000000000000000000000000000000"
+   },
+   {
+    "masked": "0.0",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "masked": "-0.0",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.0"
+   },
+   {
+    "masked": "0.51",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.5"
+   },
+   {
+    "masked": "2.35",
+    "maskedType": "float",
+    "type": "float",
+    "value": "2.5"
+   },
+   {
+    "masked": "-0.0",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.001"
+   },
+   {
+    "masked": "0.0",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e-07"
+   },
+   {
+    "masked": "112703.0",
+    "maskedType": "float",
+    "type": "float",
+    "value": "123456.789"
+   },
+   {
+    "masked": "1.011287796762695e+22",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e+22"
+   },
+   {
+    "masked": "1.5623255080596856e+16",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1.5e+16"
+   },
+   {
+    "masked": "inf",
+    "maskedType": "float",
+    "type": "float",
+    "value": "inf"
+   },
+   {
+    "masked": "nan",
+    "maskedType": "float",
+    "type": "float",
+    "value": "nan"
+   },
+   {
+    "masked": "0.00",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0"
+   },
+   {
+    "masked": "-0.00",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-0.00"
+   },
+   {
+    "masked": "13.29",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "12.30"
+   },
+   {
+    "masked": "-12.07",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-12.3400"
+   },
+   {
+    "masked": "129478.81",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2E+5"
+   },
+   {
+    "masked": "0.00",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0.0000123"
+   },
+   {
+    "masked": "1.00",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.005"
+   },
+   {
+    "masked": "100669.02",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "99999.99"
+   },
+   {
+    "masked": "-7.39",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-7.5"
+   },
+   {
+    "masked": "NaN",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "NaN"
+   },
+   {
+    "masked": "1.16",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2345678901234567890123456789"
+   },
+   {
+    "masked": null,
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": null
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got bool",
+    "type": "bool",
+    "value": "True"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got str",
+    "type": "str",
+    "value": "text"
+   }
+  ],
+  "number {\"decimals\": 3, \"max\": \"2\", \"min\": \"1\"}": [
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "0"
+   },
+   {
+    "masked": "1",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1"
+   },
+   {
+    "masked": "1",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1"
+   },
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "9"
+   },
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10"
+   },
+   {
+    "masked": "1",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-10"
+   },
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "99"
+   },
+   {
+    "masked": "1",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100"
+   },
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "12345"
+   },
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-12345"
+   },
+   {
+    "masked": "1",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000"
+   },
+   {
+    "masked": "1",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000000000000000"
+   },
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1000000000000000000"
+   },
+   {
+    "masked": "1",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100000000000000000000000000000000000000"
+   },
+   {
+    "masked": "1",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10000000000000000000000000000000000000000"
+   },
+   {
+    "masked": "1.595",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "masked": "1.595",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.0"
+   },
+   {
+    "masked": "1.523",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.5"
+   },
+   {
+    "masked": "1.203",
+    "maskedType": "float",
+    "type": "float",
+    "value": "2.5"
+   },
+   {
+    "masked": "1.721",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.001"
+   },
+   {
+    "masked": "1.972",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e-07"
+   },
+   {
+    "masked": "1.064",
+    "maskedType": "float",
+    "type": "float",
+    "value": "123456.789"
+   },
+   {
+    "masked": "1.556",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e+22"
+   },
+   {
+    "masked": "1.708",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1.5e+16"
+   },
+   {
+    "masked": "inf",
+    "maskedType": "float",
+    "type": "float",
+    "value": "inf"
+   },
+   {
+    "masked": "nan",
+    "maskedType": "float",
+    "type": "float",
+    "value": "nan"
+   },
+   {
+    "masked": "1.595",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0"
+   },
+   {
+    "masked": "1.595",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-0.00"
+   },
+   {
+    "masked": "1.901",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "12.30"
+   },
+   {
+    "masked": "1.390",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-12.3400"
+   },
+   {
+    "masked": "1.895",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2E+5"
+   },
+   {
+    "masked": "1.523",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0.0000123"
+   },
+   {
+    "masked": "1.475",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.005"
+   },
+   {
+    "masked": "1.533",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "99999.99"
+   },
+   {
+    "masked": "1.428",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-7.5"
+   },
+   {
+    "masked": "NaN",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "NaN"
+   },
+   {
+    "masked": "1.188",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2345678901234567890123456789"
+   },
+   {
+    "masked": null,
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": null
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got bool",
+    "type": "bool",
+    "value": "True"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got str",
+    "type": "str",
+    "value": "text"
+   }
+  ],
+  "number {\"max\": \"100\", \"min\": \"0\"}": [
+   {
+    "masked": "60",
+    "maskedType": "int",
+    "type": "int",
+    "value": "0"
+   },
+   {
+    "masked": "12",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1"
+   },
+   {
+    "masked": "10",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1"
+   },
+   {
+    "masked": "83",
+    "maskedType": "int",
+    "type": "int",
+    "value": "9"
+   },
+   {
+    "masked": "76",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10"
+   },
+   {
+    "masked": "21",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-10"
+   },
+   {
+    "masked": "99",
+    "maskedType": "int",
+    "type": "int",
+    "value": "99"
+   },
+   {
+    "masked": "33",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100"
+   },
+   {
+    "masked": "75",
+    "maskedType": "int",
+    "type": "int",
+    "value": "12345"
+   },
+   {
+    "masked": "74",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-12345"
+   },
+   {
+    "masked": "12",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000"
+   },
+   {
+    "masked": "45",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000000000000000"
+   },
+   {
+    "masked": "86",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1000000000000000000"
+   },
+   {
+    "masked": "10",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100000000000000000000000000000000000000"
+   },
+   {
+    "masked": "50",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10000000000000000000000000000000000000000"
+   },
+   {
+    "masked": "59.528212043247386",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "masked": "59.528212043247386",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.0"
+   },
+   {
+    "masked": "52.27031373667672",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.5"
+   },
+   {
+    "masked": "20.318899431724667",
+    "maskedType": "float",
+    "type": "float",
+    "value": "2.5"
+   },
+   {
+    "masked": "72.14025662370314",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.001"
+   },
+   {
+    "masked": "97.21503239920615",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e-07"
+   },
+   {
+    "masked": "6.447143001920419",
+    "maskedType": "float",
+    "type": "float",
+    "value": "123456.789"
+   },
+   {
+    "masked": "55.64389838134751",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e+22"
+   },
+   {
+    "masked": "70.77516935322856",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1.5e+16"
+   },
+   {
+    "masked": "inf",
+    "maskedType": "float",
+    "type": "float",
+    "value": "inf"
+   },
+   {
+    "masked": "nan",
+    "maskedType": "float",
+    "type": "float",
+    "value": "nan"
+   },
+   {
+    "masked": "60",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0"
+   },
+   {
+    "masked": "59.53",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-0.00"
+   },
+   {
+    "masked": "90.09",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "12.30"
+   },
+   {
+    "masked": "39.0102",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-12.3400"
+   },
+   {
+    "masked": "89",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2E+5"
+   },
+   {
+    "masked": "52.2764058",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0.0000123"
+   },
+   {
+    "masked": "47.492",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.005"
+   },
+   {
+    "masked": "53.35",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "99999.99"
+   },
+   {
+    "masked": "42.8",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-7.5"
+   },
+   {
+    "masked": "NaN",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "NaN"
+   },
+   {
+    "masked": "18.8294472692792536072659004276",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2345678901234567890123456789"
+   },
+   {
+    "masked": null,
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": null
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got bool",
+    "type": "bool",
+    "value": "True"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got str",
+    "type": "str",
+    "value": "text"
+   }
+  ],
+  "number {\"variance\": \"0.5\"}": [
+   {
+    "masked": "0",
+    "maskedType": "int",
+    "type": "int",
+    "value": "0"
+   },
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1"
+   },
+   {
+    "masked": "0",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1"
+   },
+   {
+    "masked": "12",
+    "maskedType": "int",
+    "type": "int",
+    "value": "9"
+   },
+   {
+    "masked": "13",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10"
+   },
+   {
+    "masked": "-7",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-10"
+   },
+   {
+    "masked": "147",
+    "maskedType": "int",
+    "type": "int",
+    "value": "99"
+   },
+   {
+    "masked": "83",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100"
+   },
+   {
+    "masked": "15385",
+    "maskedType": "int",
+    "type": "int",
+    "value": "12345"
+   },
+   {
+    "masked": "-15279",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-12345"
+   },
+   {
+    "masked": "621293",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000"
+   },
+   {
+    "masked": "954513998242012884",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000000000000000"
+   },
+   {
+    "masked": "-1357827666323719429",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1000000000000000000"
+   },
+   {
+    "masked": "60018907899265849792413973773363977671",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100000000000000000000000000000000000000"
+   },
+   {
+    "masked": "9976683824453279614274947562080342322588",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10000000000000000000000000000000000000000"
+   },
+   {
+    "masked": "0.0",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "masked": "-0.0",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.0"
+   },
+   {
+    "masked": "0.5113515686833836",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.5"
+   },
+   {
+    "masked": "1.7579724857931167",
+    "maskedType": "float",
+    "type": "float",
+    "value": "2.5"
+   },
+   {
+    "masked": "-0.0012214025662370313",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.001"
+   },
+   {
+    "masked": "1.4721503239920615e-07",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e-07"
+   },
+   {
+    "masked": "69687.83023240916",
+    "maskedType": "float",
+    "type": "float",
+    "value": "123456.789"
+   },
+   {
+    "masked": "1.056438983813475e+22",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e+22"
+   },
+   {
+    "masked": "1.8116275402984284e+16",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1.5e+16"
+   },
+   {
+    "masked": "inf",
+    "maskedType": "float",
+    "type": "float",
+    "value": "inf"
+   },
+   {
+    "masked": "nan",
+    "maskedType": "float",
+    "type": "float",
+    "value": "nan"
+   },
+   {
+    "masked": "0",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0"
+   },
+   {
+    "masked": "-0.00",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-0.00"
+   },
+   {
+    "masked": "17.23",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "12.30"
+   },
+   {
+    "masked": "-10.9839",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-12.3400"
+   },
+   {
+    "masked": "167394",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2E+5"
+   },
+   {
+    "masked": "0.0000126",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0.0000123"
+   },
+   {
+    "masked": "0.980",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.005"
+   },
+   {
+    "masked": "103345.12",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "99999.99"
+   },
+   {
+    "masked": "-7.0",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-7.5"
+   },
+   {
+    "masked": "NaN",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "NaN"
+   },
+   {
+    "masked": "0.8497462549359781249605693261",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2345678901234567890123456789"
+   },
+   {
+    "masked": null,
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": null
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got bool",
+    "type": "bool",
+    "value": "True"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got str",
+    "type": "str",
+    "value": "text"
+   }
+  ],
+  "number {}": [
+   {
+    "masked": "0",
+    "maskedType": "int",
+    "type": "int",
+    "value": "0"
+   },
+   {
+    "masked": "2",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1"
+   },
+   {
+    "masked": "0",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1"
+   },
+   {
+    "masked": "10",
+    "maskedType": "int",
+    "type": "int",
+    "value": "9"
+   },
+   {
+    "masked": "11",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10"
+   },
+   {
+    "masked": "-9",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-10"
+   },
+   {
+    "masked": "109",
+    "maskedType": "int",
+    "type": "int",
+    "value": "99"
+   },
+   {
+    "masked": "97",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100"
+   },
+   {
+    "masked": "12953",
+    "maskedType": "int",
+    "type": "int",
+    "value": "12345"
+   },
+   {
+    "masked": "-12932",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-12345"
+   },
+   {
+    "masked": "924259",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000"
+   },
+   {
+    "masked": "990902799648402577",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1000000000000000000"
+   },
+   {
+    "masked": "-1071565533264743886",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1000000000000000000"
+   },
+   {
+    "masked": "92003781579853169958482794754672795534",
+    "maskedType": "int",
+    "type": "int",
+    "value": "100000000000000000000000000000000000000"
+   },
+   {
+    "masked": "9995336764890655922854989512416068464518",
+    "maskedType": "int",
+    "type": "int",
+    "value": "10000000000000000000000000000000000000000"
+   },
+   {
+    "masked": "0.0",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "masked": "-0.0",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.0"
+   },
+   {
+    "masked": "0.5022703137366767",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.5"
+   },
+   {
+    "masked": "2.351594497158623",
+    "maskedType": "float",
+    "type": "float",
+    "value": "2.5"
+   },
+   {
+    "masked": "-0.0010442805132474062",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.001"
+   },
+   {
+    "masked": "1.0944300647984123e-07",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e-07"
+   },
+   {
+    "masked": "112702.99724648183",
+    "maskedType": "float",
+    "type": "float",
+    "value": "123456.789"
+   },
+   {
+    "masked": "1.011287796762695e+22",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1e+22"
+   },
+   {
+    "masked": "1.5623255080596856e+16",
+    "maskedType": "float",
+    "type": "float",
+    "value": "1.5e+16"
+   },
+   {
+    "masked": "inf",
+    "maskedType": "float",
+    "type": "float",
+    "value": "inf"
+   },
+   {
+    "masked": "nan",
+    "maskedType": "float",
+    "type": "float",
+    "value": "nan"
+   },
+   {
+    "masked": "0",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0"
+   },
+   {
+    "masked": "-0.00",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-0.00"
+   },
+   {
+    "masked": "13.29",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "12.30"
+   },
+   {
+    "masked": "-12.0688",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-12.3400"
+   },
+   {
+    "masked": "129479",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2E+5"
+   },
+   {
+    "masked": "0.0000124",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "0.0000123"
+   },
+   {
+    "masked": "1.000",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.005"
+   },
+   {
+    "masked": "100669.02",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "99999.99"
+   },
+   {
+    "masked": "-7.4",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-7.5"
+   },
+   {
+    "masked": "NaN",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "NaN"
+   },
+   {
+    "masked": "1.1576035630859610562019904083",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "1.2345678901234567890123456789"
+   },
+   {
+    "masked": null,
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": null
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got bool",
+    "type": "bool",
+    "value": "True"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the number strategy needs a number, got str",
+    "type": "str",
+    "value": "text"
    }
   ]
  }

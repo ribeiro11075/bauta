@@ -3,40 +3,25 @@ small table, and checks every run produced the same copy of its table -- all
 eight runs where the Rust extension is installed, the two Python ones where it
 isn't.
 """
-import importlib.util
 import os
 import sqlite3
-import sys
-from pathlib import Path
 
 import pytest
 
-DEMO_PATH = Path(__file__).resolve().parents[2] / 'example' / 'native-masking' / 'demo.py'
+from tests.examples.demos import loadedDemo
+
 PREVIOUS: dict = {}
 ENVIRONMENT = ('NATIVE_DEMO_PRODUCTION_PATH', 'NATIVE_DEMO_STAGING_PATH', 'BAUTA_NATIVE', 'BAUTA_PIPELINE', 'BAUTA_MASKING_THREADS', 'MASKING_KEY')
 
 
 @pytest.fixture(scope='module')
 def demoRun(tmp_path_factory):
-    specification = importlib.util.spec_from_file_location('native_masking_demo', DEMO_PATH)
-    assert specification is not None and specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
-    sys.modules['native_masking_demo'] = module
-    previous = {name: os.environ.get(name) for name in ENVIRONMENT}
-    PREVIOUS.update(previous)
+    PREVIOUS.update({name: os.environ.get(name) for name in ENVIRONMENT})
     workingDirectory = tmp_path_factory.mktemp('native_masking_demo')
 
-    try:
-        specification.loader.exec_module(module)
+    with loadedDemo('native-masking', 'native_masking_demo', ENVIRONMENT) as module:
         os.environ.pop('MASKING_KEY', None)
         yield module.main(workingDirectory=workingDirectory, rows=2000, wideRows=3000), workingDirectory
-    finally:
-        del sys.modules['native_masking_demo']
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
 
 
 def test_the_python_run_masks_every_row(demoRun):

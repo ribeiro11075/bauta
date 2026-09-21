@@ -100,7 +100,7 @@ The output has the same shape as the input:
 
 **Values are limited to 256 characters**, or 256 digits for an integer. `key` is for identifiers, and its cost grows with the square of a value's length; a longer value fails the job with a suggestion of `hash`, `redact` or `null`. The same limits apply to `fpe`.
 
-`number` handles ordinary numeric columns. `key` is for identifiers, whose values have to stay distinct.
+`number` handles ordinary numeric columns. `key` is for identifiers, whose values have to stay distinct. `number` computes to 60 significant digits: an integer of more than 60 digits, or a float held to more `decimals` than 60 digits reach at its size, fails the job with an error naming the column.
 
 **A mask can be wider than the column.** Keeping a value's shape is not the same as fitting where it came from:
 
@@ -116,7 +116,7 @@ The mask is the same for a given value, key and domain wherever it appears, so i
 - It keeps shapes the way `key` does: integers keep sign and digit count, text keeps its length and every character outside `charset`. FF1 needs one alphabet for every position, so with `alphanumeric` a letter may become a digit, and with `hex` a masked value may mix cases (`2cAB74Ce`); `key` keeps each character's class and case.
 - The masking key is turned into an AES key per domain, and the domain goes into FF1's tweak.
 - **FF1 needs at least a million possible values**: six digits, five hex characters or four alphanumerics. Shorter values are masked with `key`'s permutation instead, and still never collide with longer ones, since lengths are kept. **`strict: true`** fails the job on a shorter value instead, for policies that require FF1 for every value; the error gives the minimum length, never the value. `audit` notes each `fpe` column without `strict`.
-- It is slower than `key`. With two `fpe` columns among six, a million rows run at 11,000 rows a second in pure Python, against 17,000 with `key`; the native masker takes it to 115,000. Repeated values are remembered, as described under [speed](#speed).
+- In pure Python it is slower than `key`; with the native masker it is faster: with two `fpe` columns among six, a million rows run at 254,000 rows a second, against 129,000 with `key` (see [speed](#speed)). Repeated values are remembered, as described under [speed](#speed).
 
 Only encryption is implemented. Nothing in the package can reverse a mask.
 
@@ -177,16 +177,16 @@ If `mask()` depends on nothing but the value, set `CACHEABLE = True` on the clas
 
 ### Speed
 
-**The policy decides throughput, by about sixfold.** A million rows of six columns plus an id, SQLite to SQLite, with the [native masker](#the-native-masker) on one thread (`maskingThreads: 1`), reading, masking and writing overlapped:
+**The policy decides throughput, by about fivefold.** A million rows of six columns plus an id, SQLite to SQLite, with the [native masker](#the-native-masker) on one thread (`maskingThreads: 1`), reading, masking and writing overlapped. The columns are a ten-character reference (`C` and nine digits), a ten-digit integer, an email address, a twelve-character hex token, a session string and a phone number; the id is kept. Ten cores, an M1 Pro; `python benchmarks/masking.py` measures it again (see [benchmarks](development.md#benchmarks)):
 
 | Policy | Rows a second |
 | --- | --- |
-| `email`, two `hash`, three `keep` | 277,000 |
-| two `key` columns, `email`, two `hash`, `digits` | 149,000 |
-| two `fpe` columns, `email`, two `hash`, `digits` | 115,000 |
-| five `key` columns, one `hash` | 45,000 |
+| `email`, two `hash`, three `keep` | 339,000 |
+| two `key` columns, `email`, two `hash`, `digits` | 129,000 |
+| two `fpe` columns, `email`, two `hash`, `digits` | 254,000 |
+| five `key` columns, one `hash` | 74,000 |
 
-`key` costs the most because it has to be a *permutation*: a Feistel network per value, about thirty times the work of `hash`'s one digest. Where nothing joins on a column, `hash` hides as much far more cheaply.
+`key` costs the most because it has to be a *permutation*: a Feistel network per value, about thirty times the work of `hash`'s one digest. Where nothing joins on a column, `hash` hides as much far more cheaply. `fpe` is a permutation too, but FF1's ten AES rounds cost less natively than `key`'s forty-odd digests.
 
 `key`, `fpe`, `hash`, `email`, `digits` and the `fake*` strategies remember up to 16,384 masked values per column (text up to 256 characters, integers and UUIDs), so foreign keys and low-cardinality columns mask many times faster. The native masker masks each distinct value in a chunk once, and for `key`, `fpe` and the `fake*` strategies remembers up to 65,536 values per column across chunks (text up to 64 bytes, and integers). For how `chunkSize` and latency interact, see [throughput](operations.md#throughput).
 
@@ -204,16 +204,16 @@ Wheels are published for Linux (x86-64 and ARM, glibc 2.17 or newer) and macOS (
 
 From a clone, `pip install ./mask-rs/py` builds the extension at the checkout's version.
 
-It covers `key`, `fpe`, `hash`, `email`, `digits` and the `fake*` strategies, which is where the time goes; the `fake*` ones pick from the lists Python hands it, so there is one copy of those. Everything else stays in Python: the strategies that are already cheap, `redact`, and [custom strategies](#your-own-strategies), which are Python by definition and mask on one thread whatever `maskingThreads` says. So do values the extension doesn't handle (`Decimal`, `UUID`, dates, and non-ASCII text for the strategies that read characters), so a value Python would refuse still refuses with the same message.
+It covers `key`, `fpe`, `hash`, `email`, `digits`, `number` and the `fake*` strategies, which is where the time goes; the `fake*` ones pick from the lists Python hands it, so there is one copy of those. `number` repeats Python's decimal arithmetic digit for digit, integers, floats and `Decimal`s alike, and hands back what it would have to guess at: a mask that comes out as zero, whose sign Python keeps, and values too long or too far from 1. Everything else stays in Python: the strategies that are already cheap, `redact`, and [custom strategies](#your-own-strategies), which are Python by definition and mask on one thread whatever `maskingThreads` says. So do values the extension doesn't handle (`Decimal` outside `number`, `UUID`, dates, and non-ASCII text for the strategies that read characters), so a value Python would refuse still refuses with the same message.
 
 The second policy above, a million rows, SQLite to SQLite:
 
 | Masker | Rows a second |
 | --- | --- |
-| Python | 17,000 |
-| Rust, one thread, reading, masking and writing in turn | 113,000 |
-| Rust, one thread, overlapped with the database (the default) | 149,000 |
-| Rust, `maskingThreads: auto` (10 threads) | 277,000 |
+| Python | 13,600 |
+| Rust, one thread, reading, masking and writing in turn | 101,000 |
+| Rust, one thread, overlapped with the database (the default) | 129,000 |
+| Rust, `maskingThreads: auto` (10 threads) | 326,000 |
 
 **The two implementations compute identical masks**, a release requirement: a difference would silently break joins between old and new copies. See [two implementations](security.md#two-implementations). `BAUTA_NATIVE=0` masks in Python even with the extension installed, and the manifest records which one ran as `maskedBy`.
 
@@ -260,8 +260,8 @@ maskCustomers: masking with 4 thread(s) (2 job(s) running, 8 core(s))
 
 | `maskingThreads` | Rows a second |
 | --- | --- |
-| `1` | 25,000 |
-| `auto` (10 threads) | 73,000 |
+| `1` | 30,000 |
+| `auto` (10 threads) | 79,000 |
 
 A narrow table gains little, since its time goes to writing.
 
@@ -719,7 +719,7 @@ customers: 1000 row(s)
 
 - **Keys are unique.** Integer keys continue after the table's current maximum; text keys run `S1`, `S2`, ... after the current row count (`S0001`, `S0002`, ... in a fixed-width column, so each stays distinct at full width); UUID keys are generated.
 - **Values continue between runs.** Every generator is indexed by the row's number, counted from the rows already in the table, so a second run neither repeats the first's values nor collides with them. Generated text ends in that number, so a `UNIQUE` column of any reasonable width keeps taking rows.
-- **Foreign keys resolve.** Values are drawn from the parent's existing rows, so parents are filled first; `--table` order doesn't matter. A table whose key is made only of foreign keys gets as many rows as its parents allow, which may be fewer than asked.
+- **Foreign keys resolve.** Values are drawn from the parent's existing rows, so parents are filled first; `--table` order doesn't matter. A table whose key is made only of foreign keys gets as many rows as its parents allow, which may be fewer than asked. Only such a table's keys are remembered, to skip a combination drawn twice; any other key has a generated part that can't repeat, so filling it holds a chunk in memory however many rows are asked for.
 - **Names drive realism.** Columns whose names suggest personal data (email, names, phone, postal code, birth date, city, company, address...) get realistic values, from the same rules `discover` uses, [your own](#your-own-rules-discoveryyaml) included. Everything else is random within its type: numbers within their precision, text within its length, dates since 2015. Nullable columns are NULL about one time in ten.
 - **Reproducible.** The same `--seed` on the same starting tables makes the same rows.
 - `--rows` sets the count for any `--table` given without one. Nothing is written without `--yes`.

@@ -1,17 +1,15 @@
 """The audit report: what it shows for each job, and what it flags."""
+import functools
 from typing import Any
 
 from bauta.review.audit import auditJobs, renderAudit
 from bauta.configuration import DataJobConfig
+from tests.jobConfigs import dataJob
 
 KEY = 'an-audit-test-masking-key'
 
 
-def _job(**overrides: Any) -> DataJobConfig:
-    fields = dict(active=True, sourceDatabase='prod', sourceQuery='select * from customers', targetDatabase='staging',
-                  targetTableFinal='customers', insertStrategy='upsert', chunkSize=100)
-    fields.update(overrides)
-    return DataJobConfig(**fields)
+_job = functools.partial(dataJob, sourceDatabase='prod', targetDatabase='staging')
 
 
 def _masked(columns, **overrides: Any) -> DataJobConfig:

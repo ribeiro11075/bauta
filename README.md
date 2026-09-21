@@ -8,7 +8,7 @@
 - **Provable coverage:** list every table in production and what the jobs do with each, so a table nobody wrote a job for fails the build rather than going unnoticed. A database can require that nothing reaches it unmasked.
 - **Six databases:** Oracle, SQL Server, PostgreSQL, MySQL, MariaDB and SQLite, as source or target in any combination.
 - **Streaming:** memory stays flat however large the table, and PostgreSQL and SQL Server targets load in bulk.
-- **Fast:** a million rows of six masked columns in under 7 seconds on one core with the optional native masker, and a minute without; more cores for wide tables. Either way the masks are the same.
+- **Fast:** a million rows of six masked columns, two of them one-to-one keys, in under 8 seconds on one core with the optional native masker, and 74 without; more cores for wide tables. Either way the masks are the same.
 - **Incremental loads:** extract only what changed since the last successful run.
 - **A dependency graph:** jobs run in order, concurrently where they can, each in its own process with an optional timeout.
 - **Operable:** webhook alerts; run state, history and manifests each in a file or a table; and passwords from a command for cloud IAM tokens.
@@ -34,7 +34,7 @@ pip install "bauta[postgresql,oracle]"
 | `native` | `bauta-rs`, the native masker (below) | nothing on Linux (x86-64, ARM) or macOS; elsewhere, [Rust](https://rustup.rs) 1.83 or newer |
 | `all` | every driver above | nothing |
 
-**The native masker (optional).** `bauta-rs` masks in Rust: seven to nine times the throughput on one core, with identical masks. It can also mask on several cores: `jobs.yaml`'s `maskingThreads` is `1` by default, a number up to the cores available, or `auto` to divide the cores between the jobs running (see [masking threads](docs/masking.md#masking-threads)). `pip install "bauta[postgresql,native]"` installs the version that matches, which is the only one Bauta uses. Without it, everything works, only slower. See [the native masker](docs/masking.md#the-native-masker).
+**The native masker (optional).** `bauta-rs` masks in Rust: about ten times the throughput on one core, with identical masks. It can also mask on several cores: `jobs.yaml`'s `maskingThreads` is `1` by default, a number up to the cores available, or `auto` to divide the cores between the jobs running (see [masking threads](docs/masking.md#masking-threads)). `pip install "bauta[postgresql,native]"` installs the version that matches, which is the only one Bauta uses. Without it, everything works, only slower. See [the native masker](docs/masking.md#the-native-masker).
 
 
 ## Quickstart

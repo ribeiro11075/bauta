@@ -9,16 +9,15 @@ upper case.
 
 Servers that aren't reachable are skipped. Run with `pytest -m integration`.
 """
-import importlib
 import uuid
 
 import pytest
 
-from bauta.configuration import DatabaseConnectionConfig, DatabaseType
+from bauta.configuration import DatabaseType
 from bauta.database import Database
 from bauta.database.dialects import ForeignKey
 from bauta.review.references import verifyReferences
-from tests.integration.servers import SERVERS
+from tests.integration.servers import SERVERS, serverSettings
 
 pytestmark = pytest.mark.integration
 
@@ -27,17 +26,7 @@ NAMES = ['sqlite'] + sorted(SERVERS)
 
 @pytest.fixture(params=NAMES)
 def database(request, tmp_path):
-    if request.param == 'sqlite':
-        settings = DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(tmp_path / 'references.db'))
-    else:
-        driver, settings = SERVERS[request.param]
-        try:
-            importlib.import_module(driver)
-            Database(connectionSettings=settings).close()
-        except Exception as error:
-            pytest.skip('{} is not available ({})'.format(request.param, error))
-
-    with Database(connectionSettings=settings) as database:
+    with Database(connectionSettings=serverSettings(request.param, tmp_path)) as database:
         created = []
         database.created = created  # type: ignore[attr-defined]
         yield database

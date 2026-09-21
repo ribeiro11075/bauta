@@ -32,6 +32,7 @@ def test_the_vectors_still_describe_what_masking_produces():
             'domain': generate_vectors.DOMAIN,
             'keyedHash': generate_vectors.hashVectors(),
             'strategies': generate_vectors.strategyVectors(),
+            'pythonOnly': generate_vectors.pythonOnlyVectors(),
             }
     finally:
         sys.path.remove(os.path.join(ROOT, 'mask-rs'))
@@ -40,7 +41,7 @@ def test_the_vectors_still_describe_what_masking_produces():
     for section in ('key', 'domain'):
         assert recorded[section] == regenerated[section]
 
-    for section in ('keyedHash', 'strategies'):
+    for section in ('keyedHash', 'strategies', 'pythonOnly'):
         for name, entries in regenerated[section].items():
             assert name in recorded[section], 'the generator grew {!r}; regenerate the vectors'.format(name)
             assert entries == recorded[section][name], (

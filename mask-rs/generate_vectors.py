@@ -3,11 +3,15 @@
 The Python implementation is the reference: every vector here is what
 bauta.masking produces today, and a Rust build that disagrees with
 any of them is a silent key change for anyone who has already masked data.
+The strategies with no port are recorded as well, under `pythonOnly`, so that
+tests/masking/test_maskVectors.py catches Python changing those masks too.
 
 Run from the repository root:  python3 mask-rs/generate_vectors.py
 """
 from __future__ import annotations
 
+import datetime
+import decimal
 import json
 import os
 import sys
@@ -46,6 +50,13 @@ TEXTS = [
     ]
 
 INTEGERS = [0, 1, -1, 9, 10, -10, 99, 100, 12345, -12345, 10 ** 6, 10 ** 18, -10 ** 18, 10 ** 38, 10 ** 40]
+
+# What `number` masks besides integers: floats as repr spells them and Decimals
+# as str does, including the spellings, scales and signed zeros that decimal
+# arithmetic treats specially.
+NUMBERS = INTEGERS + [0.0, -0.0, 0.5, 2.5, -0.001, 1e-07, 123456.789, 1e22, 1.5e16, float('inf'), float('nan')] + [
+    decimal.Decimal(text) for text in ('0', '-0.00', '12.30', '-12.3400', '1.2E+5', '0.0000123', '1.005', '99999.99', '-7.5', 'NaN',
+                                       '1.2345678901234567890123456789')]
 
 
 def hashVectors() -> dict:
@@ -111,6 +122,9 @@ def strategyVectors() -> dict:
         ('digits', {}),
         ] + [(name, options) for name in FAKE_STRATEGIES for options in [{}, {'maxLength': 4}] + [{'locale': locale} for locale in sorted(LOCALES)]]
 
+    combinations += [('number', {}), ('number', {'variance': '0.5'}), ('number', {'min': '0', 'max': '100'}), ('number', {'decimals': 2}),
+                     ('number', {'min': '1', 'max': '2', 'decimals': 3})]
+
     values = TEXTS + INTEGERS + [uuid.UUID('00000000-0000-4000-a000-000000000000'), None, True]
     out = {}
 
@@ -119,7 +133,7 @@ def strategyVectors() -> dict:
         strategy = strategyClass(KeyedHash(KEY, DOMAIN), strategyClass.validateOptions(options))
         results = []
 
-        for value in values:
+        for value in (NUMBERS + [None, True, 'text'] if name == 'number' else values):
             entry = {'type': type(value).__name__, 'value': None if value is None else str(value)}
             try:
                 masked = strategy.maskColumn([value], 0)[0]
@@ -135,6 +149,55 @@ def strategyVectors() -> dict:
     return out
 
 
+DATES = [datetime.date(2020, 2, 29), datetime.date(1970, 1, 1), datetime.date.min, datetime.date.max, datetime.date(1, 1, 2),
+         datetime.date(9999, 12, 30), datetime.datetime(2026, 9, 21, 16, 30, 5), datetime.datetime(2026, 9, 21, 23, 59, 59, 999999),
+         '2026-09-21', '2026-09-21T16:30:05', '2026-09-21 16:30:05', '2026-09-21T16:30:05+02:00', '0001-01-01', 20260921]
+
+REDACT_TEXTS = [
+    'Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 '
+    'IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3.',
+    'reach me at ann.lee@CORP.example.com about ACC-123456', 'no identifiers here', '',
+    ]
+
+
+def pythonOnlyVectors() -> dict:
+    """The strategies only Python implements. No port reads these; they are
+    here so that a change to what they return fails test_maskVectors.py as
+    loudly as a change to the ported ones would, since it changes every mask
+    already made just the same.
+
+    shuffle is keyed on the chunk rather than a value, so its vectors are
+    whole columns at a few chunk positions.
+    """
+
+    def build(name, options):
+        return STRATEGIES[name](KeyedHash(KEY, DOMAIN), STRATEGIES[name].validateOptions(options))
+
+    def entry(strategy, value):
+        result = {'type': type(value).__name__, 'value': str(value)}
+        try:
+            masked = strategy.maskColumn([value], 0)[0]
+            result.update(masked=str(masked), maskedType=type(masked).__name__)
+        except Exception as error:
+            result.update(error=type(error).__name__, message=str(error))
+        return result
+
+    out = {}
+    for name, options, values in [
+            ('dateShift', {}, DATES), ('dateShift', {'maxDays': 10}, DATES),
+            ('redact', {}, REDACT_TEXTS), ('redact', {'replacement': 'mask'}, REDACT_TEXTS),
+            ('redact', {'replacement': 'mask', 'detect': ['email'], 'patterns': [r'ACC-\d{6}']}, REDACT_TEXTS),
+            ]:
+        strategy = build(name, options)
+        out['{} {}'.format(name, json.dumps(options, sort_keys=True))] = [entry(strategy, value) for value in values]
+
+    columns = [list(range(20)), ['v{}'.format(index) for index in range(7)], [1, 2]]
+    out['shuffle {}'] = [{'chunk': chunk, 'column': column, 'masked': build('shuffle', {}).maskColumn(column, chunk)}
+                         for chunk in (0, 1, 7) for column in columns]
+
+    return out
+
+
 def main() -> None:
     here = os.path.dirname(os.path.abspath(__file__))
     vectors = {
@@ -142,6 +205,7 @@ def main() -> None:
         'domain': DOMAIN,
         'keyedHash': hashVectors(),
         'strategies': strategyVectors(),
+        'pythonOnly': pythonOnlyVectors(),
         'fakeLists': fakeLists(),
         }
 
@@ -152,6 +216,7 @@ def main() -> None:
 
     counts = {name: len(entries) for name, entries in vectors['keyedHash'].items()}
     counts['strategies'] = sum(len(entries) for entries in vectors['strategies'].values())
+    counts['pythonOnly'] = sum(len(entries) for entries in vectors['pythonOnly'].values())
     print('wrote {} ({:,} bytes)'.format(path, os.path.getsize(path)))
     for name, count in sorted(counts.items()):
         print('  {:<12} {:>6,} vectors'.format(name, count))

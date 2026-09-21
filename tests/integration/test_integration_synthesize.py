@@ -1,14 +1,13 @@
 """Synthetic rows on real servers, where every catalog and every driver's
 types differ. Run with `pytest -m integration`.
 """
-import importlib
 import uuid
 
 import pytest
 
 from bauta.database import Database
 from bauta.generate.synthesize import synthesizeTable
-from tests.integration.servers import SERVERS
+from tests.integration.servers import SERVERS, serverSettings
 
 pytestmark = pytest.mark.integration
 
@@ -24,12 +23,8 @@ TYPES = {
 
 @pytest.fixture(params=sorted(SERVERS))
 def server(request):
-    driver, settings = SERVERS[request.param]
-    try:
-        importlib.import_module(driver)
-        database = Database(connectionSettings=settings)
-    except Exception as error:
-        pytest.skip('{} is not available ({})'.format(request.param, error))
+    settings = serverSettings(request.param)
+    database = Database(connectionSettings=settings)
 
     yield request.param, database
 
@@ -71,3 +66,23 @@ def test_a_related_schema_fills_with_valid_rows(server):
     finally:
         for table in (items, orders, products, customers):
             database.alter('DROP TABLE {}'.format(table))
+
+
+def test_a_uuid_primary_key_gets_a_different_uuid_in_every_row_and_run(server):
+    """Where the server has a UUID type; elsewhere such a key is text, which
+    the test above covers."""
+    name, database = server
+    identifier = TYPES[name][3]
+    if identifier.startswith(('CHAR', 'VARCHAR')):
+        pytest.skip('{} has no UUID type'.format(name))
+    table = 'uuids_{}'.format(uuid.uuid4().hex[:6])
+    database.alter('CREATE TABLE {} (id {} PRIMARY KEY, label VARCHAR(20))'.format(table, identifier))
+
+    try:
+        assert synthesizeTable(database, table, 30) == 30
+        assert synthesizeTable(database, table, 30) == 30
+        identifiers = [str(row[0]) for row in database.query('SELECT id FROM {}'.format(table))]
+        assert len(set(identifiers)) == 60
+        assert all(uuid.UUID(value) for value in identifiers)
+    finally:
+        database.alter('DROP TABLE {}'.format(table))

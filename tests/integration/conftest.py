@@ -6,14 +6,12 @@ A module names its database with `DATABASE = 'mysql'` (or 'mariadb',
 overrides databaseName to run across all six. A server that isn't reachable,
 or whose driver isn't installed, skips its tests with the reason.
 """
-import importlib
 import uuid
 
 import pytest
 
-from bauta.configuration import DatabaseConnectionConfig, DatabaseType
 from bauta.database import Database
-from tests.integration.servers import SERVERS
+from tests.integration.servers import serverSettings
 
 # The type of the run-state table's last_run column: no one spelling of a
 # double is accepted by all six.
@@ -28,21 +26,7 @@ def databaseName(request):
 
 @pytest.fixture
 def connectionSettings(databaseName, tmp_path):
-    """SQLite gets a throwaway file of its own; a server is asked first
-    whether it is there at all.
-    """
-
-    if databaseName == 'sqlite':
-        return DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(tmp_path / 'test.db'))
-
-    driver, settings = SERVERS[databaseName]
-    try:
-        importlib.import_module(driver)
-        Database(connectionSettings=settings).close()
-    except Exception as error:
-        pytest.skip('{} is not available at {}:{} ({})'.format(databaseName, settings.host, settings.port, error))
-
-    return settings
+    return serverSettings(databaseName, tmp_path)
 
 
 @pytest.fixture

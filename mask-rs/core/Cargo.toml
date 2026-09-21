@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 aes = "0.9"
 num-bigint = "0.4"
+num-integer = "0.1"
 num-traits = "0.2"
 ring = "0.17.14"
 

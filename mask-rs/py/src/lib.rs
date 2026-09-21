@@ -28,7 +28,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods, PyList, PyListMethods, PyString, PyTuple, PyTupleMethods};
 
 use bauta_core::cheap;
-use bauta_core::{Charset, FakeKind, FakeLists, FakeStrategy, FpeStrategy, KeyStrategy, KeyedHash, MaskError};
+use bauta_core::{Charset, FakeKind, FakeLists, FakeStrategy, FpeStrategy, KeyStrategy, KeyedHash, MaskError, NumberInput, NumberOutput, NumberStrategy};
 
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -64,6 +64,22 @@ enum Input {
     /// A bool, which every strategy here refuses -- and must, since Python
     /// checks for it before the int branch that would otherwise swallow it.
     Bool,
+    /// For `number` only: a float with the `repr` Python computes from, and a
+    /// Decimal as `str` spells it. Every other strategy gets these as Other.
+    Float { value: f64, repr: String },
+    Decimal(String),
+}
+
+impl Input {
+    /// The value as `number` takes it, or None for anything else.
+    fn asNumber(&self) -> Option<NumberInput<'_>> {
+        match self {
+            Input::Int(value) => Some(NumberInput::Int(value)),
+            Input::Float { value, repr } => Some(NumberInput::Float { value: *value, repr }),
+            Input::Decimal(text) => Some(NumberInput::Decimal(text)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -71,6 +87,9 @@ enum Output {
     Null,
     Int(BigInt),
     Text(String),
+    Float(f64),
+    /// Spelled for `decimal.Decimal` to read back exactly.
+    Decimal(String),
     Fallback,
     Refused(String),
 }
@@ -82,6 +101,7 @@ enum Strategy {
     Email { length: usize, mailDomain: String, keepDomain: bool },
     Digits { keepLeading: usize, keepTrailing: usize },
     Fake(Box<FakeStrategy>),
+    Number(Box<NumberStrategy>),
 }
 
 impl Strategy {
@@ -94,6 +114,7 @@ impl Strategy {
             Strategy::Email { .. } => "email",
             Strategy::Digits { .. } => "digits",
             Strategy::Fake(_) => "fake",
+            Strategy::Number(_) => "number",
         }
     }
 
@@ -101,6 +122,14 @@ impl Strategy {
         let result: Result<Output, MaskError> = match (self, input) {
             (_, Input::Null) => return Output::Null,
             (_, Input::Other) => return Output::Fallback,
+
+            // number refuses anything but a number with a message Python
+            // spells, so those go back; the numbers it masks here.
+            (Strategy::Number(strategy), input) => match input.asNumber() {
+                Some(number) => strategy.mask(hash, &number).map(Output::from),
+                None => return Output::Fallback,
+            },
+            (_, Input::Float { .. } | Input::Decimal(_)) => return Output::Fallback,
 
             (Strategy::Key(_) | Strategy::Fpe(_), Input::Bool) => Err(MaskError::notABool(self.name())),
             // Keyed on the bytes Python keys them on: text as UTF-8, whatever
@@ -151,11 +180,24 @@ impl Strategy {
     }
 }
 
+impl From<NumberOutput> for Output {
+    fn from(output: NumberOutput) -> Self {
+        match output {
+            NumberOutput::Int(number) => Output::Int(number),
+            NumberOutput::Float(number) => Output::Float(number),
+            NumberOutput::Decimal(text) => Output::Decimal(text),
+        }
+    }
+}
+
 /// A value as a cache or a batch's repeats know it.
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum CacheKey {
     Text(String),
     Int(BigInt),
+    /// A float by its bits, whose repr follows from them.
+    Float(u64),
+    Decimal(String),
 }
 
 impl CacheKey {
@@ -163,6 +205,8 @@ impl CacheKey {
         match input {
             Input::Text(text) => Some(CacheKey::Text(text.clone())),
             Input::Int(number) => Some(CacheKey::Int(number.clone())),
+            Input::Float { value, .. } => Some(CacheKey::Float(value.to_bits())),
+            Input::Decimal(text) => Some(CacheKey::Decimal(text.clone())),
             _ => None,
         }
     }
@@ -170,13 +214,15 @@ impl CacheKey {
     fn remembered(&self) -> bool {
         match self {
             CacheKey::Text(text) => text.len() <= CACHE_MAXIMUM_TEXT,
-            CacheKey::Int(_) => true,
+            CacheKey::Int(_) | CacheKey::Float(_) | CacheKey::Decimal(_) => true,
         }
     }
 }
 
 /// One Python value as Rust knows it, owned so the GIL can be dropped after.
-fn convert(value: &Bound<'_, PyAny>) -> PyResult<Input> {
+/// `decimal` is `decimal.Decimal` for a `number` column, which alone takes
+/// floats and Decimals, and None for the rest.
+fn convert(value: &Bound<'_, PyAny>, decimal: Option<&Bound<'_, PyAny>>) -> PyResult<Input> {
     Ok(if value.is_none() {
         Input::Null
     } else if value.is_instance_of::<pyo3::types::PyBool>() {
@@ -184,10 +230,21 @@ fn convert(value: &Bound<'_, PyAny>) -> PyResult<Input> {
     } else if value.is_instance_of::<PyString>() {
         Input::Text(value.extract::<String>()?)
     } else if value.is_instance_of::<pyo3::types::PyInt>() {
-        match value.extract::<BigInt>() {
-            Ok(number) => Input::Int(number),
-            Err(_) => Input::Other,
+        // An i64 first, which crosses through the C API. Under abi3 a BigInt
+        // crosses by calling int.to_bytes, a Python method call per value with
+        // the GIL held: it capped an integer column at eight threads at half
+        // the throughput of a text one. Anything wider still takes that path.
+        match value.extract::<i64>() {
+            Ok(number) => Input::Int(BigInt::from(number)),
+            Err(_) => match value.extract::<BigInt>() {
+                Ok(number) => Input::Int(number),
+                Err(_) => Input::Other,
+            },
         }
+    } else if decimal.is_some() && value.is_instance_of::<pyo3::types::PyFloat>() {
+        Input::Float { value: value.extract::<f64>()?, repr: value.repr()?.extract::<String>()? }
+    } else if decimal.is_some_and(|decimal| value.is_instance(decimal).unwrap_or(false)) {
+        Input::Decimal(value.str()?.extract::<String>()?)
     } else {
         Input::Other
     })
@@ -280,6 +337,22 @@ impl Masker {
                     };
                     Strategy::Fake(Box::new(FakeStrategy::new(kind, lists, maxLength).map_err(PyValueError::new_err)?))
                 }
+                None if other == "number" => {
+                    let optional = |name: &str| -> PyResult<Option<String>> {
+                        Ok(match options.get_item(name)? {
+                            Some(value) if !value.is_none() => Some(value.extract::<String>()?),
+                            _ => None,
+                        })
+                    };
+                    let decimals = match options.get_item("decimals")? {
+                        Some(value) if !value.is_none() => Some(value.extract::<u32>()?),
+                        _ => None,
+                    };
+                    let (minimum, maximum, variance) = (optional("min")?, optional("max")?, optional("variance")?);
+                    Strategy::Number(Box::new(
+                        NumberStrategy::new(minimum.as_deref(), maximum.as_deref(), variance.as_deref(), decimals).map_err(PyValueError::new_err)?,
+                    ))
+                }
                 None => return Err(PyValueError::new_err(format!("no native masker for strategy {other:?}"))),
             },
         };
@@ -303,18 +376,23 @@ impl Masker {
         // iterators, which is markedly faster than the general protocol: a
         // column arrives as one or the other, and going through try_iter for a
         // tuple cost more than handing the column over uncopied saved.
+        let decimal = match self.strategy {
+            Strategy::Number(_) => Some(py.import("decimal")?.getattr("Decimal")?),
+            _ => None,
+        };
+        let decimal = decimal.as_ref();
         let mut inputs = Vec::with_capacity(values.len().unwrap_or(0));
         if let Ok(list) = values.cast::<PyList>() {
             for value in list.iter() {
-                inputs.push(convert(&value)?);
+                inputs.push(convert(&value, decimal)?);
             }
         } else if let Ok(tuple) = values.cast::<PyTuple>() {
             for value in tuple.iter() {
-                inputs.push(convert(&value)?);
+                inputs.push(convert(&value, decimal)?);
             }
         } else {
             for value in values.try_iter()? {
-                inputs.push(convert(&value?)?);
+                inputs.push(convert(&value?, decimal)?);
             }
         }
 
@@ -328,8 +406,17 @@ impl Masker {
         for (index, output) in outputs.into_iter().enumerate() {
             match output {
                 Output::Null => masked.append(py.None())?,
-                Output::Int(number) => masked.append(number)?,
+                // Back through the C API where it fits, for the reason convert gives.
+                Output::Int(number) => match i64::try_from(&number) {
+                    Ok(small) => masked.append(small)?,
+                    Err(_) => masked.append(number)?,
+                },
                 Output::Text(text) => masked.append(text)?,
+                Output::Float(number) => masked.append(number)?,
+                Output::Decimal(text) => match decimal {
+                    Some(decimal) => masked.append(decimal.call1((text,))?)?,
+                    None => unreachable!("only a number column returns a Decimal"),
+                },
                 Output::Fallback => {
                     masked.append(py.None())?;
                     problems.set_item(index, FALLBACK)?;

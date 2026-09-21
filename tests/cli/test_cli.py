@@ -9,6 +9,7 @@ import argparse
 import sqlite3
 
 import pytest
+import yaml
 
 from bauta.cli import EXIT_BAD_CONFIGURATION, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, main
 
@@ -58,6 +59,30 @@ def workspace(tmp_path, monkeypatch):
     return tmp_path
 
 
+def _writeJobs(workspace, settings=JOBS_YAML, **changes):
+    """jobs.yaml as `settings` -- text or already loaded -- with each named
+    job's settings changed: a mapping is merged in, and None removes the
+    setting. A job or setting that isn't there raises, so an edit can't
+    quietly leave the file as it was and the test pass on the original.
+    """
+    if isinstance(settings, str):
+        settings = yaml.safe_load(settings)
+
+    def merge(into, change):
+        for name, value in change.items():
+            if value is None:
+                del into[name]
+            elif isinstance(value, dict) and isinstance(into.get(name), dict):
+                merge(into[name], value)
+            else:
+                into[name] = value
+
+    for job, change in changes.items():
+        merge(settings['jobs'][job], change)
+
+    (workspace / 'configuration' / 'jobs.yaml').write_text(yaml.safe_dump(settings, sort_keys=False))
+
+
 def _targetRowCount(workspace) -> int:
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     try:
@@ -101,10 +126,7 @@ def test_validate_rejects_an_unresolvable_transformer_reference(workspace):
     """Transformers resolve inside a worker at job-run time, so a typo otherwise
     surfaces as a failed job in a log file at 3am. It's statically checkable.
     """
-    jobs = workspace / 'configuration' / 'jobs.yaml'
-    jobs.write_text(JOBS_YAML.replace(
-        '    chunkSize: 2\n  dependent:',
-        '    chunkSize: 2\n    sourceQueryColumnTransforms:\n      name:\n      - no_such_module:nope\n  dependent:', 1))
+    _writeJobs(workspace, loadRows={'sourceQueryColumnTransforms': {'name': ['no_such_module:nope']}})
 
     assert main(['validate', '--quiet']) == EXIT_BAD_CONFIGURATION
 
@@ -116,7 +138,8 @@ def test_run_moves_rows_and_exits_zero(workspace):
 
 def test_a_failing_job_exits_nonzero(workspace):
     """The whole reason for RunResult. This used to exit 0."""
-    (workspace / 'configuration' / 'jobs.yaml').write_text(JOBS_YAML.replace('FROM src', 'FROM no_such_table'))
+    _writeJobs(workspace, loadRows={'sourceQuery': 'SELECT id, name FROM no_such_table'},
+               dependent={'sourceQuery': 'SELECT id, name FROM no_such_table'})
 
     assert main(['run', '--quiet']) == EXIT_JOBS_DID_NOT_SUCCEED
 
@@ -125,8 +148,7 @@ def test_a_skipped_job_also_exits_nonzero(workspace):
     """`dependent` never runs, because its predecessor failed. It didn't error,
     but the data isn't there, so reporting success would be a lie cron acts on.
     """
-    (workspace / 'configuration' / 'jobs.yaml').write_text(
-        JOBS_YAML.replace('    sourceQuery: SELECT id, name FROM src\n', '    sourceQuery: SELECT id, name FROM no_such_table\n', 1))
+    _writeJobs(workspace, loadRows={'sourceQuery': 'SELECT id, name FROM no_such_table'})
 
     assert main(['run', '--quiet']) == EXIT_JOBS_DID_NOT_SUCCEED
 
@@ -183,8 +205,10 @@ def test_dry_run_still_checks_a_job_named_like_an_unreachable_alias(workspace, c
     """Problems were matched to aliases by the prefix of their message, so a job
     named after an alias hid another job's checks.
     """
-    (workspace / 'configuration' / 'jobs.yaml').write_text(
-        JOBS_YAML.replace('  loadRows:', '  demo:').replace('    - loadRows', '    - demo').replace('targetTableFinal: tgt', 'targetTableFinal: missing', 1))
+    settings = yaml.safe_load(JOBS_YAML)
+    settings['jobs'] = {'demo': dict(settings['jobs']['loadRows'], targetTableFinal='missing'),
+                        'dependent': dict(settings['jobs']['dependent'], predecessors=['demo'])}
+    _writeJobs(workspace, settings)
 
     assert main(['run', '--quiet', '--dry-run']) == EXIT_JOBS_DID_NOT_SUCCEED
     assert 'demo: target missing is not readable' in caplog.text
@@ -200,7 +224,7 @@ def test_dry_run_reports_an_upsert_target_with_no_primary_key(workspace):
     connection.commit()
     connection.close()
 
-    (workspace / 'configuration' / 'jobs.yaml').write_text(JOBS_YAML.replace('targetTableFinal: tgt', 'targetTableFinal: keyless'))
+    _writeJobs(workspace, loadRows={'targetTableFinal': 'keyless'}, dependent={'targetTableFinal': 'keyless'})
 
     assert main(['run', '--quiet', '--dry-run']) == EXIT_JOBS_DID_NOT_SUCCEED
 
@@ -209,11 +233,21 @@ def test_dry_run_reports_a_stage_table_that_is_not_there(workspace, caplog):
     """The stage table is where the rows land, so a run without it fails at
     once -- which a dry run used to pass, since it only looked at the target.
     """
-    (workspace / 'configuration' / 'jobs.yaml').write_text(
-        JOBS_YAML.replace('    insertStrategy: upsert\n    chunkSize: 2\n', '    insertStrategy: upsert\n    targetTableStage: tgt_stage\n    chunkSize: 2\n', 1))
+    _writeJobs(workspace, loadRows={'targetTableStage': 'tgt_stage'})
 
     assert main(['run', '--quiet', '--dry-run']) == EXIT_JOBS_DID_NOT_SUCCEED
     assert 'stage table tgt_stage is not readable' in caplog.text
+
+
+def test_dry_run_reports_a_stage_table_missing_a_column_the_load_writes(workspace, caplog):
+    connection = sqlite3.connect(str(workspace / 'demo.db'))
+    connection.execute('CREATE TABLE tgt_stage (id INT PRIMARY KEY)')
+    connection.commit()
+    connection.close()
+    _writeJobs(workspace, loadRows={'targetTableStage': 'tgt_stage'})
+
+    assert main(['run', '--quiet', '--dry-run']) == EXIT_JOBS_DID_NOT_SUCCEED
+    assert 'loadRows: stage table tgt_stage is missing column(s) name, which the load writes' in caplog.text
 
 
 def test_dry_run_passes_a_job_whose_stage_table_holds_the_targets_columns(workspace, capsys):
@@ -221,8 +255,7 @@ def test_dry_run_passes_a_job_whose_stage_table_holds_the_targets_columns(worksp
     connection.execute('CREATE TABLE tgt_stage (id INT PRIMARY KEY, name TEXT)')
     connection.commit()
     connection.close()
-    (workspace / 'configuration' / 'jobs.yaml').write_text(
-        JOBS_YAML.replace('    insertStrategy: upsert\n    chunkSize: 2\n', '    insertStrategy: upsert\n    targetTableStage: tgt_stage\n    chunkSize: 2\n', 1))
+    _writeJobs(workspace, loadRows={'targetTableStage': 'tgt_stage'})
 
     assert main(['run', '--quiet', '--dry-run']) == EXIT_SUCCESS
     assert 'no rows moved' in capsys.readouterr().out
@@ -259,8 +292,7 @@ def test_jobs_lists_the_graph_and_which_jobs_are_due(workspace, capsys):
 
 
 def test_jobs_shows_a_throttled_job_after_it_has_run(workspace, capsys):
-    (workspace / 'configuration' / 'jobs.yaml').write_text(
-        JOBS_YAML.replace('  loadRows:\n    active: true\n', '  loadRows:\n    active: true\n    refresh: 60\n', 1))
+    _writeJobs(workspace, loadRows={'refresh': 60})
 
     main(['run', '--quiet'])
     capsys.readouterr()
@@ -342,7 +374,7 @@ def test_run_writes_a_masking_manifest(maskedWorkspace):
 def test_a_failed_masked_run_still_writes_its_manifest(maskedWorkspace):
     import json
 
-    (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(MASKED_JOBS_YAML.replace('        name: hash\n', ''))
+    _writeJobs(maskedWorkspace, MASKED_JOBS_YAML, maskRows={'masking': {'columns': {'name': None}}})
 
     assert main(['run', '--quiet', '--manifest', 'manifest.json']) == EXIT_JOBS_DID_NOT_SUCCEED
     assert json.loads((maskedWorkspace / 'manifest.json').read_text())['jobs'][0]['status'] == 'failed'
@@ -357,7 +389,7 @@ def test_validate_rejects_a_masking_key_that_is_too_short(maskedWorkspace, monke
 
 
 def test_dry_run_reports_a_column_the_masking_policy_does_not_cover(maskedWorkspace, caplog):
-    (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(MASKED_JOBS_YAML.replace('        name: hash\n', ''))
+    _writeJobs(maskedWorkspace, MASKED_JOBS_YAML, maskRows={'masking': {'columns': {'name': None}}})
 
     assert main(['run', '--quiet', '--dry-run']) == EXIT_JOBS_DID_NOT_SUCCEED
     assert 'not in the masking policy: name' in caplog.text
@@ -596,8 +628,7 @@ def test_clear_needs_yes_and_dry_run_changes_nothing(workspace, capsys):
 
 
 def test_clear_empties_targets_and_a_forced_run_refills_them(workspace, capsys):
-    (workspace / 'configuration' / 'jobs.yaml').write_text(
-        JOBS_YAML.replace('  loadRows:\n    active: true\n', '  loadRows:\n    active: true\n    refresh: 60\n', 1))
+    _writeJobs(workspace, loadRows={'refresh': 60})
     main(['run', '--quiet'])
 
     assert main(['clear', '--quiet', '--yes']) == EXIT_SUCCESS
@@ -609,10 +640,8 @@ def test_clear_empties_targets_and_a_forced_run_refills_them(workspace, capsys):
 
 
 def test_clear_refuses_the_target_of_an_incremental_job(workspace, caplog):
-    incremental = JOBS_YAML.replace('SELECT id, name FROM src\n    targetDatabase: demo\n    targetTableFinal: tgt\n    insertStrategy: upsert\n    chunkSize: 2\n  dependent:',
-                                    'SELECT id, name FROM src WHERE id > {{ watermark }}\n    watermarkColumn: id\n    watermarkInitial: 0\n'
-                                    '    targetDatabase: demo\n    targetTableFinal: tgt\n    insertStrategy: upsert\n    chunkSize: 2\n  dependent:')
-    (workspace / 'configuration' / 'jobs.yaml').write_text(incremental)
+    _writeJobs(workspace, loadRows={'sourceQuery': 'SELECT id, name FROM src WHERE id > {{ watermark }}', 'watermarkColumn': 'id',
+                                    'watermarkInitial': 0})
 
     assert main(['clear', '--quiet', '--yes']) == EXIT_BAD_CONFIGURATION
     assert 'loadRows' in caplog.text
@@ -625,7 +654,7 @@ def test_clear_rolls_back_and_exits_nonzero_when_a_delete_is_refused(schemaWorks
     foreign keys when a connection asks, so a trigger stands in for one here;
     tests/integration/test_integration_schema.py covers real foreign keys on every server.
     """
-    (schemaWorkspace / 'configuration' / 'jobs.yaml').write_text(JOBS_YAML.replace('targetTableFinal: tgt', 'targetTableFinal: customers'))
+    _writeJobs(schemaWorkspace, loadRows={'targetTableFinal': 'customers'}, dependent={'targetTableFinal': 'customers'})
     connection = sqlite3.connect(str(schemaWorkspace / 'demo.db'))
     connection.execute('CREATE TRIGGER keep_customers BEFORE DELETE ON customers BEGIN SELECT RAISE(ABORT, \'customers are referenced\'); END')
     connection.commit()
@@ -762,8 +791,7 @@ def test_audit_strict_fails_on_warnings(workspace):
 def test_audit_connect_resolves_columns_and_writes_json(workspace):
     import json
 
-    (workspace / 'configuration' / 'jobs.yaml').write_text(AUDIT_JOBS_YAML.replace('        email: keep\n', '').replace(
-        '        id: keep\n', '        id: keep\n      defaultStrategy: "null"\n'))
+    _writeJobs(workspace, AUDIT_JOBS_YAML, maskRows={'masking': {'columns': {'email': None}, 'defaultStrategy': 'null'}})
 
     assert main(['audit', '--quiet', '--connect', '--format', 'json', '--output', 'audit.json']) == EXIT_SUCCESS
 
@@ -775,10 +803,66 @@ def test_audit_connect_resolves_columns_and_writes_json(workspace):
 
 
 def test_audit_connect_fails_on_a_policy_the_query_outgrew(workspace, capsys):
-    (workspace / 'configuration' / 'jobs.yaml').write_text(AUDIT_JOBS_YAML.replace('        email: keep\n', ''))
+    _writeJobs(workspace, AUDIT_JOBS_YAML, maskRows={'masking': {'columns': {'email': None}}})
 
     assert main(['audit', '--quiet', '--connect']) == EXIT_JOBS_DID_NOT_SUCCEED
     assert 'not in the masking policy: email' in capsys.readouterr().out
+
+
+@pytest.fixture
+def coverageWorkspace(workspace):
+    """The jobs read src; tgt is only written, and people is read by nothing."""
+    connection = sqlite3.connect(str(workspace / 'demo.db'))
+    connection.execute('CREATE TABLE people (id INT PRIMARY KEY, email TEXT)')
+    connection.commit()
+    connection.close()
+
+    return workspace
+
+
+def test_coverage_fails_on_a_table_no_job_reads_and_says_what_looks_personal(coverageWorkspace, capsys):
+    assert main(['coverage', '--quiet']) == EXIT_JOBS_DID_NOT_SUCCEED
+
+    out = capsys.readouterr().out
+    assert 'demo: 3 table(s)' in out
+    assert 'src' in out and 'copied as it stands by dependent, loadRows' in out
+    assert 'people' in out and 'email' in out and 'looks like personal data' in out
+    assert 'NOT COVERED: 2.' in out and 'Add a job for each table above' in out
+
+
+def test_coverage_passes_once_the_rest_is_acknowledged_and_names_a_stale_declaration(coverageWorkspace):
+    import json
+
+    _writeJobs(coverageWorkspace, dict(yaml.safe_load(JOBS_YAML), acknowledged={'demo': {
+        'tgt': 'the copy itself', 'people': 'not needed in staging', 'orders_2019': 'dropped last year'}}))
+
+    assert main(['coverage', '--quiet', '--format', 'json', '--output', 'coverage.json']) == EXIT_SUCCESS
+
+    report = json.loads((coverageWorkspace / 'coverage.json').read_text())
+    assert report['summary'] == {'uncovered': 0, 'copied': 1, 'masked': 0, 'acknowledged': 2}
+    assert report['acknowledgedButAbsent'] == ['ORDERS_2019']
+
+
+def test_coverage_needs_database_when_the_jobs_read_from_several(coverageWorkspace, caplog):
+    (coverageWorkspace / 'configuration' / 'database.yaml').write_text(
+        'demo:\n  type: sqlite\n  database: demo.db\nother:\n  type: sqlite\n  database: other.db\n')
+    _writeJobs(coverageWorkspace, dependent={'sourceDatabase': 'other'})
+
+    assert main(['coverage', '--quiet']) == EXIT_BAD_CONFIGURATION
+    assert '--database is required: the jobs read from demo, other' in caplog.text
+
+    assert main(['coverage', '--quiet', '--database', 'demo']) == EXIT_JOBS_DID_NOT_SUCCEED
+
+
+def test_coverage_still_reports_a_table_whose_columns_it_cannot_read(coverageWorkspace, monkeypatch, caplog, capsys):
+    def refuse(self, table):
+        raise RuntimeError('permission denied for table {}'.format(table))
+
+    monkeypatch.setattr('bauta.database.Database.getAllColumnNames', refuse)
+
+    assert main(['coverage', '--quiet']) == EXIT_JOBS_DID_NOT_SUCCEED
+    assert 'people: could not read its columns -- ' in caplog.text
+    assert 'NOT COVERED: 2.' in capsys.readouterr().out
 
 
 def test_validate_refuses_an_option_that_duplicates_a_field(workspace):
@@ -902,7 +986,7 @@ def test_a_failed_run_posts_a_notification(workspace, monkeypatch):
 
     try:
         assert main(['run', '--quiet']) == EXIT_SUCCESS
-        (workspace / 'configuration' / 'jobs.yaml').write_text(JOBS_YAML.replace('FROM src', 'FROM missing_table', 1))
+        _writeJobs(workspace, loadRows={'sourceQuery': 'SELECT id, name FROM missing_table'})
         assert main(['run', '--quiet', '--force']) == EXIT_JOBS_DID_NOT_SUCCEED
     finally:
         server.shutdown()
@@ -1117,7 +1201,7 @@ def test_rules_can_be_named_on_the_command_line(schemaWorkspace, capsys):
 
 def test_audit_questions_a_kept_column_by_your_own_rules(maskedWorkspace, capsys):
     (maskedWorkspace / 'configuration' / 'discovery.yaml').write_text("names:\n- words: [name]\n  policy: fakeName\n")
-    (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(MASKED_JOBS_YAML.replace('name: hash', 'name: keep'))
+    _writeJobs(maskedWorkspace, MASKED_JOBS_YAML, maskRows={'masking': {'columns': {'name': 'keep'}}})
 
     main(['audit', '--quiet'])
 

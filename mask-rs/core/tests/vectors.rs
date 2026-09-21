@@ -361,3 +361,77 @@ fn fake_strategies_match_python() {
     // Six strategies, each by default, with maxLength, and in every locale.
     assert!(compared > 2_000, "compared only {compared}");
 }
+
+/// `number`: Python's decimal arithmetic at 60 digits, byte for byte. What
+/// Rust hands back is not compared, since Python masks it, but it must be
+/// only what Rust hands back by design: zeros, non-finite values, values too
+/// long for it, and masks that come out as zero.
+#[test]
+fn number_strategy_matches_python() {
+    use bauta_core::number::Dec;
+    use bauta_core::{MaskError, NumberInput, NumberOutput, NumberStrategy};
+    use num_bigint::BigInt;
+
+    let vectors = vectors();
+    let hash = keyedHash(&vectors);
+    let (mut compared, mut handedBack) = (0, 0);
+
+    // Python's to mask: Rust hands these back on purpose.
+    let pythons = |kind: &str, value: &str, masked: Option<&str>| {
+        let significant = value.trim_start_matches('-').split(['e', 'E']).next().unwrap().replace('.', "").trim_start_matches('0').len();
+        let zero = |text: &str| text.parse::<f64>().is_ok_and(|number| number == 0.0);
+        masked.is_none_or(zero)
+            || zero(value)
+            || value.parse::<f64>().is_ok_and(|number| !number.is_finite())
+            || (kind == "int" && significant > 38)
+            || (kind == "Decimal" && significant > 28)
+    };
+
+    for (name, cases) in vectors["strategies"].as_object().unwrap() {
+        let Some(options) = name.strip_prefix("number ") else { continue };
+        let options: Value = serde_json::from_str(options).unwrap();
+        let text = |option: &str| options.get(option).and_then(Value::as_str);
+        let decimals = options.get("decimals").and_then(Value::as_u64).map(|decimals| decimals as u32);
+        let strategy = NumberStrategy::new(text("min"), text("max"), text("variance"), decimals).unwrap();
+
+        for case in cases.as_array().unwrap() {
+            let (kind, Some(value)) = (case["type"].as_str().unwrap(), case["value"].as_str()) else { continue };
+            let integer;
+            let input = match kind {
+                "int" => {
+                    integer = value.parse::<BigInt>().unwrap();
+                    NumberInput::Int(&integer)
+                }
+                "float" => NumberInput::Float { value: value.parse::<f64>().unwrap(), repr: value },
+                "Decimal" => NumberInput::Decimal(value),
+                _ => continue,
+            };
+            let expected = case["masked"].as_str();
+
+            match strategy.mask(&hash, &input) {
+                Err(MaskError::Unsupported) => {
+                    assert!(pythons(kind, value, expected), "{name}: handed back {kind} {value}, which it should mask");
+                    handedBack += 1;
+                }
+                Err(other) => panic!("{name}: unexpected refusal {other} for {kind} {value}"),
+                Ok(output) => {
+                    let expected = expected.unwrap_or_else(|| panic!("{name}: Python refused {kind} {value}, Rust masked it"));
+                    match output {
+                        NumberOutput::Int(masked) => assert_eq!(masked.to_string(), expected, "{name}: {kind} {value}"),
+                        NumberOutput::Float(masked) => {
+                            assert_eq!(masked.to_bits(), expected.parse::<f64>().unwrap().to_bits(), "{name}: {kind} {value}")
+                        }
+                        NumberOutput::Decimal(masked) => {
+                            assert_eq!(Dec::parse(&masked), Dec::parse(expected), "{name}: {kind} {value} (digits and scale)")
+                        }
+                    }
+                    assert_eq!(case["maskedType"].as_str().unwrap(), kind, "{name}: {kind} {value} changed type");
+                    compared += 1;
+                }
+            }
+        }
+    }
+
+    assert!(compared > 100, "only {compared} number vectors compared");
+    println!("number: {compared} vectors compared, {handedBack} handed back to Python");
+}

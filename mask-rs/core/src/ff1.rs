@@ -86,44 +86,76 @@ impl Ff1 {
     /// The caller has already checked the length; a numeral outside the radix
     /// is a porting mistake rather than anything a value can cause, so it
     /// panics rather than returning an error Python has no counterpart for.
+    ///
+    /// Run in machine integers where each half's modulus fits a u64 and Y a
+    /// u128 -- 19 decimal digits a half, which covers every identifier in
+    /// practice. The rounds were three quarters of an `fpe` mask when each
+    /// built and took apart BigUints; wider values still do.
     pub fn encrypt(&self, numerals: &[u32], tweak: &[u8]) -> Vec<u32> {
         assert!(numerals.len() >= self.minimumLength, "FF1 called below its minimum length");
         assert!(numerals.iter().all(|numeral| *numeral < self.radix), "numeral outside the radix");
 
-        let n = numerals.len();
-        let t = tweak.len();
-        let u = n / 2; // 1
-        let v = n - u;
-        let mut a = numerals[..u].to_vec(); // 2
-        let mut b = numerals[u..].to_vec();
+        let rounds = Rounds::new(self.radix, numerals.len(), tweak);
+        match (u64::try_from(&rounds.radixToU), u64::try_from(&rounds.radixToV)) {
+            (Ok(radixToU), Ok(radixToV)) if rounds.d <= 16 => self.encryptNarrow(&rounds, numerals, tweak, radixToU, radixToV),
+            _ => self.encryptWide(&rounds, numerals, tweak),
+        }
+    }
 
-        let byteCount = ((BigUint::from(self.radix).pow(v as u32) - 1u8).bits() as usize).div_ceil(8); // 3
-        let d = 4 * byteCount.div_ceil(4) + 4; // 4
+    /// Steps 6.i-ix with A, B and Y as machine integers.
+    fn encryptNarrow(&self, rounds: &Rounds, numerals: &[u32], tweak: &[u8], radixToU: u64, radixToV: u64) -> Vec<u32> {
+        let radix = u64::from(self.radix);
+        let number = |numerals: &[u32]| numerals.iter().fold(0u64, |value, numeral| value * radix + u64::from(*numeral));
+        let mut a = numerals[..rounds.u].to_vec(); // 2
+        let mut b = numerals[rounds.u..].to_vec();
 
-        let mut p = Vec::with_capacity(16); // 5
-        p.extend_from_slice(&[1, 2, 1]);
-        p.extend_from_slice(&self.radix.to_be_bytes()[1..]); // three bytes
-        p.extend_from_slice(&[10, (u % 256) as u8]);
-        p.extend_from_slice(&(n as u32).to_be_bytes());
-        p.extend_from_slice(&(t as u32).to_be_bytes());
-
-        let padding = (16 - ((t + byteCount + 1) % 16)) % 16;
-        let radixToU = BigUint::from(self.radix).pow(u as u32);
-        let radixToV = BigUint::from(self.radix).pow(v as u32);
+        // Q is the same every round but for its round byte and NUM(B), so it
+        // is laid out once and those two places rewritten.
+        let mut message = rounds.messagePrefix(tweak);
+        let roundAt = message.len();
+        message.resize(roundAt + 1 + rounds.byteCount, 0);
 
         for i in 0..ROUNDS {
-            let mut message = Vec::with_capacity(p.len() + t + padding + 1 + byteCount); // 6.i
-            message.extend_from_slice(&p);
-            message.extend_from_slice(tweak);
-            message.resize(message.len() + padding, 0);
+            message[roundAt] = i; // 6.i
+            message[roundAt + 1..].copy_from_slice(&number(&b).to_be_bytes()[8 - rounds.byteCount..]);
+
+            let r = self.prf(&message); // 6.ii
+            let mut y = [0u8; 16]; // 6.iii-iv: d is at most 16, so S is R alone
+            y[16 - rounds.d..].copy_from_slice(&r[..rounds.d]);
+            let y = u128::from_be_bytes(y);
+
+            let (m, modulus) = if i % 2 == 0 { (rounds.u, radixToU) } else { (rounds.v, radixToV) }; // 6.v
+            let mut c = ((u128::from(number(&a)) + y) % u128::from(modulus)) as u64; // 6.vi
+
+            std::mem::swap(&mut a, &mut b); // 6.vii-ix
+            b.resize(m, 0);
+            for position in (0..m).rev() {
+                b[position] = (c % radix) as u32;
+                c /= radix;
+            }
+        }
+
+        a.extend_from_slice(&b); // 7
+        a
+    }
+
+    /// Steps 6.i-ix in BigUints, for halves too wide for `encryptNarrow`.
+    fn encryptWide(&self, rounds: &Rounds, numerals: &[u32], tweak: &[u8]) -> Vec<u32> {
+        let mut a = numerals[..rounds.u].to_vec(); // 2
+        let mut b = numerals[rounds.u..].to_vec();
+        let prefix = rounds.messagePrefix(tweak);
+
+        for i in 0..ROUNDS {
+            let mut message = Vec::with_capacity(prefix.len() + 1 + rounds.byteCount); // 6.i
+            message.extend_from_slice(&prefix);
             message.push(i);
-            message.extend_from_slice(&leftPadded(&self.number(&b), byteCount));
+            message.extend_from_slice(&leftPadded(&self.number(&b), rounds.byteCount));
 
             let r = self.prf(&message); // 6.ii
 
             let mut s = r.to_vec(); // 6.iii
             let mut j: u128 = 1;
-            while s.len() < d {
+            while s.len() < rounds.d {
                 let mut block = r;
                 let counter = j.to_be_bytes();
                 for index in 0..16 {
@@ -134,9 +166,9 @@ impl Ff1 {
                 j += 1;
             }
 
-            let y = BigUint::from_bytes_be(&s[..d]); // 6.iv
-            let m = if i % 2 == 0 { u } else { v }; // 6.v
-            let modulus = if i % 2 == 0 { &radixToU } else { &radixToV };
+            let y = BigUint::from_bytes_be(&s[..rounds.d]); // 6.iv
+            let m = if i % 2 == 0 { rounds.u } else { rounds.v }; // 6.v
+            let modulus = if i % 2 == 0 { &rounds.radixToU } else { &rounds.radixToV };
             let c = (self.number(&a) + y) % modulus; // 6.vi
 
             std::mem::swap(&mut a, &mut b); // 6.vii-ix
@@ -145,6 +177,56 @@ impl Ff1 {
 
         a.extend_from_slice(&b); // 7
         a
+    }
+}
+
+/// Steps 1 and 3-5, which depend only on the radix, the length and the tweak.
+struct Rounds {
+    u: usize,
+    v: usize,
+    byteCount: usize,
+    d: usize,
+    p: Vec<u8>,
+    padding: usize,
+    radixToU: BigUint,
+    radixToV: BigUint,
+}
+
+impl Rounds {
+    fn new(radix: u32, n: usize, tweak: &[u8]) -> Self {
+        let t = tweak.len();
+        let u = n / 2; // 1
+        let v = n - u;
+
+        let byteCount = ((BigUint::from(radix).pow(v as u32) - 1u8).bits() as usize).div_ceil(8); // 3
+        let d = 4 * byteCount.div_ceil(4) + 4; // 4
+
+        let mut p = Vec::with_capacity(16); // 5
+        p.extend_from_slice(&[1, 2, 1]);
+        p.extend_from_slice(&radix.to_be_bytes()[1..]); // three bytes
+        p.extend_from_slice(&[10, (u % 256) as u8]);
+        p.extend_from_slice(&(n as u32).to_be_bytes());
+        p.extend_from_slice(&(t as u32).to_be_bytes());
+
+        Rounds {
+            u,
+            v,
+            byteCount,
+            d,
+            p,
+            padding: (16 - ((t + byteCount + 1) % 16)) % 16,
+            radixToU: BigUint::from(radix).pow(u as u32),
+            radixToV: BigUint::from(radix).pow(v as u32),
+        }
+    }
+
+    /// P || T || [0]**padding: every round's message up to its round byte.
+    fn messagePrefix(&self, tweak: &[u8]) -> Vec<u8> {
+        let mut message = Vec::with_capacity(self.p.len() + tweak.len() + self.padding + 1 + self.byteCount);
+        message.extend_from_slice(&self.p);
+        message.extend_from_slice(tweak);
+        message.resize(message.len() + self.padding, 0);
+        message
     }
 }
 
@@ -190,6 +272,28 @@ mod tests {
             let cipher = Ff1::new(&hex_literal(key).try_into().unwrap(), radix);
             let encrypted = cipher.encrypt(&encode(plaintext), &hex_literal(tweak));
             assert_eq!(decode(&encrypted), ciphertext, "NIST sample, radix {radix}");
+        }
+    }
+
+    #[test]
+    fn narrow_and_wide_rounds_agree() {
+        // Every radix a charset uses, at every length the u64 path takes, run
+        // down the BigUint path as well; the NIST samples go through
+        // `encrypt`, and so the narrow path, only.
+        let key = [7u8; 32];
+        for radix in [10u32, 16, 22, 36, 62] {
+            let cipher = Ff1::new(&key, radix);
+            for length in cipher.minimumLength..=40 {
+                let rounds = Rounds::new(radix, length, b"tweak");
+                let (Ok(radixToU), Ok(radixToV)) = (u64::try_from(&rounds.radixToU), u64::try_from(&rounds.radixToV)) else { continue };
+                let numerals: Vec<u32> = (0..length as u32).map(|index| (index * 7 + length as u32) % radix).collect();
+
+                assert_eq!(
+                    cipher.encryptNarrow(&rounds, &numerals, b"tweak", radixToU, radixToV),
+                    cipher.encryptWide(&rounds, &numerals, b"tweak"),
+                    "radix {radix}, length {length}"
+                );
+            }
         }
     }
 

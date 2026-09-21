@@ -5,6 +5,24 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## 0.1.8 — 2026-09-21
+
+The native masker covers `number`, masks `fpe` two and a half times as fast and `key` a quarter faster on a whole job, and scales integer columns across threads as well as text ones. `synthesize` no longer holds every generated key in memory, and the docs' throughput figures come from a benchmark in the repository. No mask changes.
+
+### Changed
+- **The native masker covers `number`**, four to six times as fast on integer, float and `Decimal` columns alike (a 5,000-row chunk of Decimals: 22 ms to 5; of integers, 18 ms to 3), and spread over `maskingThreads` like the other native strategies. The masks are unchanged: Rust repeats Python's decimal arithmetic at 60 digits, recorded vectors pin every result, and a value it would have to guess at -- a mask that comes out as zero, whose sign Python keeps -- is masked by Python instead.
+- **Masked columns are spliced back into rows by rebuilding them from columns** where the table is narrow or a third or more of it is masked, which is faster there; a wide table with a few masked columns keeps the row-by-row splice. Each column is masked as the transpose yields it, which also serves a table masked in every column. About 7% off a typical masked chunk, and 10-28% off splicing a table only partly masked.
+- **The native `fpe` masks a value about four times as fast** (4.7 µs to 1.1 for a ten-digit integer): FF1's rounds run in machine integers wherever each half fits 64 bits -- 19 decimal digits a half, so every identifier in practice -- instead of building and taking apart big integers every round. A million rows with two `fpe` columns among six went from 105,000 rows a second to 254,000 on one thread, which makes `fpe` faster than `key` natively. Longer values take the big-integer path as before.
+- **The native `key` is 20-30% faster** on the same grounds: its Feistel network runs in machine integers for any domain up to 2\*\*128. Five `key` columns and a `hash`, a million rows: 58,000 rows a second to 74,000.
+- **Integers cross into and out of the native masker through the C API** wherever they fit 64 bits. The stable ABI the extension is built against converted every integer by calling `int.to_bytes` and `int.from_bytes`, a Python call per value made while every masking thread waited: an integer `key` column at eight threads ran at half a text column's throughput, and now keeps pace with it.
+- **`synthesize` remembers generated keys only for a table keyed wholly by foreign keys**, the only kind that can repeat one. It held every row's key for the whole run whatever the table: 116 MiB a million rows of a table keyed by one integer.
+- **`benchmarks/masking.py` measures the throughput figures the docs quote**, from a million generated rows copied SQLite to SQLite under each policy and each masker, and fails if any two copies of a policy differ. The figures in the docs are all re-measured with it, on a stated dataset. See [benchmarks](docs/development.md#benchmarks).
+- All the above leave every mask as it was: the machine-integer paths are tested against the big-integer ones on every width they take, and the recorded vectors pass on both sides of each boundary.
+
+### Fixed
+- **A `number` value past its 60 significant digits now fails as a masking error naming its column** -- an integer of more than 60 digits, or a float held to more `decimals` than 60 digits reach at its size. It raised Python's bare `decimal.InvalidOperation`, which said neither which column nor why. No mask changes.
+
+
 ## 0.1.7 — 2026-09-21
 
 A watermark could leak an unmasked value, the package is reorganized into groups a newcomer can find their way around, run-state connections are closed, and loads spend less time in Python. No mask changes.

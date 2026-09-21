@@ -408,9 +408,14 @@ def synthesizeTable(database: Any, table: str, rows: int, seed: int = 0, foreign
     foreign keys, which can't have more distinct rows than its parents allow.
     """
 
-    columns, makeRow, _, available = planTable(database, table, rows, seed=seed, foreignKeys=foreignKeys, nullShare=nullShare, rules=rules)
+    columns, makeRow, plans, available = planTable(database, table, rows, seed=seed, foreignKeys=foreignKeys, nullShare=nullShare, rules=rules)
     keyColumns = {column.upper() for column in database.getPrimaryColumnNames(table)}
     keyIndexes = [index for index, column in enumerate(columns) if column.upper() in keyColumns]
+    # Only a key made wholly of foreign keys can repeat: any other has a part
+    # generated unique. Remembering those keys cost 116 MiB a million rows
+    # of a table keyed by one integer, to find nothing.
+    if not all(plans[index].source == 'foreign key' for index in keyIndexes):
+        keyIndexes = []
     seen: Set[Tuple[Any, ...]] = set()
     inserted = 0
 
@@ -430,7 +435,8 @@ def synthesizeTable(database: Any, table: str, rows: int, seed: int = 0, foreign
 def _chunks(makeRow: Callable[[int], Tuple[Any, ...]], rows: int, available: int, keyIndexes: List[int], seen: Set[Tuple[Any, ...]],
             chunkSize: int) -> Iterator[List[Tuple[Any, ...]]]:
     """Generated rows, a chunk at a time, skipping repeated keys -- which only a
-    key made wholly of foreign keys can produce.
+    key made wholly of foreign keys can produce, so `keyIndexes` is empty for
+    any other and nothing is remembered.
     """
 
     chunk: List[Tuple[Any, ...]] = []
@@ -442,10 +448,11 @@ def _chunks(makeRow: Callable[[int], Tuple[Any, ...]], rows: int, available: int
         values = makeRow(row)
         row += 1
         attempts += 1
-        key = tuple(values[index] for index in keyIndexes)
-        if keyIndexes and key in seen:
-            continue
-        seen.add(key)
+        if keyIndexes:
+            key = tuple(values[index] for index in keyIndexes)
+            if key in seen:
+                continue
+            seen.add(key)
         chunk.append(values)
         produced += 1
         if len(chunk) == chunkSize:

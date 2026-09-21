@@ -12,7 +12,6 @@ reachable, or whose driver isn't installed, is skipped with a reason. Run with
 """
 import datetime
 import decimal
-import importlib
 import uuid
 
 import pytest
@@ -24,7 +23,7 @@ from bauta.generate.discovery import proposeTable
 from bauta.jobs.memory import FileMemory
 from bauta.jobs.runner import runDataJobs
 from bauta.generate.subset import planSubset
-from tests.integration.servers import SERVERS
+from tests.integration.servers import SERVERS, serverSettings
 
 pytestmark = pytest.mark.integration
 
@@ -33,13 +32,8 @@ KEY = 'an-integration-masking-key'
 
 @pytest.fixture(params=sorted(SERVERS))
 def server(request):
-    driver, settings = SERVERS[request.param]
-
-    try:
-        importlib.import_module(driver)
-        database = Database(connectionSettings=settings)
-    except Exception as error:
-        pytest.skip('{} is not available ({})'.format(request.param, error))
+    settings = serverSettings(request.param)
+    database = Database(connectionSettings=settings)
 
     yield settings, database
 

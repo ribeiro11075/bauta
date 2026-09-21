@@ -14,6 +14,7 @@
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, Zero};
 
+use crate::digits::{decimalDigits, pow10};
 use crate::error::{MaskError, Masked, MAXIMUM_KEY_LENGTH};
 use crate::KeyedHash;
 
@@ -77,8 +78,8 @@ impl KeyStrategy {
     /// An integer keeps its sign and digit count.
     pub fn maskInteger(&self, hash: &KeyedHash, value: &BigInt) -> Masked<BigInt> {
         let negative = value.sign() == Sign::Minus;
-        let magnitude = value.magnitude().clone();
-        let digitCount = decimalDigits(&magnitude);
+        let magnitude = value.magnitude();
+        let digitCount = decimalDigits(magnitude);
 
         if digitCount > MAXIMUM_KEY_LENGTH {
             return Err(MaskError::tooLong("key"));
@@ -86,15 +87,11 @@ impl KeyStrategy {
 
         // Zero belongs to the non-negative one-digit range only; letting a
         // negative digit map to it would make -0 collide with 0's own image.
-        let low = if digitCount > 1 || negative {
-            BigUint::from(10u8).pow(digitCount as u32 - 1)
-        } else {
-            BigUint::zero()
-        };
-        let size = BigUint::from(10u8).pow(digitCount as u32) - &low;
+        let low = if digitCount > 1 || negative { pow10(digitCount as u64 - 1).into_owned() } else { BigUint::zero() };
+        let size = pow10(digitCount as u64).as_ref() - &low;
 
         let purpose: &[u8] = if negative { b"negative" } else { b"integer" };
-        let masked = &low + hash.permute(&size, &(&magnitude - &low), purpose);
+        let masked = &low + hash.permute(&size, &(magnitude - &low), purpose);
 
         Ok(BigInt::from_biguint(if negative { Sign::Minus } else { Sign::Plus }, masked))
     }
@@ -158,40 +155,9 @@ impl KeyStrategy {
     }
 }
 
-/// How many decimal digits a magnitude has. `builtinMasking._digitCount`, which stops
-/// short of writing out anything past MAXIMUM_KEY_LENGTH digits.
-pub fn decimalDigits(magnitude: &BigUint) -> usize {
-    if magnitude.is_zero() {
-        return 1;
-    }
-
-    // log2(10) ~ 3.3219; the estimate is within one and the correction is exact.
-    let estimate = ((magnitude.bits() as f64) / 3.321_928_094_887_362_f64).floor() as usize;
-    let mut digits = estimate.max(1);
-
-    while &BigUint::from(10u8).pow(digits as u32) <= magnitude {
-        digits += 1;
-    }
-    while digits > 1 && &BigUint::from(10u8).pow(digits as u32 - 1) > magnitude {
-        digits -= 1;
-    }
-
-    digits
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn decimal_digits_counts_what_python_counts() {
-        for (value, expected) in [(0u64, 1), (1, 1), (9, 1), (10, 2), (99, 2), (100, 3), (12345, 5), (u64::MAX, 20)] {
-            assert_eq!(decimalDigits(&BigUint::from(value)), expected, "digits of {value}");
-        }
-        assert_eq!(decimalDigits(&BigUint::from(10u8).pow(255)), 256);
-        assert_eq!(decimalDigits(&(BigUint::from(10u8).pow(256) - 1u8)), 256);
-        assert_eq!(decimalDigits(&BigUint::from(10u8).pow(256)), 257);
-    }
 
     #[test]
     fn non_ascii_is_handed_back_rather_than_refused() {

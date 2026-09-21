@@ -1,3 +1,5 @@
+import functools
+
 import pytest
 from pydantic import ValidationError
 
@@ -8,6 +10,7 @@ from bauta.configuration import (
     DataJobsFile,
     findCycle,
     )
+from tests.jobConfigs import dataJobFields
 
 
 def test_database_configuration_round_trips():
@@ -100,14 +103,18 @@ def test_validate_job_graph_catches_unknown_predecessor():
         Configuration.validateJobGraph(jobsFile.jobs)
 
 
-def test_validate_job_graph_catches_unknown_database_alias():
-    raw = {'workers': 1, 'jobs': {'job1': {'active': True, 'sourceDatabase': 'ghost', 'targetDatabase': 'b',
-                                            'insertStrategy': 'upsert', 'chunkSize': 1, 'targetTableFinal': 't',
-                                            'sourceQuery': 'select 1'}}}
-    jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
+@pytest.mark.parametrize('setting', ['sourceDatabase', 'targetDatabase'])
+def test_validate_job_graph_catches_unknown_database_alias(setting):
+    jobsFile = Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'job1': _job(**{setting: 'ghost'})}}, DataJobsFile)
 
-    with pytest.raises(ConfigurationError, match='ghost'):
-        Configuration.validateJobGraph(jobsFile.jobs, databaseAliases={'b'})
+    with pytest.raises(ConfigurationError, match='job1: {} "ghost" is not a known database alias'.format(setting)):
+        Configuration.validateJobGraph(jobsFile.jobs, databaseAliases={'a'})
+
+
+@pytest.mark.parametrize('setting', ['retries', 'retryDelaySeconds'])
+def test_retries_cannot_be_negative(setting):
+    with pytest.raises(ConfigurationError, match='{} cannot be negative'.format(setting)):
+        Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'job1': _job(**{setting: -1})}}, DataJobsFile)
 
 
 def test_validate_job_graph_passes_for_valid_config():
@@ -147,11 +154,7 @@ def test_cycle_sleep_seconds_defaults_and_is_configurable():
     assert jobsFile.cycleSleepSeconds == 5
 
 
-def _job(**overrides):
-    fields = dict(active=True, sourceDatabase='a', sourceQuery='select 1', targetDatabase='a', targetTableFinal='t',
-                  insertStrategy='upsert', chunkSize=10)
-    fields.update(overrides)
-    return fields
+_job = functools.partial(dataJobFields, sourceDatabase='a', sourceQuery='select 1', targetDatabase='a', targetTableFinal='t', chunkSize=10)
 
 
 def test_a_predecessor_cycle_is_rejected_rather_than_run_forever():

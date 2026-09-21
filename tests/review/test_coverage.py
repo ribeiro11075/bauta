@@ -2,19 +2,15 @@
 
 The question audit cannot answer: a table with no job has nothing to audit.
 """
-from typing import Any
+import functools
 
-from bauta.configuration import DataJobConfig
 from bauta.review.coverage import ACKNOWLEDGED, COPIED, MASKED, UNCOVERED, coverageReport, renderCoverage
+from tests.jobConfigs import dataJob
 
 KEY = 'a-coverage-test-masking-key'
 
 
-def _job(**overrides: Any) -> DataJobConfig:
-    fields = dict(active=True, sourceDatabase='prod', sourceQuery='select id from customers', targetDatabase='staging',
-                  targetTableFinal='customers', insertStrategy='upsert', chunkSize=100)
-    fields.update(overrides)
-    return DataJobConfig(**fields)
+_job = functools.partial(dataJob, sourceDatabase='prod', sourceQuery='select id from customers', targetDatabase='staging')
 
 
 def _states(report):

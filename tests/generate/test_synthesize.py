@@ -10,6 +10,7 @@ import pytest
 
 from bauta.configuration import DatabaseConnectionConfig
 from bauta.database import Database
+from bauta.generate import synthesize
 from bauta.generate.synthesize import SynthesisError, planTable, synthesizeTable
 
 SCHEMA = '''
@@ -24,6 +25,8 @@ CREATE TABLE tags (order_id INT REFERENCES orders(id), sku VARCHAR(10) REFERENCE
 CREATE TABLE employees (id INTEGER PRIMARY KEY, manager_id INT REFERENCES employees(id), full_name VARCHAR(40));
 CREATE TABLE bosses (id INTEGER PRIMARY KEY, boss_id INT NOT NULL REFERENCES bosses(id));
 CREATE TABLE labels (id INTEGER PRIMARY KEY, code VARCHAR(20) NOT NULL UNIQUE, label VARCHAR(40));
+CREATE TABLE initials (code VARCHAR(1) PRIMARY KEY);
+CREATE TABLE days (day DATE PRIMARY KEY, note TEXT);
 '''
 
 
@@ -130,6 +133,43 @@ def test_a_table_keyed_only_by_foreign_keys_gets_no_more_rows_than_its_parents_a
     assert database.query('SELECT count(DISTINCT order_id || sku) FROM tags') == [(6,)]
 
 
+def test_rows_are_inserted_a_chunk_at_a_time_with_the_last_chunk_partial(database, monkeypatch):
+    inserts = []
+    insert = database.insert
+    monkeypatch.setattr(database, 'insert', lambda **arguments: inserts.append(len(arguments['data'])) or insert(**arguments))
+
+    assert synthesizeTable(database, 'customers', 25, chunkSize=10) == 25
+    assert inserts == [10, 10, 5]
+    assert [row[0] for row in database.query('SELECT id FROM customers ORDER BY id')] == list(range(1, 26))
+
+
+def test_a_key_made_of_foreign_keys_never_repeats_across_chunks(database):
+    """Repeated combinations are skipped against every chunk so far, not only
+    the one being built: a repeat in a later chunk would break the key."""
+    _fill(database, ('customers', 3), ('products', 5), ('orders', 8))
+
+    assert synthesizeTable(database, 'tags', 40, chunkSize=3) == 40
+    assert database.query('SELECT count(DISTINCT order_id || sku) FROM tags') == [(40,)]
+
+
+def test_only_a_key_made_of_foreign_keys_is_remembered(database, monkeypatch):
+    """Any other key has a part generated unique, so remembering every one
+    only held a key per row in memory -- 116 MiB a million rows -- to find
+    no repeat. A key mixing a foreign key and a generated part stays unique."""
+    remembered = {}
+    chunks = synthesize._chunks
+
+    def watched(makeRow, rows, available, keyIndexes, seen, chunkSize):
+        yield from chunks(makeRow, rows, available, keyIndexes, seen, chunkSize)
+        remembered[len(remembered)] = len(seen)
+
+    monkeypatch.setattr(synthesize, '_chunks', watched)
+    _fill(database, ('customers', 3), ('products', 5), ('orders', 8), ('order_items', 30), ('tags', 10))
+
+    assert list(remembered.values()) == [0, 0, 0, 0, 10]
+    assert database.query('SELECT count(DISTINCT order_id || \'-\' || line) FROM order_items') == [(30,)]
+
+
 def test_a_nullable_self_reference_is_left_null(database):
     _fill(database, ('employees', 5))
 
@@ -140,6 +180,8 @@ def test_a_nullable_self_reference_is_left_null(database):
     ('orders', 'references customers, which has no rows; fill customers first'),
     ('bosses', 'references itself through NOT NULL'),
     ('nowhere', 'table nowhere was not found'),
+    ('initials', 'initials.code holds only 1 characters, too few for 5 unique keys'),
+    ('days', 'days.day is a date primary key, which synthesize can.t make unique'),
     ])
 def test_what_cannot_be_filled_is_refused(database, table, message):
     with pytest.raises(SynthesisError, match=message):

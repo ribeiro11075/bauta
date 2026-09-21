@@ -13,6 +13,7 @@ import datetime
 import decimal
 import importlib.metadata
 import logging
+import math
 import random
 import sys
 import types
@@ -47,12 +48,19 @@ def corpus():
         values.append(10 ** power - 1)
         values.append(-(10 ** power))
 
+    # Either side of where an integer stops crossing into the extension as an
+    # i64 and crosses as a BigInt instead, both ways.
+    values += [2 ** 63 - 1, 2 ** 63, -(2 ** 63), -(2 ** 63) - 1]
+
     values += [
         uuid.uuid4(), uuid.UUID(int=0), uuid.UUID(int=(1 << 128) - 1),
         decimal.Decimal('42'), decimal.Decimal('-42'), decimal.Decimal('42.5'), decimal.Decimal('4.2E+3'),
         42.0, 42.5, datetime.date(2020, 2, 29), datetime.datetime(2020, 1, 1, 12, 30),
         'héllo', 'Ωmega', '٣٤٥', 'user@example.com', 'Alice.Smith@Corp.COM ', '  spaced  ',
         'alice@corp.com\x1c', '+1 (555) 010-9999', '', ' ', 'x', b'bytes',
+        # What `number` treats specially: signed zeros, and scales a Decimal
+        # compares equal across but keeps.
+        0.0, -0.0, 1e22, decimal.Decimal('12.30'), decimal.Decimal('-0.00'), decimal.Decimal('1.005'),
         ]
 
     return values
@@ -68,17 +76,25 @@ COMBINATIONS = [
     ('email', {'mailDomain': 'masked.invalid'}),
     ('digits', {}), ('digits', {'keepLeading': 2}), ('digits', {'keepTrailing': 4}),
     ('digits', {'keepLeading': 1, 'keepTrailing': 1}),
+    ('number', {}), ('number', {'decimals': 2}), ('number', {'min': '-5.5', 'max': '1E+3'}),
     ] + [(name, options) for name in ('fakeFirstName', 'fakeLastName', 'fakeName', 'fakeCity', 'fakeCompany', 'fakeStreetAddress')
          for options in ({}, {'maxLength': 3}, {'locale': 'de_DE'}, {'locale': 'pt_BR'})]
 
 
+def exactly(masked):
+    """A mask as Python writes it: type and repr, so that Decimal('12.30') is
+    not Decimal('12.3') and -0.0 is not 0.0, though each pair compares equal."""
+
+    return [(type(value).__name__, repr(value)) for value in masked]
+
+
 def outcome(built, values):
-    """Each value's mask, or the error it raised -- both have to agree."""
+    """Each value's mask, exactly, or the error it raised -- both have to agree."""
 
     results = []
     for value in values:
         try:
-            results.append(('ok', built.maskColumn([value], 0)[0]))
+            results.append(('ok',) + exactly(built.maskColumn([value], 0))[0])
         except MaskingError as error:
             results.append(('error', str(error)))
 
@@ -101,8 +117,6 @@ def test_native_and_python_agree(name, options):
 
     for value, left, right in zip(VALUES, fromNative, fromPython):
         assert left == right, 'native and python disagree on {!r}: {!r} vs {!r}'.format(value, left, right)
-        if left[0] == 'ok' and left[1] is not None:
-            assert type(left[1]) is type(right[1]), 'type differs for {!r}'.format(value)
 
 
 @native
@@ -118,7 +132,7 @@ def test_a_whole_column_agrees_with_one_value_at_a_time(name, options):
     maskable = [value for value in VALUES if outcome(built, [value])[0][0] == 'ok']
     repeated = maskable + maskable
 
-    assert built.maskColumn(repeated, 0) == [built.maskColumn([value], 0)[0] for value in repeated]
+    assert exactly(built.maskColumn(repeated, 0)) == exactly([built.maskColumn([value], 0)[0] for value in repeated])
 
 
 @native
@@ -211,11 +225,19 @@ def _wideColumn(built):
     """
     random.seed(20260918)
     distinct = ['C{:07d}'.format(number) for number in range(3000)] + list(range(10 ** 9, 10 ** 9 + 1500))
-    maskable = [value for value in VALUES if outcome(built, [value])[0][0] == 'ok']
-    column = [random.choice(distinct) for _ in range(6000)] + maskable * 3
+    # For number, which takes these and refuses the text.
+    distinct += [number / 8 for number in range(1, 1500)] + [decimal.Decimal(number).scaleb(-2) for number in range(1, 1500)]
+
+    def masks(value):
+        return outcome(built, [value])[0][0] == 'ok'
+
+    distinct = [value for value in distinct if masks(value)]
+    repeated = [value for value in VALUES if masks(value)] * 3
+    # Four whole chunks of 2,000, so no chunk is too small to be split.
+    column = [random.choice(distinct) for _ in range(8000 - len(repeated))] + repeated
     random.shuffle(column)
 
-    return [value for value in column if outcome(built, [value])[0][0] == 'ok']
+    return column
 
 
 @pytest.fixture
@@ -229,7 +251,7 @@ def maskingThreads():
 
 @native
 @pytest.mark.parametrize('name,options', [('key', {}), ('fpe', {}), ('hash', {}), ('digits', {'keepTrailing': 2}), ('email', {}),
-                                          ('fakeName', {'locale': 'es_ES'}), ('fakeStreetAddress', {})],
+                                          ('fakeName', {'locale': 'es_ES'}), ('fakeStreetAddress', {}), ('number', {'decimals': 2})],
                          ids=lambda item: str(item))
 def test_threads_and_the_cache_change_no_answer(name, options, maskingThreads):
     """Every mask depends on its value alone, so masking a column on eight
@@ -259,7 +281,7 @@ def test_threads_and_the_cache_change_no_answer(name, options, maskingThreads):
 def _chunkOutcome(built, chunk, index):
     """A chunk's masks, or the first error it raised."""
     try:
-        return ('ok', built.maskColumn(chunk, index))
+        return ('ok', exactly(built.maskColumn(chunk, index)))
     except MaskingError as error:
         return ('error', str(error))
 
@@ -316,3 +338,71 @@ def test_masking_threads_is_auto_or_at_least_one(setting, valid):
     else:
         with pytest.raises(ConfigurationError, match='maskingThreads'):
             Configuration.validateJobConfiguration(raw, DataJobsFile)
+
+
+# number: Python's decimal arithmetic reproduced in Rust ----------------------
+
+def _numbers():
+    """Integers, floats and Decimals shaped to reach what decimal arithmetic
+    gets wrong: precision edges, exponent spellings, signed zeros, ties."""
+    random.seed(20260921)
+    numbers = [0, 1, -1, 7, 10 ** 17, -(10 ** 17), 10 ** 37, 10 ** 38, 10 ** 45, 2 ** 64, -(2 ** 70)]
+    numbers += [random.randint(-10 ** digits, 10 ** digits) for digits in (1, 2, 4, 6, 9, 12, 15, 18, 25, 30, 38) for _ in range(40)]
+
+    numbers += [0.0, -0.0, float('inf'), float('-inf'), float('nan'), 1e22, -1e22, 1e-7, 1.5e+16, 5e-324, 1.7976931348623157e308,
+                0.1, 0.5, 2.5, 100.0, 123456.789, -0.001]
+    numbers += [random.uniform(-1e6, 1e6) for _ in range(300)] + [random.random() * 10 ** random.randint(-20, 20) for _ in range(300)]
+
+    numbers += [decimal.Decimal(text) for text in (
+        '0', '0.00', '-0.00', '0E-7', 'NaN', 'Infinity', '-Infinity', '12.30', '-12.3400', '1.2E+5', '1E+30', '4.2E+3',
+        '0.0000123', '1.2345678901234567890123456789', '9' * 38, '9' * 39, '0.5', '2.5', '-2.5', '1.005', '0.125')]
+    for _ in range(600):
+        digits = ''.join(random.choice('0123456789') for _ in range(random.randint(1, 40)))
+        exponent = random.randint(-30, 10)
+        numbers.append(decimal.Decimal('{}{}E{}'.format(random.choice(['', '-']), digits, exponent)))
+
+    return numbers
+
+
+NUMBERS = _numbers()
+
+NUMBER_OPTIONS = [
+    {}, {'variance': 0.5}, {'variance': 1}, {'variance': '0.001'}, {'min': 0, 'max': 100}, {'min': '-5.5', 'max': '1E+3'},
+    {'decimals': 2}, {'decimals': 0}, {'min': 1, 'max': 2, 'decimals': 3}, {'variance': 0.05, 'decimals': 4},
+    ]
+
+
+@native
+@pytest.mark.parametrize('options', NUMBER_OPTIONS, ids=str)
+def test_number_masks_the_same_digits_natively(options):
+    """Every value, byte for byte: a masked amount must join with the same
+    amount masked by the other implementation, and keep the scale it had."""
+    validated = STRATEGIES['number'].validateOptions(options)
+
+    asNative = STRATEGIES['number'](KeyedHash(KEY, 'number'), validated)
+    assert asNative._native is not None
+    asPython = STRATEGIES['number'](KeyedHash(KEY, 'number'), validated)
+    asPython._native = None
+
+    fromPython = outcome(asPython, NUMBERS)
+    for value, left, right in zip(NUMBERS, outcome(asNative, NUMBERS), fromPython):
+        assert left == right, 'number {} disagrees on {!r}: {!r} vs {!r}'.format(options, value, left, right)
+
+    # The fast path is the point: a finite, non-zero value of ordinary size
+    # that Python masks to a non-zero number must be answered natively. Zeros,
+    # whose sign Python tracks, and refusals are handed back by design.
+    def ordinary(value, result):
+        if result[0] != 'ok' or not value or not math.isfinite(value):
+            return False
+        if isinstance(value, int):
+            fits = abs(value) < 10 ** 38
+        elif isinstance(value, float):
+            fits = 1e-300 < abs(value) < 1e300
+        else:
+            fits = len(value.as_tuple().digits) <= 28
+        return fits and asPython.maskColumn([value], 0)[0] != 0
+
+    values = [value for value, result in zip(NUMBERS, fromPython) if ordinary(value, result)]
+    _, problems = asNative._native.maskColumn(values)
+    assert len(values) > 500 and len(problems) <= len(values) // 33, 'number {}: {} of {} ordinary values went back to Python'.format(
+        options, len(problems), len(values))

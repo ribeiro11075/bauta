@@ -22,11 +22,11 @@ mypy                                         # targets Python 3.10, the oldest s
 
 A connection or file left open, by the package or by a test, fails the run: `ResourceWarning` is an error. The garbage collector finds a leak later than it happened, so the failure is charged to whichever test is running then; `PYTHONTRACEMALLOC=20 pytest` shows where the object was opened.
 
-`tests/conftest.py` stubs `oracledb` and `psycopg` only when they aren't installed, so the default run needs no native client libraries.
+`tests/conftest.py` stubs `oracledb` and `psycopg` only when they aren't installed, so the default run needs no native client libraries. It also creates the package's logger before any test runs, and detaches the handlers each test's run added to it. The logger doesn't propagate, and pytest's `caplog` reaches such a logger only if it exists when a test starts, so without this a test asserting on `caplog.text` passed after another test had run a command and failed on its own. A test reads the package's log records with `caplog` like any other.
 
 ### Where the tests are
 
-`tests/` mirrors the package: the tests for `bauta/jobs/` are in `tests/jobs/`, and so on for `cli`, `configuration`, `database`, `generate`, `log`, `masking`, `review` and `transform`. Three folders don't follow a package. `tests/integration/` runs against real databases (all but the SQLite file are marked `integration`). `tests/examples/` runs every demo and validates every shipped configuration. `tests/repository/` checks the docs' links and the packaging. Helpers sit beside the tests they serve: `masking/customStrategies.py` is a strategy defined outside the package, as a policy can name one; `jobs/crashingTransforms.py` holds transforms that make a job's process exit or hang, for the runner's tests; `integration/servers.py` has the Docker databases' connection settings, and `integration/conftest.py` the fixtures built on them. Only `conftest.py` stays at the top, since every folder needs what it does: the repository on the import path, and stand-ins for drivers that aren't installed.
+`tests/` mirrors the package: the tests for `bauta/jobs/` are in `tests/jobs/`, and so on for `cli`, `configuration`, `database`, `generate`, `log`, `masking`, `review` and `transform`. Three folders don't follow a package. `tests/integration/` runs against real databases (all but the SQLite file are marked `integration`). `tests/examples/` runs every demo and the masking benchmark, and validates every shipped configuration. `tests/repository/` checks the docs' links and the packaging. Helpers sit beside the tests they serve: `masking/customStrategies.py` is a strategy defined outside the package, as a policy can name one; `jobs/crashingTransforms.py` holds transforms that make a job's process exit, hang or linger, for the runner's tests; `examples/demos.py` loads a demo by path and puts back the variables it sets; `integration/servers.py` has the Docker databases' connection settings and `serverSettings()`, which returns them or skips with the reason a server can't be reached, and `integration/conftest.py` the fixtures built on them. At the top, `conftest.py` does what every folder needs -- the repository on the import path, stand-ins for drivers that aren't installed, the logger above -- and `jobConfigs.py` builds a data job with every required setting filled in, which each suite narrows to its own defaults with `functools.partial`.
 
 
 ## The native masker
@@ -35,7 +35,7 @@ A connection or file left open, by the package or by a test, fails the run: `Res
 
 ```
 cd mask-rs
-cargo test --release              # bauta-core: 3,426 recorded vectors, NIST FF1, RFC 4231
+cargo test --release              # bauta-core: 3,626 recorded vectors, NIST FF1, RFC 4231
 cd py && maturin build --release
 pip install ../target/wheels/bauta_rs-*.whl
 ```
@@ -50,12 +50,25 @@ Releases build every wheel from source on CI, so this is a local trap only. The 
 
 `--release` matters: two tests measure SHA-256 and AES throughput to catch a backend that fell back to software, which a debug build is indistinguishable from. `cargo test` covers `bauta-core`; the extension crate needs a Python interpreter to link, so it's tested from Python, by `tests/masking/test_nativeMasking.py`.
 
-**Python is the reference.** Change masking in Python first, port it, then regenerate the vectors with `python3 mask-rs/generate_vectors.py`. `tests/masking/test_maskVectors.py` fails if Python drifts from the recorded file, so regenerating it is deliberate: it means every masked value has changed. Run the suite both ways, as CI does:
+**Python is the reference.** Change masking in Python first, port it, then regenerate the vectors with `python3 mask-rs/generate_vectors.py`. `tests/masking/test_maskVectors.py` fails if Python drifts from the recorded file, so regenerating it is deliberate: it means every masked value has changed. The file records the strategies only Python implements too -- `dateShift`, `shuffle` and `redact`, under `pythonOnly` -- which no port reads: they are there so that changing one of those masks fails the same test. Run the suite both ways, as CI does:
 
 ```
 pytest                              # with the extension, if installed
 BAUTA_NATIVE=0 pytest               # without
 ```
+
+
+## Benchmarks
+
+Every throughput figure in [masking.md](masking.md#speed) and [operations.md](operations.md#throughput) comes from one script, so they can be measured again rather than trusted:
+
+```
+python benchmarks/masking.py                  # a million rows: about four minutes, one of them the pure-Python run
+python benchmarks/masking.py --no-python      # without it
+python benchmarks/masking.py --rows 100000    # quicker, for a before-and-after on a change
+```
+
+It needs no server: it builds a SQLite table and copies it, masked, once per policy and once per masker, each run in a process of its own. It fails if any copy of the same policy differs between maskers or thread counts. Measure on an idle machine, and before and after a change on the same one; the figures in the docs are from an M1 Pro with ten cores. `tests/examples/test_masking_benchmark.py` runs it on 300 rows, so it keeps working. For one construction in isolation, `mask-rs/core/benches/` has Rust benchmarks: `cargo bench --bench speed` times one HMAC and one `key` permutation.
 
 
 ## Integration tests

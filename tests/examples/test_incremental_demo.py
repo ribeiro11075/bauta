@@ -4,53 +4,28 @@ The sample YAML config is validated by test_shipped_example_configuration.py;
 this applies the same standard to the other half of example/. A showcase script
 that silently breaks on a refactor is worse than no showcase -- you find out
 when you run it in front of someone.
-
-It's loaded by file path rather than imported, because example/ is deliberately
-not a package: nothing in the library imports from it, so it carries no
-__init__.py.
 """
-import importlib.util
-import os
 import sqlite3
-import sys
-from pathlib import Path
 
 import pytest
 
-DEMO_PATH = Path(__file__).resolve().parents[2] / 'example' / 'incremental' / 'demo.py'
+from tests.examples.demos import loadedDemo
 
 
 @pytest.fixture(scope='module')
 def demo():
-    specification = importlib.util.spec_from_file_location('incremental_demo', DEMO_PATH)
-    assert specification is not None and specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
-    sys.modules['incremental_demo'] = module
-    specification.loader.exec_module(module)
-
-    yield module
-
-    del sys.modules['incremental_demo']
+    """The demo sets DEMO_DB_PATH itself -- it's how its database.yaml finds
+    the file -- so it is put back afterwards."""
+    with loadedDemo('incremental', 'incremental_demo', ['DEMO_DB_PATH']) as module:
+        yield module
 
 
 @pytest.fixture(scope='module')
 def demoRun(demo, tmp_path_factory):
-    """Runs the demo once into a temporary directory, not the source tree.
-
-    The demo sets DEMO_DB_PATH itself -- it's how its database.yaml finds the
-    file -- so the previous value is restored afterwards rather than leaking a
-    temporary path into every test that runs later.
-    """
+    """Runs the demo once into a temporary directory, not the source tree."""
     workingDirectory = tmp_path_factory.mktemp('incremental_demo')
-    previous = os.environ.get('DEMO_DB_PATH')
 
-    try:
-        yield demo.main(workingDirectory=workingDirectory), workingDirectory
-    finally:
-        if previous is None:
-            os.environ.pop('DEMO_DB_PATH', None)
-        else:
-            os.environ['DEMO_DB_PATH'] = previous
+    return demo.main(workingDirectory=workingDirectory), workingDirectory
 
 
 def test_the_demo_runs_end_to_end(demoRun):

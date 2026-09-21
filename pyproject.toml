@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bauta"
-version = "0.1.7"
+version = "0.1.8"
 description = "Safe, realistic copies of production across databases: masking, subsets, synthetic data, and the ETL to move them"
 readme = "README.md"
 license = "MIT"
@@ -67,7 +67,7 @@ all = ["bauta[mysql,postgresql,oracle,mssql,mariadb,sqlite,fpe]"]
 # The native masker, pinned to this exact version rather than a range: the two
 # must compute identical masks, and masking.py ignores any other version. Left
 # out of `all`, which would otherwise need Rust wherever no wheel is published.
-native = ["bauta-rs==0.1.7"]
+native = ["bauta-rs==0.1.8"]
 dev = ["pytest==9.1.1", "mypy==2.3.1", "ruff==0.16.8", "pytest-cov==7.1.0", "types-PyYAML==6.0.12.20260815", "build==1.6.1", "twine==7.0.0"]
 
 [tool.setuptools.packages.find]
@@ -103,9 +103,10 @@ exclude = ["mask-rs/target"]
 select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff.lint.per-file-ignores]
-# The demos put the repository on sys.path before importing bauta, so they run
-# from a clone without an install.
+# The demos and the benchmark put the repository on sys.path before importing
+# bauta, so they run from a clone without an install.
 "example/**/demo.py" = ["E402"]
+"benchmarks/*.py" = ["E402"]
 
 [tool.coverage.run]
 source = ["bauta"]

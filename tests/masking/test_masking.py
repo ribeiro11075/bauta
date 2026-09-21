@@ -17,6 +17,7 @@ from bauta.configuration import Configuration, ConfigurationError, DataJobsFile
 from bauta.jobs.dependencyGraph import JobOutcome, JobStatus
 from bauta.masking import (FIRST_NAMES, LAST_NAMES, STRATEGIES, KeyedHash, MaskingError, MaskingPlan, buildMaskingManifest,
                                      keyFingerprint, validateColumnPolicy)
+from tests.jobConfigs import dataJobFields
 
 KEY = 'a-test-key-that-is-long-enough'
 OTHER_KEY = 'a-different-key-also-long-enough'
@@ -294,6 +295,18 @@ def test_number_rejects_what_is_not_a_number(value):
         maskOne('number', value)
 
 
+@pytest.mark.parametrize('value,options', [(10 ** 61, {}), (-(10 ** 70), {'variance': 0.5}), (1.7976931348623157e308, {'decimals': 2})])
+def test_number_refuses_a_value_past_its_precision_as_a_masking_error(value, options):
+    """decimal raised InvalidOperation, which a plan passed on without the
+    column's name, and printed nothing a person could act on."""
+    bound = MaskingPlan(KEY, {'amount': dict(options, strategy='number')}).bind(['amount'])
+
+    with pytest.raises(MaskingError, match=r'column "amount": the number strategy works to 60 significant digits') as excinfo:
+        bound.apply([(value,)])
+
+    assert str(value)[:12] not in str(excinfo.value)
+
+
 @pytest.mark.parametrize('options,message', [
     ({'min': 1}, 'both min and max'),
     ({'min': 5, 'max': 5}, 'min below max'),
@@ -359,6 +372,12 @@ def test_date_shift_rejects_text_that_is_not_a_date_without_echoing_it():
         maskOne('dateShift', 'Springfield')
 
     assert 'Springfield' not in str(error.value)
+
+
+@pytest.mark.parametrize('value', [20260101, 1.5, True, b'2026-01-01'])
+def test_date_shift_rejects_what_is_not_a_date_or_text(value):
+    with pytest.raises(MaskingError, match='needs a date, a timestamp or ISO 8601 text, got {}'.format(type(value).__name__)):
+        maskOne('dateShift', value)
 
 
 # --- fake --------------------------------------------------------------------
@@ -561,10 +580,7 @@ def test_an_all_keep_policy_returns_rows_unchanged():
 # --- configuration -----------------------------------------------------------
 
 def _jobsFile(masking):
-    return {'workers': 1, 'jobs': {'job': {
-        'active': True, 'sourceDatabase': 's', 'sourceQuery': 'select * from t', 'targetDatabase': 't',
-        'targetTableFinal': 't', 'insertStrategy': 'upsert', 'chunkSize': 10, 'masking': masking,
-        }}}
+    return {'workers': 1, 'jobs': {'job': dataJobFields(masking=masking)}}
 
 
 def test_a_masked_job_validates_and_normalizes_its_policy():
@@ -1241,3 +1257,31 @@ def test_the_luhn_check_digit_decides_what_is_a_card(digits, valid):
     assert luhnValid(digits) is valid
     if len(digits) >= 13:
         assert isCard(digits) is valid
+
+
+def test_both_ways_of_splicing_masked_columns_give_the_same_rows():
+    """Rows are rebuilt from columns for a narrow table or one mostly masked,
+    and spliced row by row otherwise, whichever is faster; never differently.
+    """
+    columns = ['c{}'.format(index) for index in range(30)]
+    policy = {name: 'keep' for name in columns}
+    policy.update(c1='hash', c7='email', c29='hash')
+    rows = [tuple(None if (row + column) % 11 == 0 else 'v{}-{}@corp.com'.format(row, column) for column in range(30)) for row in range(50)]
+    bound = MaskingPlan(GOLDEN_KEY, policy).bind(columns)
+
+    bound._transposeToSplice = True
+    transposed = bound.apply(rows, 0)
+    bound._transposeToSplice = False
+    spliced = bound.apply(rows, 0)
+
+    assert transposed == spliced
+    assert all(type(row) is tuple for row in transposed + spliced)
+    assert [row[0] for row in transposed] == [row[0] for row in rows]
+
+
+@pytest.mark.parametrize('width,masked,transposes', [(20, 1, True), (21, 7, True), (21, 6, False), (60, 20, True), (60, 19, False)])
+def test_rows_are_rebuilt_from_columns_where_that_was_measured_faster(width, masked, transposes):
+    columns = ['c{}'.format(index) for index in range(width)]
+    policy = {name: ('hash' if index < masked else 'keep') for index, name in enumerate(columns)}
+
+    assert MaskingPlan(GOLDEN_KEY, policy).bind(columns)._transposeToSplice is transposes

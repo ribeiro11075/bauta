@@ -34,3 +34,14 @@ def logWithoutPause(value):
     log = logging.getLogger('bauta')
     while True:
         log.warning('%s', 'x' * 2000)
+
+
+def lingerAfterwards(value):
+    """Leaves a thread that never ends, which the interpreter waits for at
+    exit: the job finishes and reports, and its process stays.
+    """
+    import threading
+    import time
+    if not any(thread.name == 'lingering' for thread in threading.enumerate()):
+        threading.Thread(target=time.sleep, args=(3600,), name='lingering').start()
+    return value

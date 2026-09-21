@@ -2,42 +2,24 @@
 for the other demo: it runs the script into a temporary directory and checks
 that each thing it claims to show actually happened.
 """
-import importlib.util
 import os
-import sys
-from pathlib import Path
 
 import pytest
 
 from bauta.jobs.dependencyGraph import JobStatus
+from tests.examples.demos import loadedDemo
 
-DEMO_PATH = Path(__file__).resolve().parents[2] / 'example' / 'masking' / 'demo.py'
 ENVIRONMENT = ('MASKING_DEMO_PROD_PATH', 'MASKING_DEMO_STAGING_PATH', 'MASKING_KEY')
 
 
 @pytest.fixture(scope='module')
 def demoRun(tmp_path_factory):
-    """Runs the demo once. The variables it sets are restored afterwards, so a
-    temporary path or the demo key never leaks into a later test.
-    """
-    specification = importlib.util.spec_from_file_location('masking_demo', DEMO_PATH)
-    assert specification is not None and specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
-    sys.modules['masking_demo'] = module
-    previous = {name: os.environ.get(name) for name in ENVIRONMENT}
+    """Runs the demo once, with the key it makes up rather than one in the environment."""
     workingDirectory = tmp_path_factory.mktemp('masking_demo')
 
-    try:
-        specification.loader.exec_module(module)
+    with loadedDemo('masking', 'masking_demo', ENVIRONMENT) as module:
         os.environ.pop('MASKING_KEY', None)
         yield module.main(workingDirectory=workingDirectory), workingDirectory
-    finally:
-        del sys.modules['masking_demo']
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
 
 
 def test_the_first_run_masks_and_keeps_joins(demoRun):

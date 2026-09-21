@@ -199,9 +199,9 @@ A manifest is stored in pieces of `content`, in `part` order, because its JSON c
 
 Three things decide how fast a job moves rows, in this order.
 
-**The masking policy**, by about sixfold. `key` is expensive because it must be a permutation; `hash` hides as much for a thirtieth of the work wherever a column needn't stay one-to-one. See [speed](masking.md#speed).
+**The masking policy**, by about fivefold. `key` is expensive because it must be a permutation; `hash` hides as much for a thirtieth of the work wherever a column needn't stay one-to-one. See [speed](masking.md#speed).
 
-**The [native masker](masking.md#the-native-masker)**, seven to nine times faster on the same policy, with identical results: a million rows of six masked columns take under 7 seconds with it and a minute without. See [speed](masking.md#speed) for the conditions. On a wide table, where masking rather than the database sets the pace, it can also spread each chunk over several cores ([`maskingThreads`](masking.md#masking-threads)): 25 masked columns went from 25,000 rows a second on one thread to 73,000 on ten.
+**The [native masker](masking.md#the-native-masker)**, about ten times faster on the same policy, with identical results: a million rows of six masked columns, two of them `key`, take under 8 seconds with it and 74 without. See [speed](masking.md#speed) for the conditions. On a wide table, where masking rather than the database sets the pace, it can also spread each chunk over several cores ([`maskingThreads`](masking.md#masking-threads)): 25 masked columns went from 30,000 rows a second on one thread to 79,000 on ten.
 
 **`chunkSize` — for latency, not throughput.** On a local database, chunks from 500 rows to 200,000 finish the same job in 8.6 to 9.2 seconds. What a chunk costs is a round trip: against a database 25 ms away, a million rows take 123 seconds at `chunkSize: 500` and 8.8 at `10000`. Latency stops mattering once a chunk's masking outlasts its round trips:
 

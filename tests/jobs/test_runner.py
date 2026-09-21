@@ -1,4 +1,5 @@
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -7,7 +8,7 @@ import signal
 import sqlite3
 import threading
 import time
-from typing import Any, Dict, Iterator, List, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import pytest
 
@@ -19,6 +20,7 @@ from bauta.jobs.pipeline import PIPELINE_DEPTH, _runDataJob, _executeDataJob
 from bauta.jobs.runner import RunResult, _runCycle, _terminationHandling, runDataJobs
 from bauta.jobs.workers import _initializeWorker, _jobProcess
 from bauta.transform import TransformError
+from tests.jobConfigs import dataJob
 
 
 def test_worker_functions_are_picklable():
@@ -36,8 +38,10 @@ def test_run_data_jobs_completes_with_zero_active_jobs_when_not_forever(tmp_path
                                             'chunkSize': 1, 'targetTableFinal': 't', 'sourceQuery': 'select 1'}}}
     jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
 
-    runDataJobs(jobsFile=jobsFile, databaseConfiguration={}, logFile=tmp_path / 'runner.log',
-                memory=FileMemory(memoryFile=tmp_path / 'runner.yaml'), runForever=False)
+    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration={}, logFile=tmp_path / 'runner.log',
+                         memory=FileMemory(memoryFile=tmp_path / 'runner.yaml'), runForever=False)
+
+    assert result == RunResult(outcomes=[], interrupted=False)
 
 
 class _FakeDatabase:
@@ -103,31 +107,38 @@ class _FakeDatabase:
 
 
 @pytest.fixture
-def fakeDatabases(monkeypatch):
-    """Each Database(...) call under test creates a new _FakeDatabase, appended
-    here in creation order -- for _executeDataJob that's (source, target).
+def installFakeDatabase(monkeypatch):
+    """Installs `fake` -- _FakeDatabase, or a subclass that changes what a test
+    needs -- as the pipeline's Database. Returns the instances it creates, in
+    creation order: for _executeDataJob that's (source, target).
     """
-    created: List[_FakeDatabase] = []
 
-    class _TrackedFakeDatabase(_FakeDatabase):
-        def __init__(self, connectionSettings: DatabaseConnectionConfig) -> None:
-            super().__init__(connectionSettings)
-            created.append(self)
+    def install(fake: type = _FakeDatabase) -> List[_FakeDatabase]:
+        created: List[_FakeDatabase] = []
 
-    monkeypatch.setattr('bauta.jobs.pipeline.Database', _TrackedFakeDatabase)
+        class _Tracked(fake):  # type: ignore[misc, valid-type]
+            def __init__(self, connectionSettings: DatabaseConnectionConfig) -> None:
+                super().__init__(connectionSettings)
+                created.append(self)
 
-    return created
+        monkeypatch.setattr('bauta.jobs.pipeline.Database', _Tracked)
+        return created
+
+    return install
+
+
+@pytest.fixture
+def fakeDatabases(installFakeDatabase):
+    """_FakeDatabase as it is, for the tests that need nothing changed."""
+
+    return installFakeDatabase()
 
 
 def _dbConfig(host: str = 'h') -> DatabaseConnectionConfig:
     return DatabaseConnectionConfig(type=DatabaseType.MYSQL, user='u', password='p', database='d', host=host)
 
 
-def _dataJobConfig(**overrides: Any) -> DataJobConfig:
-    fields = dict(active=True, sourceDatabase='src', targetDatabase='tgt', insertStrategy=InsertStrategy.UPSERT,
-                  chunkSize=100, targetTableFinal='people', sourceQuery='select * from people')
-    fields.update(overrides)
-    return DataJobConfig(**fields)
+_dataJobConfig = functools.partial(dataJob, sourceDatabase='src', targetDatabase='tgt', targetTableFinal='people', sourceQuery='select * from people')
 
 
 def test_execute_data_job_opens_source_and_target_with_the_right_settings(fakeDatabases):
@@ -300,7 +311,7 @@ def test_execute_data_job_runs_adhoc_queries_before_and_after_load(fakeDatabases
     assert preIndex < upsertIndex < postIndex
 
 
-def test_a_query_that_returns_fewer_columns_than_the_target_says_which_and_how_many(monkeypatch):
+def test_a_query_that_returns_fewer_columns_than_the_target_says_which_and_how_many(installFakeDatabase):
     """The load binds by position, and the driver's own complaint names neither
     the table nor the columns: "the current statement uses 5, and there are 3
     supplied".
@@ -310,28 +321,22 @@ def test_a_query_that_returns_fewer_columns_than_the_target_says_which_and_how_m
         def getAllColumnNames(self, table: str) -> List[str]:
             return ['id', 'name', 'notes', 'region']
 
-    monkeypatch.setattr('bauta.jobs.pipeline.Database', _WiderTarget)
+    installFakeDatabase(_WiderTarget)
 
     with pytest.raises(ConfigurationError, match='List the ones the query fills in targetColumns'):
         _executeDataJob('job1', _dataJobConfig(), {'src': _dbConfig(), 'tgt': _dbConfig()})
 
 
-def test_an_upsert_into_a_target_without_a_primary_key_writes_nothing_first(monkeypatch):
+def test_an_upsert_into_a_target_without_a_primary_key_writes_nothing_first(installFakeDatabase):
     """It used to find out when the first chunk was upserted, by which time its
     preTargetAdhocQueries had run against the live target and the stage table
     held every row.
     """
 
-    created: List[_FakeDatabase] = []
-
     class _KeylessTarget(_FakeDatabase):
         primaryKeyColumns: List[str] = []
 
-        def __init__(self, connectionSettings: DatabaseConnectionConfig) -> None:
-            super().__init__(connectionSettings)
-            created.append(self)
-
-    monkeypatch.setattr('bauta.jobs.pipeline.Database', _KeylessTarget)
+    created = installFakeDatabase(_KeylessTarget)
     jobConfig = _dataJobConfig(targetTableStage='people_stage', preTargetAdhocQueries=['pre1'])
 
     with pytest.raises(ConfigurationError, match='has no primary key'):
@@ -341,7 +346,7 @@ def test_an_upsert_into_a_target_without_a_primary_key_writes_nothing_first(monk
     assert 'alter' not in written and 'truncate' not in written and 'insert' not in written
 
 
-def test_a_post_query_that_fails_after_a_swap_reports_the_rows_the_target_holds(monkeypatch):
+def test_a_post_query_that_fails_after_a_swap_reports_the_rows_the_target_holds(installFakeDatabase):
     """The swap had already replaced the target, so reporting 0 rows against a
     copy that had just been rebuilt sent people looking in the wrong place.
     """
@@ -352,7 +357,7 @@ def test_a_post_query_that_fails_after_a_swap_reports_the_rows_the_target_holds(
                 raise RuntimeError('division by zero')
             super().alter(query)
 
-    monkeypatch.setattr('bauta.jobs.pipeline.Database', _FailingPostQuery)
+    installFakeDatabase(_FailingPostQuery)
     jobConfig = _dataJobConfig(insertStrategy=InsertStrategy.SWAP, targetTableStage='people_stage', postTargetAdhocQueries=['post1'])
     databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
@@ -364,7 +369,7 @@ def test_a_post_query_that_fails_after_a_swap_reports_the_rows_the_target_holds(
     assert 'postTargetAdhocQuery failed' in outcome.error
 
 
-def test_a_masked_load_that_overflows_a_column_says_a_mask_can_be_wider(monkeypatch, caplog):
+def test_a_masked_load_that_overflows_a_column_says_a_mask_can_be_wider(installFakeDatabase, caplog):
     """The driver names the column, not the mask that widened the value, and
     `key` keeping an integer's digit count is the usual reason.
     """
@@ -373,7 +378,7 @@ def test_a_masked_load_that_overflows_a_column_says_a_mask_can_be_wider(monkeypa
         def upsert(self, **arguments: Any) -> None:
             raise RuntimeError('numeric field overflow: value out of range for type integer')
 
-    monkeypatch.setattr('bauta.jobs.pipeline.Database', _RefusingTarget)
+    installFakeDatabase(_RefusingTarget)
     jobConfig = _dataJobConfig(masking={'key': 'k' * 16, 'columns': {'id': {'strategy': 'key'}, 'name': 'keep'}})
 
     outcome = _runDataJob('job1', jobConfig, {'src': _dbConfig(), 'tgt': _dbConfig()}, _TimelineMemory([]))
@@ -409,30 +414,34 @@ def test_execute_data_job_runs_pre_adhoc_queries_before_loading_the_stage_table(
 
 
 class _TimelineMemory(MemoryBackend):
+    """Appends each write to `timeline`; the writes named in `failing` raise."""
 
-    def __init__(self, timeline: List[Tuple[Any, ...]], failing: bool = False) -> None:
+    def __init__(self, timeline: List[Tuple[Any, ...]], failing: Tuple[str, ...] = ()) -> None:
         self.timeline = timeline
         self.failing = failing
+
+    def _write(self, kind: str, *entry: Any) -> None:
+        if kind in self.failing:
+            raise RuntimeError('memory backend is unavailable')
+        self.timeline.append((kind,) + entry)
 
     def read(self) -> Any:
         return {}
 
     def recordRun(self, job: str) -> None:
-        if self.failing:
-            raise RuntimeError('memory backend is unavailable')
-        self.timeline.append(('recordRun', job))
+        self._write('recordRun', job)
 
     def readWatermarks(self) -> Dict[str, Any]:
         return {}
 
     def recordWatermark(self, job: str, value: Any) -> None:
-        pass
+        self._write('recordWatermark', job, value)
 
     def readKeyFingerprints(self) -> Dict[str, str]:
         return {}
 
     def recordKeyFingerprint(self, job: str, fingerprint: Any) -> None:
-        pass
+        self._write('recordKeyFingerprint', job)
 
 
 def _runJobWithTimeline(jobConfig: DataJobConfig, memory: '_TimelineMemory') -> List[Tuple[Any, ...]]:
@@ -446,16 +455,21 @@ def _runJobWithTimeline(jobConfig: DataJobConfig, memory: '_TimelineMemory') -> 
     return memory.timeline
 
 
-def _runDataWorkerOnce(monkeypatch, succeeds: bool, memoryFails: bool = False) -> List[Tuple[Any, ...]]:
+def _runDataWorkerOnce(monkeypatch, succeeds: bool, failing: Tuple[str, ...] = (), jobConfig: Optional[DataJobConfig] = None) -> List[Tuple[Any, ...]]:
 
     def fakeExecute(job: Any, jobConfig: Any, databaseConfiguration: Any, watermark: Any = None) -> JobOutcome:
         if not succeeds:
             raise RuntimeError('job blew up')
-        return JobOutcome(job=job, status=JobStatus.COMPLETED, rowCount=1)
+        return JobOutcome(job=job, status=JobStatus.COMPLETED, rowCount=1, watermark=7 if jobConfig.watermarkColumn else None)
 
     monkeypatch.setattr('bauta.jobs.pipeline._executeDataJob', fakeExecute)
 
-    return _runJobWithTimeline(_dataJobConfig(), _TimelineMemory([], failing=memoryFails))
+    return _runJobWithTimeline(jobConfig or _dataJobConfig(), _TimelineMemory([], failing=failing))
+
+
+def _incrementalMaskedJobConfig() -> DataJobConfig:
+    return _dataJobConfig(sourceQuery='select id, name from people where id > {{ watermark }}', watermarkColumn='id', watermarkInitial=0,
+                          masking={'key': 'a-runner-test-masking-key', 'columns': {'id': 'keep', 'name': 'hash'}})
 
 
 def test_a_failed_data_job_does_not_record_a_run(monkeypatch, tmp_path):
@@ -484,9 +498,31 @@ def test_a_completed_job_stays_completed_when_the_memory_backend_fails(monkeypat
     """The data did land, so reporting FAILED would be a worse lie than the
     missing stamp -- whose only consequence is an earlier re-run.
     """
-    timeline = _runDataWorkerOnce(monkeypatch, succeeds=True, memoryFails=True)
+    timeline = _runDataWorkerOnce(monkeypatch, succeeds=True, failing=('recordRun',))
 
     assert timeline == [('completed', 'job1', JobStatus.COMPLETED)]
+
+
+def test_a_completed_job_records_its_watermark_and_key_before_its_run(monkeypatch):
+    """The run stamp comes last: a crash before it costs a re-run from the
+    new watermark, rather than a stamp that says the job ran with no watermark
+    to show for it.
+    """
+    timeline = _runDataWorkerOnce(monkeypatch, succeeds=True, jobConfig=_incrementalMaskedJobConfig())
+
+    assert timeline == [('recordWatermark', 'job1', 7), ('recordKeyFingerprint', 'job1'), ('recordRun', 'job1'),
+                        ('completed', 'job1', JobStatus.COMPLETED)]
+
+
+def test_a_completed_job_stays_completed_when_its_watermark_and_key_cannot_be_recorded(monkeypatch, caplog):
+    """The rows landed, so the job completed; the next run re-extracts from
+    the old watermark, which the log says."""
+    timeline = _runDataWorkerOnce(monkeypatch, succeeds=True, failing=('recordWatermark', 'recordKeyFingerprint'),
+                                  jobConfig=_incrementalMaskedJobConfig())
+
+    assert timeline == [('recordRun', 'job1'), ('completed', 'job1', JobStatus.COMPLETED)]
+    assert 'Completed job1 but could not record its watermark -- the next run will re-extract from 0' in caplog.text
+    assert 'Completed job1 but could not record its masking key fingerprint' in caplog.text
 
 
 def test_execute_data_job_streams_rather_than_materializing_the_whole_extract(monkeypatch):
@@ -774,15 +810,12 @@ def test_execute_data_job_rejects_a_watermark_column_the_source_query_does_not_r
 
 class _WatermarkTimelineMemory(_TimelineMemory):
 
-    def __init__(self, timeline: List[Tuple[Any, ...]], watermarks: Dict[str, Any], failing: bool = False) -> None:
-        super().__init__(timeline, failing=failing)
+    def __init__(self, timeline: List[Tuple[Any, ...]], watermarks: Dict[str, Any]) -> None:
+        super().__init__(timeline)
         self.watermarks = watermarks
 
     def readWatermarks(self) -> Dict[str, Any]:
         return self.watermarks
-
-    def recordWatermark(self, job: str, value: Any) -> None:
-        self.timeline.append(('recordWatermark', job, value))
 
 
 def _runWatermarkWorkerOnce(monkeypatch, tmp_path, succeeds: bool, watermarks: Dict[str, Any]) -> List[Tuple[Any, ...]]:
@@ -1213,6 +1246,21 @@ def test_a_job_past_its_timeout_is_stopped_and_fails(tmp_path, sqliteDatabase):
     assert time.time() - startedAt < 30
 
 
+def test_a_job_that_reports_but_does_not_exit_is_stopped_and_still_completes(tmp_path, sqliteDatabase, monkeypatch, caplog):
+    """Its rows are in and its outcome is known; only the process lingers,
+    and waiting on it would hold the run open.
+    """
+    monkeypatch.setattr('bauta.jobs.workers.EXIT_GRACE_SECONDS', 0.5)
+    startedAt = time.time()
+
+    result = _runJobs({'lingers': _sqliteJob(sqliteDatabase, sourceQueryColumnTransforms={'name': ['tests.jobs.crashingTransforms:lingerAfterwards']})},
+                      sqliteDatabase, tmp_path)
+
+    assert [(outcome.job, outcome.status, outcome.rowCount) for outcome in result.outcomes] == [('lingers', JobStatus.COMPLETED, 2)]
+    assert 'lingers sent its outcome but did not exit; stopping it' in caplog.text
+    assert time.time() - startedAt < 30
+
+
 def test_no_more_than_workers_jobs_run_at_once(tmp_path, sqliteDatabase):
     result = _runJobs({name: _sqliteJob(sqliteDatabase, sourceQueryColumnTransforms={'name': ['tests.jobs.crashingTransforms:slowly']})
                        for name in ('a', 'b', 'c')}, sqliteDatabase, tmp_path, workers=2)
@@ -1448,20 +1496,13 @@ def test_a_noisy_job_does_not_starve_the_others(tmp_path, sqliteDatabase):
 # --- the chunk pipeline -------------------------------------------------------
 
 def _pipelineFake(rows, failReadAt=None, failWriteAt=None, written=None, reads=None):
-    """A Database whose reads or writes can be made to fail at a given chunk."""
+    """_FakeDatabase over `rows`, counting the chunks read and written --
+    across the source and the target -- so either can be made to fail at one.
+    """
 
     state = {'read': 0, 'write': 0}
 
-    class _Fake:
-
-        def __init__(self, connectionSettings: Any = None) -> None:
-            return None
-
-        def __enter__(self) -> '_Fake':
-            return self
-
-        def __exit__(self, *args: Any) -> None:
-            return None
+    class _Fake(_FakeDatabase):
 
         def stream(self, query: str, chunkSize: int, parameters: Any = None) -> Tuple[List[str], Any]:
 
@@ -1474,13 +1515,7 @@ def _pipelineFake(rows, failReadAt=None, failWriteAt=None, written=None, reads=N
                         raise RuntimeError('the reader failed')
                     yield rows[index:index + chunkSize]
 
-            return ['id', 'name'], chunks()
-
-        def getAllColumnNames(self, table: str) -> List[str]:
-            return ['id', 'name']
-
-        def getPrimaryColumnNames(self, table: str) -> List[str]:
-            return ['id']
+            return self.columnNames, chunks()
 
         def upsert(self, table: str, data: List[Any], chunkSize: int = 100, columns: Any = None) -> None:
             self.insert(table, data)
@@ -1491,12 +1526,6 @@ def _pipelineFake(rows, failReadAt=None, failWriteAt=None, written=None, reads=N
                 raise RuntimeError('the writer failed')
             if written is not None:
                 written.extend(data)
-
-        def truncate(self, table: str) -> None:
-            return None
-
-        def alter(self, query: str) -> None:
-            return None
 
     return _Fake
 

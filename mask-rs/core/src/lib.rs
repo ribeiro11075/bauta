@@ -12,12 +12,14 @@
 #![allow(non_snake_case)]
 
 pub mod cheap;
+pub mod digits;
 pub mod error;
 pub mod fake;
 pub mod ff1;
 pub mod fpe;
 pub mod key;
 pub mod keyed_hash;
+pub mod number;
 
 pub use ff1::Ff1;
 pub use fpe::FpeStrategy;
@@ -25,3 +27,4 @@ pub use error::{MaskError, Masked};
 pub use fake::{FakeKind, FakeLists, FakeStrategy};
 pub use key::{Charset, KeyStrategy};
 pub use keyed_hash::KeyedHash;
+pub use number::{NumberInput, NumberOutput, NumberStrategy};

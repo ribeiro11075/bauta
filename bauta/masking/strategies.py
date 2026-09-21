@@ -18,7 +18,7 @@ import random
 import re
 import unicodedata
 import uuid
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Type
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Type, Union
 
 from .fakeData import COMPANY_WORDS, DEFAULT_LOCALE, LOCALES, Locale
 from .core import MASK_CACHE_SIZE, MAXIMUM_KEY_LENGTH, KeyedHash, MaskingError, Strategy, canonical
@@ -299,6 +299,11 @@ class DigitsStrategy(Strategy):
         return _inScriptOf(value, masked)
 
 
+# The significant digits `number` computes in. mask-rs/core/src/number.rs
+# repeats the arithmetic at the same precision.
+_PRECISION = 60
+
+
 class NumberStrategy(Strategy):
     """A keyed number of the same type and precision, within `min`-`max` or
     within `variance` of the original. A value the variance would round back
@@ -309,7 +314,15 @@ class NumberStrategy(Strategy):
     """
 
     NAME = 'number'
+    NATIVE = 'number'
     OPTIONS = {'min': _numberOption, 'max': _numberOption, 'variance': _numberOption, 'decimals': _integerOption(0, 38)}
+
+    def _nativeOptions(self) -> Dict[str, Any]:
+        """The Decimal options as `str` spells them, which the native masker
+        reads back digit for digit; `decimals` as it is.
+        """
+
+        return {name: value if name == 'decimals' else str(value) for name, value in self.options.items()}
 
     @classmethod
     def checkOptions(cls, options: Dict[str, Any]) -> None:
@@ -367,10 +380,22 @@ class NumberStrategy(Strategy):
         if isinstance(value, bool) or not isinstance(value, (int, float, decimal.Decimal)):
             raise MaskingError('the number strategy needs a number, got {}'.format(_typeName(value)))
 
+        try:
+            return self._mask(value)
+        except decimal.InvalidOperation:
+            # quantize refuses a result longer than the context's precision:
+            # an integer of more than 60 digits, or a float held to more
+            # decimals than 60 digits reach at its size.
+            raise MaskingError('the number strategy works to {} significant digits, and this {} needs more at the precision it '
+                               'keeps'.format(_PRECISION, _typeName(value))) from None
+
+
+    def _mask(self, value: Union[int, float, decimal.Decimal]) -> Any:
+
         message = canonical(value)
 
         with decimal.localcontext() as context:
-            context.prec = 60
+            context.prec = _PRECISION
 
             if isinstance(value, int):
                 step = decimal.Decimal(1)

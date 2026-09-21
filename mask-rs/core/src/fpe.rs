@@ -9,7 +9,8 @@ use num_bigint::{BigInt, Sign};
 
 use crate::error::{MaskError, Masked, MAXIMUM_KEY_LENGTH};
 use crate::ff1::Ff1;
-use crate::key::{decimalDigits, Charset, KeyStrategy};
+use crate::digits::decimalDigits;
+use crate::key::{Charset, KeyStrategy};
 use crate::KeyedHash;
 
 /// `builtinMasking._FPE_ALPHABETS`. Unlike `key`, which masks within a character's own

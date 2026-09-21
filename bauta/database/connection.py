@@ -227,24 +227,25 @@ class Database:
         return quoteFoldedTable(self.type, table)
 
 
-    def getAllColumnTypes(self, table: str) -> List[Any]:
-        """WHERE 1=0 is valid ANSI SQL across mysql/postgresql/oracle -- reads schema
-        metadata via cursor.description without scanning or fetching any rows.
+    def _describe(self, table: str) -> Sequence[Sequence[Any]]:
+        """The table's cursor.description. WHERE 1=0 is valid ANSI SQL on every
+        database here, and describes the columns without scanning or fetching
+        a row.
         """
 
-        query = 'SELECT * FROM {} WHERE 1=0'.format(self.statementName(table))
-        self.cursor.execute(query)
+        self.cursor.execute('SELECT * FROM {} WHERE 1=0'.format(self.statementName(table)))
 
-        return [row[1] for row in self.cursor.description]
+        return self.cursor.description
+
+
+    def getAllColumnTypes(self, table: str) -> List[Any]:
+
+        return [row[1] for row in self._describe(table)]
 
 
     def getAllColumnNames(self, table: str) -> List[str]:
-        """See getAllColumnTypes for why the query is bounded with WHERE 1=0."""
 
-        query = 'SELECT * FROM {} WHERE 1=0'.format(self.statementName(table))
-        self.cursor.execute(query)
-
-        return [row[0] for row in self.cursor.description]
+        return [row[0] for row in self._describe(table)]
 
 
     def catalogColumns(self, table: str, columns: Optional[Sequence[str]] = None) -> List[str]:
