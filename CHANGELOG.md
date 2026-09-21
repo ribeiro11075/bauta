@@ -42,6 +42,7 @@ Masks are unchanged by all of this: the reference vectors pass unaltered, in pur
 - **A masking policy reads and rewrites only the columns it masks.** A realistic policy keeps far more columns than it masks, and all of them were extracted, copied and reassembled. Per 10,000-row × 30-column chunk: 5 masked columns 29.9 → 19.2 ms (−36%), 1 masked column 18.3 → 6.1 ms (−66%), all 30 masked 106.3 → 96.3 ms (−9%).
 - **`dateShift` derives each day's shift once** rather than once per row: 32.0 → 4.3 ms per 10,000 rows spread over two years (−87%). The shift was already per day; only the work is new.
 - **The per-value scans each dialect made before a load are now one walk**: a clean 10,000-row chunk into SQL Server 35.5 → 19.7 ms (−45%).
+- **PostgreSQL's bulk load spells each value through an exact-type lookup** instead of a chain of `isinstance` checks, which every row into a PostgreSQL target crossed: 100.7 → 77.9 ms per 10,000-row × 30-column chunk (−23%). A subclass of a handled type still takes the chain, so nothing is spelled differently.
 - **Run state in a table reuses one connection per process** instead of opening one per read and write, which also ran `passwordCommand` again each time for cloud IAM tokens.
 - **`bauta history` reads backwards from the end of the file** instead of parsing all of it to show the last 20 records.
 
