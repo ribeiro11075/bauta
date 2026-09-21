@@ -2,10 +2,10 @@
 # lowest-dependencies job installs with these on the oldest supported Python,
 # so a lower bound that no longer works fails there rather than for a user.
 # tests/repository/test_packaging.py keeps this file in step with pyproject.toml.
-pyyaml==6.0.1
-pydantic==2.6.0
-mysql-connector-python==8.4.0
-psycopg==3.2.10
-oracledb==2.5.0
-pymssql==2.3.5
-cryptography==42.0.0
+pyyaml==6.0.3
+pydantic==2.13.5
+mysql-connector-python==26.7.0
+psycopg==3.3.6
+oracledb==26.0.0
+pymssql==2.4.1
+cryptography==50.0.1
