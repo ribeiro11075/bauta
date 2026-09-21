@@ -1,0 +1,34 @@
+# Keeps the pinned versions current: the actions (pinned to commits, with the
+# release in a comment), the dev tools and dependency ranges in pyproject.toml,
+# and the native masker's Rust crates. Grouped, so each ecosystem is one pull
+# request a week rather than one per package.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # The root only: constraints/lowest.txt pins the lowest versions the ranges
+  # allow, and moving it up would stop CI testing them.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+    ignore:
+      # Released with bauta at the same version, and must equal it.
+      - dependency-name: bauta-rs
+
+  - package-ecosystem: cargo
+    directory: /mask-rs
+    schedule:
+      interval: weekly
+    groups:
+      rust:
+        patterns: ["*"]

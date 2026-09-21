@@ -155,14 +155,14 @@ A policy can name a class of your own as `module.path:ClassName`:
 
 ```python
 # acme/masks.py
-from bauta.masking import Strategy
+from bauta.masking import Strategy, canonical
 
 class Initials(Strategy):
     OPTIONS = {'separator': str}                   # option name -> check that returns the value
 
     def mask(self, value):                          # called for each non-NULL value
         separator = self.options.get('separator', '.')
-        suffix = self.keyedHash.digest(str(value).encode()).hex()[:4]
+        suffix = self.keyedHash.digest(canonical(value)).hex()[:4]
         return separator.join(word[0] for word in value.split()) + separator + suffix
 ```
 
@@ -171,9 +171,9 @@ columns:
   full_name: { strategy: "acme.masks:Initials", separator: "-" }
 ```
 
-Derive anything random from `self.keyedHash` (`digest`, `below`, `unit`, `permute`), so the mask stays keyed, consistent within its domain, and reproducible. `validate` imports the class and checks its options; the module must also be importable wherever jobs run. The manifest records the strategy by the name the policy used.
+Derive anything random from `self.keyedHash` (`digest`, `below`, `unit`, `permute`), so the mask stays keyed, consistent within its domain, and reproducible. Key it on `canonical(value)`, the bytes the built-in strategies key on, so the same id masks the same way whether a driver returned it as a number or as text. `validate` imports the class and checks its options; the module must also be importable wherever jobs run. The manifest records the strategy by the name the policy used.
 
-If `mask()` depends on nothing but the value, set `CACHEABLE = True` on the class, and repeated values are remembered rather than masked again. It's off by default, since a strategy could depend on something else.
+If `mask()` depends on nothing but the value, set `CACHEABLE = True` on the class, and repeated values are remembered rather than masked again. It's off by default, since a strategy could depend on something else. A strategy that returns every value exactly as it was given, as `keep` does, sets `PASSTHROUGH = True`: its columns are carried through untouched, and checks that refuse a masked watermark column or a masked primary key treat them as unmasked.
 
 ### Speed
 
@@ -442,7 +442,6 @@ bauta audit --connect --strict   # also asks the databases; fails on warnings
 | warning | A domain is masked two ways, or under two keys, in one target database, so its masks won't match across the columns that share it. Copies in different target databases may use different keys. |
 | warning | A foreign-key column isn't masked exactly like the key it references (strategy, options, domain and key), so the copied references won't match (`--connect`). |
 | warning | A foreign key and the key it references are both masked with `shuffle`, which moves values between rows, so the references point at other rows (`--connect`). |
-| error | `watermarkColumn` falls to a `defaultStrategy` that masks it: the watermark is read before masking and kept in run state and logs (`--connect`). A column the policy masks by name is refused by `validate`. |
 | warning | A job copies only part of a table that another job's table references (it has a `watermarkColumn`, or its `sourceQuery` has a `WHERE`), and the referencing job isn't limited to match, so the copy can reference rows it lacks (`--connect`). A query counts as partial when it has a `WHERE`, `LIMIT`, `TOP` or `FETCH FIRST`, or joins another table. |
 | warning | A job's table references another job's table, and the job can load before the other: it doesn't wait for it through `predecessors`, the other is inactive, or a job on the way has a longer `refresh` (`--connect`). |
 | note | Columns that fall to `defaultStrategy`, by name (`--connect`). |
@@ -535,7 +534,7 @@ Treat the result as a starting point for review. It isn't a finished policy.
 
 ### Your own rules: `discovery.yaml`
 
-The built-in rules are in [`bauta/builtinDiscovery.py`](../bauta/builtinDiscovery.py), and they recognise English column names and US-shaped identifiers. For anything else, such as a national identifier or column names in another language, put rules of your own in `configuration/discovery.yaml` (or name a file with `--rules FILE`):
+The built-in rules are in [`bauta/generate/builtinDiscovery.py`](../bauta/generate/builtinDiscovery.py), and they recognise English column names and US-shaped identifiers. For anything else, such as a national identifier or column names in another language, put rules of your own in `configuration/discovery.yaml` (or name a file with `--rules FILE`):
 
 ```yaml
 names:                                  # words in column names

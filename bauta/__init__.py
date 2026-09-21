@@ -1,58 +1,49 @@
-from .configuration import (
-    BaseJobConfig,
-    Configuration,
-    ConfigurationError,
-    DatabaseConnectionConfig,
-    DatabaseType,
-    DiscoveryRulesFile,
-    DataJobConfig,
-    DataJobsFile,
-    InsertStrategy,
-    MaskingConfig,
-    expandEnvironmentVariables,
-    )
-from .databaseDialects import ColumnCategory, DatabaseDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, SQLiteDialect
+"""Safe, realistic copies of production across databases. Most deployments
+use the `bauta` command; see docs/library.md for embedding it.
+
+What is importable from here is the public API, the one docs/library.md
+describes. A name reached only through a submodule is internal, unless the
+documentation names it there, and may change in any release.
+"""
+from .configuration import (Configuration, ConfigurationError, DatabaseConnectionConfig, DatabaseType, DataJobConfig, DataJobsFile,
+                            DiscoveryRulesFile, InsertStrategy, MaskingConfig, expandEnvironmentVariables)
 from .database import Database
-from .dependencyGraph import DependencyGraph, JobOutcome, JobStatus
-from .discovery import DiscoveryRules, TableProposal, discoveryRules, proposeTable
+from .jobs.dependencyGraph import DependencyGraph, JobOutcome, JobStatus
+from .database.dialects import ForeignKey
+from .generate.discovery import DiscoveryRules, TableProposal, discoveryRules, proposeTable
+from .generate.subset import SubsetError, SubsetPlan, planSubset
+from .generate.synthesize import SynthesisError, planTable, synthesizeTable
 from .log import Log
-from .audit import auditJobs, renderAudit
-from .builtinMasking import STRATEGIES
-from .fakeData import LOCALES
-from .masking import MaskingError, MaskingPlan, Strategy, buildMaskingManifest, keyFingerprint, resolveStrategy, sealManifest, \
-    verifyManifest
-from .memory import DATABASE_MEMORY_SCHEMA, DatabaseMemory, FileMemory, MemoryBackend, RunInProgressError, exclusiveRun
-from .reporting import DATABASE_HISTORY_SCHEMA, DATABASE_MANIFEST_SCHEMA, DatabaseHistory, DatabaseManifests, FileHistory, RunHistory, notify
-from .runner import RunResult, runDataJobs
-from .subset import SubsetError, SubsetPlan, planSubset
-from .synthesize import SynthesisError, planTable, synthesizeTable
-from .transform import Transform, Transformer, TransformError, TransformResolutionError, resolveTransformer
+from .masking import (LOCALES, STRATEGIES, MaskingError, MaskingPlan, Strategy, buildMaskingManifest, keyFingerprint, resolveStrategy, sealManifest,
+                      verifyManifest)
+from .jobs.memory import DATABASE_MEMORY_SCHEMA, DatabaseMemory, FileMemory, MemoryBackend, RunInProgressError, exclusiveRun
+from .jobs.reporting import DATABASE_HISTORY_SCHEMA, DATABASE_MANIFEST_SCHEMA, DatabaseHistory, DatabaseManifests, FileHistory, RunHistory, notify
+from .review.audit import auditJobs, renderAudit
+from .jobs.runner import RunResult, runDataJobs
+from .transform import Transformer, TransformError, TransformResolutionError
 
 __all__ = [
     'auditJobs',
-    'BaseJobConfig',
     'buildMaskingManifest',
-    'ColumnCategory',
     'Configuration',
     'ConfigurationError',
+    'Database',
     'DATABASE_HISTORY_SCHEMA',
     'DATABASE_MANIFEST_SCHEMA',
     'DATABASE_MEMORY_SCHEMA',
+    'DatabaseConnectionConfig',
     'DatabaseHistory',
     'DatabaseManifests',
-    'Database',
-    'DatabaseConnectionConfig',
-    'DatabaseDialect',
     'DatabaseMemory',
     'DatabaseType',
-    'exclusiveRun',
-    'expandEnvironmentVariables',
     'DataJobConfig',
     'DataJobsFile',
     'DependencyGraph',
     'DiscoveryRules',
-    'DiscoveryRulesFile',
     'discoveryRules',
+    'DiscoveryRulesFile',
+    'exclusiveRun',
+    'expandEnvironmentVariables',
     'FileHistory',
     'FileMemory',
     'ForeignKey',
@@ -62,38 +53,30 @@ __all__ = [
     'keyFingerprint',
     'LOCALES',
     'Log',
-    'MariaDBDialect',
     'MaskingConfig',
     'MaskingError',
     'MaskingPlan',
     'MemoryBackend',
-    'MSSQLDialect',
     'notify',
-    'MySQLDialect',
-    'OracleDialect',
     'planSubset',
-    'PostgreSQLDialect',
+    'planTable',
     'proposeTable',
+    'renderAudit',
+    'resolveStrategy',
+    'runDataJobs',
     'RunHistory',
     'RunInProgressError',
     'RunResult',
-    'SQLiteDialect',
+    'sealManifest',
     'STRATEGIES',
     'Strategy',
     'SubsetError',
     'SubsetPlan',
     'SynthesisError',
     'synthesizeTable',
-    'planTable',
     'TableProposal',
-    'Transform',
     'Transformer',
     'TransformError',
     'TransformResolutionError',
-    'renderAudit',
-    'resolveStrategy',
-    'resolveTransformer',
-    'sealManifest',
     'verifyManifest',
-    'runDataJobs',
     ]

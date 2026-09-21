@@ -170,7 +170,7 @@ It's wrong too when the dependent's table references the predecessor's: in the c
 
 `--forever` keeps the process resident, for freshness below cron's one-minute floor or where there's no scheduler.
 
-**Stopping.** On `SIGINT` or `SIGTERM`, a run starts no new jobs, lets the running ones finish, reports the rest as skipped, and exits with status 130. Killing jobs mid-load instead would leave a streaming cursor or a half-loaded table for the database to clean up. A container's grace period has to cover the longest job for this to finish; give long jobs a `timeoutSeconds` shorter than that grace period, so a hung one can't hold the shutdown.
+**Stopping.** On `SIGINT` or `SIGTERM`, a run starts no new jobs, lets the running ones finish, reports the rest as skipped, and exits with status 130. Killing jobs mid-load instead would leave a streaming cursor or a half-loaded table for the database to clean up. A container's grace period has to cover the longest job for this to finish; give long jobs a `timeoutSeconds` shorter than that grace period, so a hung one can't hold the shutdown. Between `--forever` cycles, a signal ends the pause within a second, however long `cycleSleepSeconds` is.
 
 **Overlapping runs.** `run` holds a lock (`memory.yaml.run.lock`, beside the run state file; see [run state](operations.md#run-state) for run state in a table) for as long as it runs. A second invocation sharing that memory file exits with status 1 instead of running the same jobs at the same time, which a cron interval shorter than a slow run would otherwise cause. The operating system releases the lock if the process dies.
 
@@ -212,7 +212,7 @@ Masked data jobs retry like any other data job. The watermark is read again on e
 
 ```json
 {"timestamp": "2026-09-16 01:00:12.514", "level": "INFO", "logger": "bauta", "message": "Completed loadOrders (4200 row(s))",
- "file": "runner.py", "line": 432, "job": "loadOrders", "status": "completed", "rowCount": 4200, "attempts": 1}
+ "file": "pipeline.py", "line": 397, "job": "loadOrders", "status": "completed", "rowCount": 4200, "attempts": 1}
 ```
 
 The fields are the point. Completions, failures and skips carry `job` and `status`; completions add `rowCount` and `attempts`, failures `error` and `durationSeconds`, and each cycle's summary its totals. A collector can alert on `status="failed"` or chart rows per job without parsing messages. Logs go to stderr unless `--quiet`; `--log FILE` adds a file.
@@ -241,7 +241,7 @@ Copying between different databases means one driver's values have to be accepte
 - **Oracle.** CLOB and BLOB columns are fetched as plain text and bytes rather than as LOB handles, which no other driver can load. The session's date formats are set to ISO 8601, so text such as `'2026-01-02 03:04:05'` loads into a `DATE` or `TIMESTAMP` column; that includes SQLite's dates and a `watermarkInitial` compared against a date column. This changes Oracle's implicit conversions between dates and text in both directions, so a `sourceQuery` that relied on the default `DD-MON-RR` format, or that calls `TO_CHAR` on a date without a format, now sees ISO text. Dates that arrive as datetime objects are unaffected.
 - **SQLite.** `Decimal` values, which other drivers return for `NUMERIC` columns, are written as their exact text — and kept that way only by a column SQLite gives text affinity, which is what `schema` creates for a decimal. A column declared `DECIMAL(38,10)` has *numeric* affinity, and SQLite converts the text to an integer or a float as it stores it: `123456789012345678.1234567890` comes back as `123456789012345680`. Dates, timestamps and UUIDs are stored as ISO text, replacing Python's built-in converters, which are deprecated since 3.12.
 
-`tests/test_integration_schema.py` copies the same rows between every pair of the six databases to keep this true.
+`tests/integration/test_integration_schema.py` copies the same rows between every pair of the six databases to keep this true.
 
 
 ## How names are written

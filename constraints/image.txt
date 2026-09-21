@@ -5,7 +5,7 @@
 #   uv pip compile pyproject.toml --extra all -c <this file's direct pins> \
 #       --python-version 3.14 --python-platform linux --no-header --no-annotate
 #
-# tests/test_packaging.py checks every pin here is within pyproject.toml's ranges.
+# tests/repository/test_packaging.py checks every pin here is within pyproject.toml's ranges.
 annotated-types==0.8.0
 cffi==2.1.1
 cryptography==50.0.1

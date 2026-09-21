@@ -34,7 +34,7 @@ jobs:
     targetTableFinal: table1
     sourceQueryColumnTransforms:
       amount:
-      - bauta.builtinTransforms:currency
+      - bauta.transform.builtinTransforms:currency
     unmasked: true              # reviewed: these rows carry nothing personal
   loadTable2:
     predecessors:
@@ -105,8 +105,8 @@ jobs:
     sourceQuery: select id, email, fullName, birthDate from customers
     sourceQueryColumnTransforms:
       email:
-      - bauta.builtinTransforms:strip
-      - bauta.builtinTransforms:lower
+      - bauta.transform.builtinTransforms:strip
+      - bauta.transform.builtinTransforms:lower
     targetTableFinal: customersMasked
     masking:
       columns:

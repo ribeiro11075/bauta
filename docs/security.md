@@ -85,7 +85,7 @@ The same constructions exist twice: in Python, and in the optional `bauta-rs` ex
 How that is held:
 
 - **Recorded vectors.** `mask-rs/vectors/reference.json` holds what the Python implementation produces for every covered strategy over a corpus chosen for boundaries rather than volume: the lengths where a Feistel half stops fitting a machine word, domains of exactly 2\*\*128, `MAXIMUM_KEY_LENGTH`, single-character alphabets, mixed-case hex, and every refusal with its exact message. The Rust tests check against it, and a Python test fails if Python itself drifts from it — so changing masks requires changing the file, deliberately.
-- **Both implementations, same corpus.** `tests/test_nativeMasking.py` runs each strategy and option combination through both and compares masks, types and error messages.
+- **Both implementations, same corpus.** `tests/masking/test_nativeMasking.py` runs each strategy and option combination through both and compares masks, types and error messages.
 - **Any number of threads.** The same tests mask columns large enough to be split across threads, on one thread and on eight, chunk after chunk with the cross-chunk cache warm, and require the same masks as pure Python.
 - **The whole suite, twice.** CI runs it with the extension and with `BAUTA_NATIVE=0`.
 - **A trace if they ever didn't.** Every masked job records the implementation beside its key fingerprint, and an upsert job run under a different one logs a warning naming both, rather than refusing. The fingerprint alone couldn't show it, since the key hasn't changed — and it is the evidence an operator would need if rows masked before and after stopped joining.
@@ -130,6 +130,8 @@ Both of those exist so that a deliberate exception is written down rather than i
 - **[`unmasked: true`](configuration.md#copying-without-masking)** on a job says its rows were reviewed and are copied as they stand. Without it, `audit` reports every unmasked job. A column that still looks like personal data is reported either way.
 - **[`acknowledged`](configuration.md#acknowledged)** in `jobs.yaml` says a table is deliberately not copied, and why. `coverage` fails on any table that is neither copied nor declared, and reports a declaration for a table the database no longer has.
 
+**The watermark is not a way around masking.** It is read before masking and kept in run state and logs, so a `watermarkColumn` the policy masks, whether it names the column or leaves it to `defaultStrategy`, is refused by `validate` and again by `run`.
+
 **A misspelled key is not an exception.** An unknown field in `jobs.yaml` or `database.yaml` is an error: `maskng:` instead of `masking:` used to be dropped in silence, leaving a job that read as masked in the file and copied every column as it stood.
 
 What none of this checks: whether the *strategy* chosen for a column is strong enough for the data in it. That is what [what masking does not hide](#what-masking-does-not-hide) is about, and it is a review, not a check.
@@ -157,7 +159,7 @@ What none of this checks: whether the *strategy* chosen for a column is strong e
 - **Passwords** are held as secrets and never logged. `passwordCommand` output is never logged, and the command is never run by `validate`. Driver `options` are kept out of the configuration's `repr`, since some (a wallet password) are secrets.
 - **Short-lived credentials.** `passwordCommand` runs at every connection, so cloud IAM tokens are always fresh; its failures are retried like connection errors.
 - **TLS** is configured per driver through `options`. Settings express intent; the server's own report, shown by `run --dry-run` and `audit --connect`, is what to rely on. SQL Server encryption is configured through FreeTDS; pymssql's own `encryption` argument had no effect in testing.
-- **Run state, history and manifests** (their files, or their tables) hold job names, times, watermarks and key fingerprints; manifests hold no values. Watermarks are values from the source: an `updated_at` timestamp, usually, but a watermark column could be anything. Protect them like the configuration.
+- **Run state, history and manifests** (their files, or their tables) hold job names, times, watermarks and key fingerprints; manifests hold no values. Watermarks are values from the source: an `updated_at` timestamp, usually, but a watermark column could be anything. A column the policy masks, by name or through `defaultStrategy`, can't be the watermark: `validate` refuses it, and `run` refuses it again before reading a row, since the watermark is kept as it was read. Protect them like the configuration.
 
 
 ## Trusted inputs

@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .mypy_cache/
 .pytest_cache/
+.ruff_cache/
 
 # packaging / build artifacts
 *.egg-info/
@@ -10,8 +11,9 @@ __pycache__/
 build/
 dist/
 
-# coverage
+# coverage: one data file, or one per process while measuring in parallel
 .coverage
+.coverage.*
 htmlcov/
 
 # virtual environments

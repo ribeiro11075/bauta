@@ -40,7 +40,7 @@ Builds a small shop's "production" database -- customers with national ids and p
 
 Its `configuration/` holds only `database.yaml`, since `subset` generates the jobs. Every command runs from `transaction/` and is pointed at that file with `--databases`, so the generated jobs, run state and manifest land in `transaction/` beside the databases. It ends by showing customers and a support ticket before and after, including what `redact` leaves behind, and writes the session to `transaction/walkthrough.md`.
 
-Tested by `tests/test_walkthrough.py`, which also checks that no production email, phone number or card number reaches staging.
+Tested by `tests/examples/test_walkthrough.py`, which also checks that no production email, phone number or card number reaches staging.
 
 
 ## incremental
@@ -53,7 +53,7 @@ Loads its job the way the CLI does -- YAML, then `${NAME}` expansion, then valid
 
 The second run is the one to watch. Between runs, an already-loaded row is edited *without* its `updatedAt` changing, and a new row is added. A full re-extract would pick up both; an incremental one sees only the new row. Row counts alone wouldn't show the difference, since `upsert` is idempotent -- the edited row is the tell.
 
-Tested by `tests/test_incremental_demo.py`.
+Tested by `tests/examples/test_incremental_demo.py`.
 
 
 ## masking
@@ -71,7 +71,7 @@ Builds a "production" and a "staging" SQLite database, then:
 
 It uses a throwaway key unless `MASKING_KEY` is already set.
 
-Tested by `tests/test_masking_demo.py`.
+Tested by `tests/examples/test_masking_demo.py`.
 
 
 ## native-masking
@@ -109,7 +109,7 @@ Ten cores, an M1 Pro. Overlapping gains little for Python, whose masking leaves 
 
 The Rust extension is optional. Without it, the demo runs the two Python runs and says how to install it: with Rust 1.83 or newer, `pip install ./mask-rs/py` from the repository root. One run at a time: each empties `transaction/` first, so a second refuses to start while one is running.
 
-Tested by `tests/test_native_masking_demo.py`.
+Tested by `tests/examples/test_native_masking_demo.py`.
 
 
 ## starter
@@ -128,4 +128,4 @@ cp example/starter/configuration/*.yaml configuration/
 
 Set the variables it reads -- `SOURCE_DB_PASSWORD`, `TARGET_DB_PASSWORD` and `MASKING_KEY` -- then edit it for your databases. The CLI reads `./configuration` by default; `--config DIR` points it anywhere else.
 
-Validated, with every demo's configuration, by `tests/test_shipped_example_configuration.py`. See [docs/configuration.md](../docs/configuration.md) for every field.
+Validated, with every demo's configuration, by `tests/examples/test_shipped_example_configuration.py`. See [docs/configuration.md](../docs/configuration.md) for every field.

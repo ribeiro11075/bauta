@@ -45,7 +45,7 @@ pip install ../target/wheels/bauta_rs-*.whl
 throughput to catch a backend that has silently fallen back to software, and a
 debug build is indistinguishable from one. `cargo test` covers `core/`; `py/`
 needs a Python interpreter to link, so it is tested from Python, by
-`tests/test_nativeMasking.py`.
+`tests/masking/test_nativeMasking.py`.
 
 ## Threads, and remembering masks
 

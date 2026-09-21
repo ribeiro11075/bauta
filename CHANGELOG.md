@@ -5,6 +5,44 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## 0.1.7 — 2026-09-21
+
+A watermark could leak an unmasked value, the package is reorganized into groups a newcomer can find their way around, run-state connections are closed, and loads spend less time in Python. No mask changes.
+
+### Breaking
+- **A `watermarkColumn` that `defaultStrategy` masks is refused by `validate`.** Only a column the policy named was checked, so a watermark column left to a masking `defaultStrategy` passed, and every run wrote its raw, unmasked value into run state and logged it. `audit --connect` was the only thing that noticed. Watermark on a column masked with `keep`, or name the column in the policy with `keep`. `run` also refuses it before reading a row.
+- **Modules moved into subpackages, and the old import paths are gone.** Every module is now in a package named for what it does: `configuration`, `database` (with `dialects`), `jobs` (`runner`, `pipeline`, `workers`, `keys`, `dependencyGraph`, `memory`, `reporting`), `log` (with `scrubbing`), `transform`, `masking`, `generate`, `review` and `cli`. `bauta.databaseDialects` is now `bauta.database.dialects`, split into one module per database. `bauta.builtinMasking`, `bauta.fakeData` and `bauta.fpe` are now `bauta.masking.strategies`, `.fakeData` and `.fpe`, beside `bauta.masking.core`. `discovery`, `builtinDiscovery`, `subset`, `schema` and `synthesize` moved under `bauta.generate`, and `audit`, `coverage` and `references` under `bauta.review`. `bauta.masking.Strategy`, which custom strategies subclass, is unchanged, as are the `bauta` command and every configuration setting.
+- **`bauta` exports less.** The dialect classes and `ColumnCategory` are imported from `bauta.database.dialects`, and `BaseJobConfig`, `Transform` and `resolveTransformer` are no longer exported at all. What `bauta` exports is now exactly what [library.md](docs/library.md#api-stability) documents, and anything reached only through a submodule is internal.
+- **A `MemoryBackend` implements all six methods.** Watermarks and key fingerprints had defaults so that backends written before them kept working, and the fingerprint default turned the masking-key-change check off without a word. A backend that leaves any method out now can't be created.
+- **`bauta.transform.builtinTransforms`** is the module path of the built-in transformers in `sourceQueryColumnTransforms`, in place of `bauta.builtinTransforms`: `bauta.transform.builtinTransforms:truncate(50)`.
+- **A native masker that refuses a strategy's options raises**, where it used to fall back to masking in Python without a word. The two are always the same version, so a refusal is a bug to report, not an older extension to work around.
+- **Run state recorded before the masking implementation was** reads as an implementation change, which logs a warning once on the next run of each masked upsert job; nothing is refused.
+- **`bauta.masking` no longer finds names lazily.** The shim that let the strategies and fake-data lists be reached through the old `bauta.masking` module is gone; `bauta.masking` exports them itself.
+
+### Changed
+- **PostgreSQL loads COPY through psycopg's own encoders**, twice as fast as the Python encoder they replace against a real server, with identical rows stored. Chunks holding an array, a JSON object or an interval still go statement by statement.
+- **Each chunk is checked for the types it holds by its distinct types, not value by value**: three to five times faster for every dialect's check, and SQL Server converts only the columns that need it.
+- **A PostgreSQL upsert creates its staging table once per connection**, not before every chunk: a round trip a chunk saved, 14% of a chunk's time at 10 ms of latency.
+- **`run --dry-run` and `audit --connect` open one connection per database alias**, where they opened one per check, three or four a job, each running `passwordCommand` again.
+- **Whether a column is masked is decided by its strategy's `PASSTHROUGH`, not its name.** A custom strategy that returns values unchanged is now treated like `keep` by the watermark and primary-key checks. `canonical`, the bytes the built-in strategies key a value on, is public in `bauta.masking` for custom strategies.
+
+### Fixed
+- **Run-state connections were never closed.** `DatabaseMemory` holds one connection per process and nothing closed it: each job process dropped its connection when it exited rather than closing it, and `bauta run`, `jobs` and `clear` held theirs until exit. A `MemoryBackend` now has `close()` and works as a context manager; the commands close theirs, and each job's process closes its copy once its outcome is sent.
+- **A connection whose session setup failed was left open**, such as a PostgreSQL `SET search_path` or an Oracle `ALTER SESSION` naming a schema that doesn't exist, and each retry opened another. It is now closed before the error is raised.
+- **SIGTERM under `--forever` waited out `cycleSleepSeconds` before stopping**, since Python resumes a sleep after a signal's handler returns; a long pause outlived a container's grace period. It now stops within a second.
+- **A `swap` on SQL Server failed for a table whose name contains a single quote**: `sp_rename` took the name as a string literal the quote ended.
+- **`run --dry-run` skipped a job's checks when another job was named like a database alias** whose check had failed.
+
+### Added
+- [SECURITY.md](SECURITY.md), for reporting a vulnerability privately, and [CONTRIBUTING.md](CONTRIBUTING.md).
+- `ruff check` runs in CI, for errors rather than style.
+- The test suite fails on a connection or file left open, the package's or a test's.
+- The tests mirror the package: the tests for `bauta/jobs/` are in `tests/jobs/`, and so on, with the helpers each needs beside them. See [where the tests are](docs/development.md#where-the-tests-are).
+- The operations every database must perform are one suite run against all six, where they were copied into a file per database and had drifted: MariaDB lacked four of them, including run state in a table, and SQLite several.
+- CI measures coverage across the unit and integration suites, job processes included, and fails below 95%.
+- GitHub Actions are pinned to commits, and Dependabot keeps them, the dev tools and the Rust crates current.
+
+
 ## 0.1.6 — 2026-09-20
 
 Masking and provability: a misspelled setting can no longer produce an unmasked

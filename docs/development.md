@@ -4,6 +4,7 @@
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all,dev]" ./mask-rs/py    # leave off ./mask-rs/py without Rust
 pytest
+ruff check
 mypy                                         # targets Python 3.10, the oldest supported
 ```
 
@@ -13,18 +14,24 @@ mypy                                         # targets Python 3.10, the oldest s
 `pytest` needs no servers. It covers everything that doesn't need a real network database, which is most of the package:
 
 - Unit tests against mocked cursors, verifying the SQL each dialect builds and the control flow around it.
-- **Real SQLite**, end to end — `tests/test_integration_sqlite.py` runs real streaming and incremental loads through real worker processes. It isn't marked `integration`, since SQLite ships with Python and needs no service.
+- **Real SQLite**, end to end — `tests/integration/test_integration_sqlite.py` runs real streaming and incremental loads through real worker processes. It isn't marked `integration`, since SQLite ships with Python and needs no service.
 - The CLI, driven through `main()` against a real SQLite database, including its exit codes, and `discover` and `subset` output that is then run.
-- Masking end to end through real worker processes (`tests/test_masking_end_to_end.py`), and the masking strategies' properties (`tests/test_masking.py`): determinism, consistency within a domain, one-to-one keys, and preserved types.
+- Masking end to end through real worker processes (`tests/masking/test_masking_end_to_end.py`), and the masking strategies' properties (`tests/masking/test_masking.py`): determinism, consistency within a domain, one-to-one keys, and preserved types.
 - The shipped examples: every `configuration/` under `example/` is validated against the real models, and every demo is run end to end, so none can drift from what the code accepts.
-- With the native masker installed, Python against Rust over the same values (`tests/test_nativeMasking.py`), on one thread and on eight, with identical masks and errors required.
+- With the native masker installed, Python against Rust over the same values (`tests/masking/test_nativeMasking.py`), on one thread and on eight, with identical masks and errors required.
+
+A connection or file left open, by the package or by a test, fails the run: `ResourceWarning` is an error. The garbage collector finds a leak later than it happened, so the failure is charged to whichever test is running then; `PYTHONTRACEMALLOC=20 pytest` shows where the object was opened.
 
 `tests/conftest.py` stubs `oracledb` and `psycopg` only when they aren't installed, so the default run needs no native client libraries.
+
+### Where the tests are
+
+`tests/` mirrors the package: the tests for `bauta/jobs/` are in `tests/jobs/`, and so on for `cli`, `configuration`, `database`, `generate`, `log`, `masking`, `review` and `transform`. Three folders don't follow a package. `tests/integration/` runs against real databases (all but the SQLite file are marked `integration`). `tests/examples/` runs every demo and validates every shipped configuration. `tests/repository/` checks the docs' links and the packaging. Helpers sit beside the tests they serve: `masking/customStrategies.py` is a strategy defined outside the package, as a policy can name one; `jobs/crashingTransforms.py` holds transforms that make a job's process exit or hang, for the runner's tests; `integration/servers.py` has the Docker databases' connection settings, and `integration/conftest.py` the fixtures built on them. Only `conftest.py` stays at the top, since every folder needs what it does: the repository on the import path, and stand-ins for drivers that aren't installed.
 
 
 ## The native masker
 
-`mask-rs/` holds `bauta-rs`, the optional Rust extension: a separate distribution, so this package installs anywhere without a Rust toolchain. It is released at `bauta`'s own version, which the Cargo workspace's `version` must match; `tests/test_packaging.py` checks, along with the `native` extra's pin. See [its README](../mask-rs/README.md) for the layout. Rust 1.83 or newer:
+`mask-rs/` holds `bauta-rs`, the optional Rust extension: a separate distribution, so this package installs anywhere without a Rust toolchain. It is released at `bauta`'s own version, which the Cargo workspace's `version` must match; `tests/repository/test_packaging.py` checks, along with the `native` extra's pin. See [its README](../mask-rs/README.md) for the layout. Rust 1.83 or newer:
 
 ```
 cd mask-rs
@@ -41,9 +48,9 @@ cd mask-rs/py && maturin develop --release
 
 Releases build every wheel from source on CI, so this is a local trap only. The version pin means a genuinely mismatched pair is refused rather than masking two different ways, so it fails loudly — but it does need doing.
 
-`--release` matters: two tests measure SHA-256 and AES throughput to catch a backend that fell back to software, which a debug build is indistinguishable from. `cargo test` covers `bauta-core`; the extension crate needs a Python interpreter to link, so it's tested from Python, by `tests/test_nativeMasking.py`.
+`--release` matters: two tests measure SHA-256 and AES throughput to catch a backend that fell back to software, which a debug build is indistinguishable from. `cargo test` covers `bauta-core`; the extension crate needs a Python interpreter to link, so it's tested from Python, by `tests/masking/test_nativeMasking.py`.
 
-**Python is the reference.** Change masking in Python first, port it, then regenerate the vectors with `python3 mask-rs/generate_vectors.py`. `tests/test_maskVectors.py` fails if Python drifts from the recorded file, so regenerating it is deliberate: it means every masked value has changed. Run the suite both ways, as CI does:
+**Python is the reference.** Change masking in Python first, port it, then regenerate the vectors with `python3 mask-rs/generate_vectors.py`. `tests/masking/test_maskVectors.py` fails if Python drifts from the recorded file, so regenerating it is deliberate: it means every masked value has changed. Run the suite both ways, as CI does:
 
 ```
 pytest                              # with the extension, if installed
@@ -53,7 +60,7 @@ BAUTA_NATIVE=0 pytest               # without
 
 ## Integration tests
 
-Six files run the same operations against real servers: `tests/test_integration_{mysql,postgresql,oracle,mssql,mariadb}.py`, plus `test_integration_cross_database.py`, which extracts from MySQL, applies a transform, and loads into PostgreSQL in one job. `test_integration_masking.py` runs against all five servers: foreign-key discovery (composite keys included), subset queries, and masked jobs over each driver's own numeric and date types. `test_integration_schema.py` runs `schema` and a copy for every pair of the six databases, 36 in all, plus `clear` under live foreign keys, and swaps through `schema`'s stage tables that keep the target's keys. `test_integration_references.py` loads rows past a declared key the way each of the six databases allows, and checks `verify-references` counts them, and those behind keys only a source declares. `test_integration_keys.py` checks primary-key lookups against a same-named table in another schema, upserts beside UNIQUE constraints and into key-only tables, swaps of schema-qualified tables, and swaps of a table other tables reference, whose keys stay on the old table so the stage can't be emptied again. `test_integration_scrubbing.py` makes each server fail on duplicates and bad values, and checks that no value reaches an error, an outcome or a log. `test_integration_connections.py` asks each server whether driver options arrived, whether the connection is encrypted, and where `currentSchema` sends unqualified names. `test_integration_postgresql.py` also round-trips every value type through `COPY`, and `test_integration_mssql.py` through SQL Server's multi-row statements. `tests/test_fpe.py` checks FF1 against NIST's published sample vectors.
+`tests/integration/test_integration_databases.py` runs the operations every database must perform the same way against all six: reading a table's shape, inserts, both upserts, swap, truncate, streaming, run state in a table, and whole jobs through `runDataJobs`. A check written there runs everywhere, so no database can be left without it; its SQLite runs are part of the default `pytest`. What only one database does has a file of its own: `test_integration_{postgresql,oracle,mssql,sqlite}.py`, whose fixtures come from `tests/integration/conftest.py` once the module names its `DATABASE`. Then `test_integration_cross_database.py`, which extracts from MySQL, applies a transform, and loads into PostgreSQL in one job. `test_integration_masking.py` runs against all five servers: foreign-key discovery (composite keys included), subset queries, and masked jobs over each driver's own numeric and date types. `test_integration_schema.py` runs `schema` and a copy for every pair of the six databases, 36 in all, plus `clear` under live foreign keys, and swaps through `schema`'s stage tables that keep the target's keys. `test_integration_references.py` loads rows past a declared key the way each of the six databases allows, and checks `verify-references` counts them, and those behind keys only a source declares. `test_integration_keys.py` checks primary-key lookups against a same-named table in another schema, upserts beside UNIQUE constraints and into key-only tables, swaps of schema-qualified tables, and swaps of a table other tables reference, whose keys stay on the old table so the stage can't be emptied again. `test_integration_scrubbing.py` makes each server fail on duplicates and bad values, and checks that no value reaches an error, an outcome or a log. `test_integration_connections.py` asks each server whether driver options arrived, whether the connection is encrypted, and where `currentSchema` sends unqualified names. `test_integration_postgresql.py` also round-trips every value type through `COPY`, and `test_integration_mssql.py` through SQL Server's multi-row statements. `tests/masking/test_fpe.py` checks FF1 against NIST's published sample vectors.
 
 They cover schema introspection, chunked inserts, both upsert paths, swap, truncate, streaming (including abandoning a stream part-way), the full `runDataJobs` path through real job processes, and `DatabaseMemory`.
 
@@ -76,11 +83,17 @@ docker compose down
 
 Each test creates its own uniquely named table and drops it afterwards, so the suite is safe to re-run against running containers. A missing driver or server skips the affected tests with a reason, rather than failing them.
 
-`tests/test_integration_names.py` is the one to read first when a name is involved: it copies into tables that can only be written in quotes -- a reserved word, a name with a space, one whose case the database folds -- on all six. `test_orphans.py` kills a run outright and checks its job dies with it; it needs no server, only POSIX.
+`tests/integration/test_integration_names.py` is the one to read first when a name is involved: it copies into tables that can only be written in quotes -- a reserved word, a name with a space, one whose case the database folds -- on all six. `test_orphans.py` kills a run outright and checks its job dies with it; it needs no server, only POSIX.
 
-**A sandbox to explore by hand.** `python tests/sandbox.py create NAME DIR` builds a deliberately awkward schema on all six databases -- composite keys, tables that reference each other, reserved-word names, values at each type's edges -- with its own namespace per server and a ready `DIR/configuration/database.yaml`, so several can exist at once. `drop` removes it. It is not part of any suite: it is there for trying commands against shapes that break data tools, which is how most of 0.1.5's fixes were found.
+**A sandbox to explore by hand.** `python tests/integration/sandbox.py create NAME DIR` builds a deliberately awkward schema on all six databases -- composite keys, tables that reference each other, reserved-word names, values at each type's edges -- with its own namespace per server and a ready `DIR/configuration/database.yaml`, so several can exist at once. `drop` removes it. It is not part of any suite: it is there for trying commands against shapes that break data tools, which is how most of 0.1.5's fixes were found.
 
 Run them before trusting a change to anything database-facing; they have found bugs the mocked suite couldn't.
+
+**Coverage.** CI's pinned-versions integration job runs the unit and integration suites together, job processes included, and fails below 95% of lines covered; it was 96.3% when the floor was set. To see it locally, with the servers up:
+
+```
+COVERAGE_FILE=$PWD/.coverage pytest -m "integration or not integration" --cov
+```
 
 
 ## Dependency versions
@@ -90,12 +103,14 @@ Run them before trusting a change to anything database-facing; they have found b
 - **`lowest.txt`** is the bottom of every range. CI installs it on Python 3.10 and runs everything, the integration suite included, so a lower bound that stops working fails there first.
 - **`image.txt`** pins every package `bauta[all]` installs, to one tested set of newer versions. CI's other integration run installs it.
 
-`tests/test_packaging.py` checks that `lowest.txt` matches the lower bounds and that `image.txt` is within the ranges. To raise a lower bound, change both `pyproject.toml` and `lowest.txt`. To move the pinned set to newer versions, edit the direct pins in `image.txt` and regenerate the rest with the command at its top.
+`tests/repository/test_packaging.py` checks that `lowest.txt` matches the lower bounds and that `image.txt` is within the ranges. To raise a lower bound, change both `pyproject.toml` and `lowest.txt`. To move the pinned set to newer versions, edit the direct pins in `image.txt` and regenerate the rest with the command at its top.
 
 
 ## Continuous integration and releases
 
-`.github/workflows/ci.yml` runs mypy and the default tests on every supported Python, with the newest dependency versions the ranges allow. It runs the integration suite against the `docker-compose.yml` servers twice: with `image.txt`'s versions on Python 3.14, and with the lowest versions on Python 3.10.
+`.github/workflows/ci.yml` runs ruff, mypy and the default tests on every supported Python, with the newest dependency versions the ranges allow. It runs the integration suite against the `docker-compose.yml` servers twice: with `image.txt`'s versions on Python 3.14, together with the unit suite and under the coverage floor, and with the lowest versions on Python 3.10.
+
+**Actions are pinned to commits**, with the release each one is in a comment, so a tag moved in an action's repository can't change what the workflows run -- the release workflow publishes to PyPI. `dtolnay/rust-toolchain` names its toolchain with `toolchain: stable`, since it otherwise reads it from the ref, which a commit no longer spells. [Dependabot](../.github/dependabot.yml) proposes updates weekly for the actions, `pyproject.toml` and the Rust crates. It leaves `constraints/lowest.txt` alone, which must stay at the bottom of each range, and `bauta-rs`, which must equal bauta's own version.
 
 `.github/workflows/release.yml` publishes a release when a tag matching the version in `pyproject.toml`, and in `mask-rs/Cargo.toml`, is pushed. Bump both, and the `native` extra's pin, together, and add the release to [CHANGELOG.md](../CHANGELOG.md), breaking changes first:
 

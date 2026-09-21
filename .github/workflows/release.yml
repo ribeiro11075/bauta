@@ -16,8 +16,8 @@ jobs:
     name: Build bauta
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.14'
       - name: Check the tag matches both versions
@@ -35,7 +35,7 @@ jobs:
           python -m pip install build==1.6.1 twine==7.0.0
           python -m build
           python -m twine check --strict dist/*
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: dist-bauta
           path: dist/
@@ -63,14 +63,14 @@ jobs:
             os: macos-26-intel
             target: x86_64
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: |
             3.10
             3.14
       - name: Build
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         with:
           working-directory: mask-rs/py
           target: ${{ matrix.target }}
@@ -88,7 +88,7 @@ jobs:
             "$RUNNER_TEMP/$python/bin/python" -c "import sys; from bauta.masking import nativeVersion; sys.exit(nativeVersion() is None)"
             "$RUNNER_TEMP/$python/bin/python" -m pytest -q
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: dist-bauta-rs-${{ matrix.target }}-${{ runner.os }}
           path: mask-rs/py/dist/
@@ -99,13 +99,15 @@ jobs:
     name: Build bauta-rs, source
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.14'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # stable branch
+        with:
+          toolchain: stable
       - name: Build
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         with:
           working-directory: mask-rs/py
           command: sdist
@@ -116,7 +118,7 @@ jobs:
           python -m pip install mask-rs/py/dist/bauta_rs-*.tar.gz
           python -c "import sys; from bauta.masking import nativeVersion; sys.exit(nativeVersion() is None)"
           python -m pytest -q
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: dist-bauta-rs-sdist
           path: mask-rs/py/dist/
@@ -130,12 +132,12 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           pattern: dist-*
           merge-multiple: true
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           # A re-run after a partial upload finishes the rest instead of failing
           # on what already went up; the tag check makes those files the same.

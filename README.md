@@ -200,7 +200,7 @@ The ones you'd set in a deployment; [operations.md](docs/operations.md#environme
 | [Operating it](docs/operations.md) | run state, history and notifications |
 | [Security model](docs/security.md) | what masking protects and what it doesn't, the constructions, keys, and a deployment checklist |
 | [Library](docs/library.md) | embedding it in Python, results, memory backends |
-| [Development](docs/development.md) | running the tests, including against real databases |
+| [Development](docs/development.md) | running the tests, including against real databases; see also [contributing](CONTRIBUTING.md) |
 | [Changelog](CHANGELOG.md) | what changed in each release, breaking changes first |
 
 
@@ -208,11 +208,19 @@ The ones you'd set in a deployment; [operations.md](docs/operations.md#environme
 
 | Path | What it is |
 | --- | --- |
-| `bauta/` | the package; `runner.py` runs jobs, `masking.py` masks with the strategies in `builtinMasking.py` and their lists in `fakeData.py`, `databaseDialects.py` holds per-database SQL, `audit.py` and `coverage.py` review what the jobs do |
+| `bauta/configuration/` | reading and validating the YAML: `${NAME}` and `passwordCommand` in `environment.py`, the models in `models.py` |
+| `bauta/database/` | streaming and loading rows in `connection.py`; what differs between the six databases in `dialects/`, one module each |
+| `bauta/jobs/` | `runner.py` runs a cycle of jobs, each in a process of its own (`workers.py`) moving rows a chunk at a time (`pipeline.py`); run state in `memory.py`, history and manifests in `reporting.py` |
+| `bauta/masking/` | the keyed hash, `Strategy` and masking plans in `core.py`, the built-in strategies in `strategies.py` |
+| `bauta/transform/` | per-column transforms, applied before masking, and the ones that ship in `builtinTransforms.py` |
+| `bauta/generate/` | `discover`, `subset`, `schema` and `synthesize`: what is built from a live schema |
+| `bauta/review/` | `audit`, `coverage` and `verify-references`: reports that move no data |
+| `bauta/log/` | logging, and the scrubbing that keeps values out of every message |
+| `bauta/cli/` | the `bauta` command, one module per group of subcommands |
 | `mask-rs/` | the optional native masker, in Rust — see [its README](mask-rs/README.md) |
 | `example/` | runnable demos, each with its `configuration/`, and a starter configuration — see [its README](example/README.md) |
 | `docs/` | the documentation above |
-| `tests/` | the test suite |
+| `tests/` | the test suite, laid out like the package; see [where the tests are](docs/development.md#where-the-tests-are) |
 
 
 ## License

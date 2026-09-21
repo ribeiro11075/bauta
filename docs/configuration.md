@@ -277,7 +277,7 @@ history:
 | `sourceDatabase` | required | An alias from `database.yaml`. |
 | `sourceQuery` | required | The query to extract with. |
 | `chunkSize` | required, at least 1 | Rows per batch. Extracts stream, so this is the **memory dial**: peak memory is about `chunkSize` × row width however large the source is — three times that where the [native masker](masking.md#the-native-masker) overlaps reading, masking and writing. |
-| `watermarkColumn` | optional | Makes the job incremental. See [incremental loads](design.md#incremental-loads). Refused on a column the masking policy masks: the watermark is read before masking and kept in run state, logs and `bauta jobs`, so it would leak the unmasked value. |
+| `watermarkColumn` | optional | Makes the job incremental. See [incremental loads](design.md#incremental-loads). Refused by `validate` on a column the masking policy masks, by name or through `defaultStrategy`: the watermark is read before masking and kept in run state, logs and `bauta jobs`, so it would leak the unmasked value. |
 | `watermarkInitial` | required with `watermarkColumn` | The value bound on the first run, before anything is stored. Bound as the type YAML read: write a timestamp unquoted, or PostgreSQL and Oracle refuse the [lookback](design.md#why-the-lookback-window) arithmetic around it. |
 
 A job with `watermarkColumn` must also put a `{{ watermark }}` placeholder in `sourceQuery` and use `insertStrategy: upsert`. Validation enforces all three.
@@ -293,17 +293,17 @@ A reference is `module.path:function_name` — any importable function taking th
 ```yaml
 sourceQueryColumnTransforms:
   amount:
-  - bauta.builtinTransforms:currency
+  - bauta.transform.builtinTransforms:currency
   name:
-  - bauta.builtinTransforms:collapseWhitespace
-  - bauta.builtinTransforms:truncate(50)
+  - bauta.transform.builtinTransforms:collapseWhitespace
+  - bauta.transform.builtinTransforms:truncate(50)
   signup_date:
-  - "bauta.builtinTransforms:parseDate('%d/%m/%Y')"
+  - "bauta.transform.builtinTransforms:parseDate('%d/%m/%Y')"
 ```
 
 Quote a reference whose arguments contain `: `, `#` or a leading quote, as YAML would otherwise read them. `validate` checks that each reference imports and that its arguments fit the function, so a missing or misspelled argument fails there rather than on the first row. Only literals are accepted, so a reference can't run code.
 
-These ship with the package, in `bauta.builtinTransforms`. Every one passes NULL through unchanged, except `defaultIfNull`, and raises on a value it can't convert rather than guessing.
+These ship with the package, in `bauta.transform.builtinTransforms`. Every one passes NULL through unchanged, except `defaultIfNull`, and raises on a value it can't convert rather than guessing.
 
 | Transform | Result |
 | --- | --- |

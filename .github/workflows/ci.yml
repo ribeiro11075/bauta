@@ -26,13 +26,15 @@ jobs:
           - os: macos-latest
             python: '3.14'
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: ${{ matrix.python }}
           cache: pip
       - name: Install
         run: python -m pip install -e ".[dev,fpe]"
+      - name: Lint
+        run: ruff check
       - name: Type-check
         run: mypy
       - name: Test
@@ -49,12 +51,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.14'
           cache: pip
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # stable branch
+        with:
+          toolchain: stable
       - name: Install
         run: |
           python -m pip install -e ".[dev,fpe]" maturin
@@ -95,8 +99,8 @@ jobs:
             python: '3.10'
             constraints: constraints/lowest.txt
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -110,7 +114,17 @@ jobs:
           mypy
           pytest -q
       - name: Test
+        if: matrix.versions == 'lowest'
         run: pytest -q -m integration
+      # Everything at once, the one run that reaches every line, so coverage
+      # is measured here: the unit suite alone can't reach the dialects' SQL.
+      - name: Test, with coverage
+        if: matrix.versions == 'pinned'
+        env:
+          # Absolute, since tests change directory and the job processes they
+          # start would otherwise write coverage data wherever they are.
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage
+        run: pytest -q -m "integration or not integration" --cov --cov-fail-under=95
       - name: Database logs
         if: failure()
         run: docker compose logs --tail 200
