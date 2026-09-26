@@ -64,7 +64,7 @@ sqlite = []
 # pyarrow is how a chunk reaches DuckDB in one statement: its executemany
 # runs once per row, and took 13 seconds for 50,000. pytz is what DuckDB
 # needs to return a TIMESTAMP WITH TIME ZONE, and doesn't install itself
-duckdb = ["duckdb>=1.1", "pyarrow>=18", "pytz>=2024.1"]
+duckdb = ["duckdb>=1.2", "pyarrow>=18", "pytz>=2024.1"]
 # The fpe masking strategy's AES; oracledb already depends on it
 fpe = ["cryptography>=42"]
 all = ["bauta[mysql,postgresql,oracle,mssql,mariadb,sqlite,duckdb,fpe]"]

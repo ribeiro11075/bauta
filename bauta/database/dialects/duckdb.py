@@ -5,6 +5,7 @@ import decimal
 import json
 import re
 import time
+import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 from ..driver import Connection, Cursor
@@ -39,7 +40,7 @@ def _arrowValue(value: Any) -> Any:
 
 # What a column Arrow can't type may hold and still be sent as text: DuckDB
 # casts the text to the column's type, as it casts each value row by row.
-_AS_TEXT = (int, float, decimal.Decimal, str)
+_AS_TEXT = (int, float, decimal.Decimal, str, uuid.UUID)
 
 
 def _asArrowTable(rows: Sequence[Sequence[Any]]) -> Any:
@@ -47,9 +48,9 @@ def _asArrowTable(rows: Sequence[Sequence[Any]]) -> Any:
     column can't be sent through Arrow at all.
 
     A column Arrow can't give one type -- SQLite hands back numbers and text
-    together in one, and a Python integer can outgrow any Arrow integer --
-    goes as text where it holds only numbers and text, rather than sending the
-    whole chunk row by row.
+    together in one, a Python integer can outgrow any Arrow integer, and an
+    older pyarrow has no UUID type -- goes as text where it holds only
+    numbers, text and UUIDs, rather than sending the whole chunk row by row.
     """
 
     try:

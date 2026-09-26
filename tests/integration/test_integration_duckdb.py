@@ -159,6 +159,19 @@ def test_a_chunk_loads_without_pyarrow(liveDatabase, monkeypatch):
     assert liveDatabase.query('SELECT name FROM people') == [('a',)]
 
 
+def test_an_integer_past_64_bits_loads_exactly_row_by_row(liveDatabase, monkeypatch):
+    """DuckDB before 1.5 binds such an integer as a float, so a chunk that
+    went row by row -- one pyarrow couldn't carry, such as a UUID column on
+    pyarrow 18 -- stored 10**30 as 1000000000000000019884624838656.
+    """
+    monkeypatch.setitem(sys.modules, 'pyarrow', None)
+    liveDatabase.alter('CREATE TABLE wide (id INTEGER PRIMARY KEY, exact DECIMAL(38,0), huge HUGEINT)')
+
+    liveDatabase.insert(table='wide', data=[(1, 10 ** 30, -10 ** 30)])
+
+    assert liveDatabase.query('SELECT exact, huge FROM wide') == [(decimal.Decimal(10 ** 30), -10 ** 30)]
+
+
 def test_upsert_updates_existing_rows_and_inserts_new_ones(liveDatabase):
     _people(liveDatabase)
     liveDatabase.insert(table='people', data=[(1, 'old', 1)])

@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import re
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple, Type, TypeVar, Union
+from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple, Type, TypeVar, Union, cast
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, TypeAdapter, ValidationError, field_validator, model_validator
 
@@ -339,7 +339,8 @@ _CONNECTION_MODELS: Dict[DatabaseType, Type[_Connection]] = {
 ConnectionConfig = Annotated[Union[PostgreSQLConnection, MySQLConnection, MariaDBConnection, MSSQLConnection, OracleConnection,
                                    SQLiteConnection, DuckDBConnection], Field(discriminator='type')]
 
-_CONNECTION_ADAPTER: 'TypeAdapter[ConnectionConfig]' = TypeAdapter(ConnectionConfig)
+# Cast, since pydantic's stubs before 2.7 take a class here and not a union.
+_CONNECTION_ADAPTER: 'TypeAdapter[ConnectionConfig]' = TypeAdapter(cast(Any, ConnectionConfig))
 
 
 def _listed(names: Sequence[str]) -> str:

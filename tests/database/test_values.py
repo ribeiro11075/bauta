@@ -31,7 +31,7 @@ TABLE = [
     (MOMENT, {POSTGRESQL, MYSQL, MARIADB, ORACLE, DUCKDB}, {MSSQL: '2026-01-02 03:04:05.678901', SQLITE: '2026-01-02 03:04:05.678901'}),
     (DAY, set(DatabaseType) - {SQLITE}, {SQLITE: '2026-01-02'}),
     (decimal.Decimal('123456789012345678.1234567890'), set(DatabaseType) - {SQLITE}, {SQLITE: '123456789012345678.1234567890'}),
-    (2 ** 63, set(DatabaseType) - {SQLITE}, {SQLITE: '9223372036854775808'}),
+    (2 ** 63, set(DatabaseType) - {SQLITE, DUCKDB}, {SQLITE: '9223372036854775808', DUCKDB: '9223372036854775808'}),
     (2 ** 63 - 1, set(DatabaseType), {}),
     (True, set(DatabaseType), {}),
     ('text', set(DatabaseType), {}),
@@ -50,6 +50,8 @@ def test_each_type_is_sent_to_each_database_as_its_driver_takes_it(database, val
     oracledb, an integer past 64 bits on sqlite3.
     """
     assert database in unchanged or database in converted, 'the table says nothing of {} for {}'.format(type(value).__name__, database.value)
+    if database == POSTGRESQL and isinstance(value, dict):
+        pytest.importorskip('psycopg.types.json', reason='a dict goes to PostgreSQL as psycopg\'s Jsonb')
 
     [(sent,)] = prepareValues(database, [(value,)])
 
@@ -65,7 +67,7 @@ def test_a_list_goes_to_postgresql_as_json_only_into_a_json_column():
     """psycopg writes a list as an array, which a `text[]` column needs and a
     `jsonb` column refused: a DuckDB LIST copied into PostgreSQL never loaded.
     """
-    from psycopg.types.json import Jsonb
+    Jsonb = pytest.importorskip('psycopg.types.json').Jsonb
 
     jsonb, textArray = 3802, 1009
     [row] = prepareValues(POSTGRESQL, [(['a'], ['b'], {'c': 1})], columnTypes=[jsonb, textArray, None])

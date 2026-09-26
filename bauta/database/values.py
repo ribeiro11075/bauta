@@ -49,8 +49,8 @@ def jsonText(value: Any) -> str:
     return json.dumps(value, default=str, ensure_ascii=False)
 
 
-# The integers SQLite stores as integers: 64 bits, signed.
-_SQLITE_INTEGERS = range(-2 ** 63, 2 ** 63)
+# The integers a driver binds as integers: 64 bits, signed.
+_BOUND_INTEGERS = range(-2 ** 63, 2 ** 63)
 
 # The json and jsonb type codes: the PostgreSQL columns a list goes to as JSON.
 _POSTGRESQL_JSON = {114, 3802}
@@ -81,12 +81,13 @@ def _isoDateTime(value: Any, columnType: Any) -> Any:
     return value.isoformat(sep=' ')
 
 
-def _sqliteInteger(value: Any, columnType: Any) -> Any:
-    """Past 64 bits as its exact text, which `schema` creates such a column as;
-    sqlite3 raises OverflowError on one.
+def _wideInteger(value: Any, columnType: Any) -> Any:
+    """Past 64 bits as its exact text, which the database casts to the
+    column's type: sqlite3 raises OverflowError on such an integer, and
+    DuckDB before 1.5 binds one as a float, rounding it even into a HUGEINT.
     """
 
-    return str(value) if value not in _SQLITE_INTEGERS else value
+    return str(value) if value not in _BOUND_INTEGERS else value
 
 
 def _postgresqlJson(value: Any, columnType: Any) -> Any:
@@ -122,6 +123,7 @@ def _postgresqlList(value: Any, columnType: Any) -> Any:
 #   them, and Python's built-in adapters for dates are deprecated since 3.12.
 #   A Decimal kept as exact text needs a column of text affinity, which is
 #   what `schema` creates for one.
+# - Integers past 64 bits as exact text on SQLite and DuckDB; see _wideInteger.
 CONVERSIONS: Dict[DatabaseType, Dict[type, Optional[Conversion]]] = {
     DatabaseType.POSTGRESQL: {datetime.timedelta: _duration, dict: _postgresqlJson, list: _postgresqlList},
     DatabaseType.MYSQL: {datetime.timedelta: _duration, dict: _json, list: _json, uuid.UUID: _text, datetime.time: _iso},
@@ -129,8 +131,8 @@ CONVERSIONS: Dict[DatabaseType, Dict[type, Optional[Conversion]]] = {
     DatabaseType.ORACLE: {datetime.timedelta: _duration, dict: _json, list: _json, uuid.UUID: _text, datetime.time: _iso},
     DatabaseType.MSSQL: {datetime.timedelta: _duration, dict: _json, list: _json, datetime.datetime: _isoDateTime, datetime.time: _iso},
     DatabaseType.SQLITE: {datetime.timedelta: _duration, dict: _json, list: _json, uuid.UUID: _text, datetime.time: _iso,
-                          datetime.datetime: _isoDateTime, datetime.date: _iso, decimal.Decimal: _text, int: _sqliteInteger, bool: None},
-    DatabaseType.DUCKDB: {datetime.timedelta: _duration},
+                          datetime.datetime: _isoDateTime, datetime.date: _iso, decimal.Decimal: _text, int: _wideInteger, bool: None},
+    DatabaseType.DUCKDB: {datetime.timedelta: _duration, int: _wideInteger, bool: None},
     }
 
 # The databases whose conversions depend on the column a value goes to, whose
@@ -176,8 +178,8 @@ def prepareValues(databaseType: DatabaseType, rows: List[Tuple[Any, ...]], colum
             continue
         columnType = columnTypes[index] if columnTypes is not None and index < len(columnTypes) else None
         converted = tuple(value if (conversion := conversions[type(value)]) is None else conversion(value, columnType) for value in column)
-        # A conversion may leave every value as it was -- SQLite's integers,
-        # nearly always within 64 bits -- and the chunk is then kept whole.
+        # A conversion may leave every value as it was -- integers, nearly
+        # always within 64 bits -- and the chunk is then kept whole.
         if any(new is not old for new, old in zip(converted, column)):
             columns[index] = converted
             changed = True
