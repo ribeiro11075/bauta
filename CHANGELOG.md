@@ -5,9 +5,9 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.1.9 — 2026-09-26
 
-DuckDB joins the six databases as a source or target, and the connections file and a job's connection settings are renamed, since a connection will not always be a database. No mask changes.
+DuckDB joins the six databases as a source or target, and connections replace databases as the unit of configuration: `connections.yaml`, `sourceConnection` and `targetConnection`, and settings checked per connection type. Copies between databases load lists, JSON, UUIDs, times and unsigned integers that failed before. **Read Breaking before upgrading: every configuration needs editing.** No mask changes.
 
 ### Breaking
 - **`database.yaml` is now `connections.yaml`**, and a job's `sourceDatabase` and `targetDatabase` are now `sourceConnection` and `targetConnection`, in `defaults:` too. The old names are not read: `validate` refuses them as unknown settings. Rename the file, then search and replace the two settings.
