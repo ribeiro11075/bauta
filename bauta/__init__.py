@@ -5,8 +5,9 @@ What is importable from here is the public API, the one docs/library.md
 describes. A name reached only through a submodule is internal, unless the
 documentation names it there, and may change in any release.
 """
-from .configuration import (Configuration, ConfigurationError, DatabaseConnectionConfig, DatabaseType, DataJobConfig, DataJobsFile,
-                            DiscoveryRulesFile, InsertStrategy, MaskingConfig, expandEnvironmentVariables)
+from .configuration import (Configuration, ConfigurationError, ConnectionConfig, DatabaseType, DataJobConfig, DataJobsFile, DiscoveryRulesFile,
+                            DuckDBConnection, InsertStrategy, MariaDBConnection, MaskingConfig, MSSQLConnection, MySQLConnection, OracleConnection,
+                            PostgreSQLConnection, SQLiteConnection, connectionConfig, expandEnvironmentVariables)
 from .database import Database
 from .jobs.dependencyGraph import DependencyGraph, JobOutcome, JobStatus
 from .database.dialects import ForeignKey
@@ -31,7 +32,15 @@ __all__ = [
     'DATABASE_HISTORY_SCHEMA',
     'DATABASE_MANIFEST_SCHEMA',
     'DATABASE_MEMORY_SCHEMA',
-    'DatabaseConnectionConfig',
+    'ConnectionConfig',
+    'connectionConfig',
+    'DuckDBConnection',
+    'MariaDBConnection',
+    'MSSQLConnection',
+    'MySQLConnection',
+    'OracleConnection',
+    'PostgreSQLConnection',
+    'SQLiteConnection',
     'DatabaseHistory',
     'DatabaseManifests',
     'DatabaseMemory',

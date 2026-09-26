@@ -6,7 +6,7 @@ network databases in test_integration_masking.py.
 """
 import pytest
 
-from bauta.configuration import Configuration, DatabaseConnectionConfig, DatabaseType, DataJobsFile
+from bauta.configuration import Configuration, connectionConfig, DatabaseType, DataJobsFile
 from bauta.database import Database
 from bauta.jobs.dependencyGraph import JobStatus
 from bauta.jobs.memory import FileMemory
@@ -35,8 +35,8 @@ ORDER_POLICY = {
 @pytest.fixture
 def databases(tmp_path):
     settings = {
-        'prod': DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(tmp_path / 'prod.db')),
-        'staging': DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(tmp_path / 'staging.db')),
+        'prod': connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'prod.db')),
+        'staging': connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'staging.db')),
         }
 
     for alias in settings:
@@ -54,7 +54,7 @@ def databases(tmp_path):
 
 def job(table, policy, **overrides):
     definition = {
-        'active': True, 'sourceDatabase': 'prod', 'sourceQuery': 'SELECT * FROM {}'.format(table), 'targetDatabase': 'staging',
+        'active': True, 'sourceConnection': 'prod', 'sourceQuery': 'SELECT * FROM {}'.format(table), 'targetConnection': 'staging',
         'targetTableFinal': table, 'insertStrategy': 'upsert', 'chunkSize': 7, 'masking': {'key': KEY, 'columns': policy},
         }
     definition.update(overrides)
@@ -63,7 +63,7 @@ def job(table, policy, **overrides):
 
 def run(databases, tmp_path, jobs):
     jobsFile = Configuration.validateJobConfiguration({'workers': 2, 'jobs': jobs}, DataJobsFile)
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration=databases, logFile=tmp_path / 'jobs.log',
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=databases, logFile=tmp_path / 'jobs.log',
                          memory=FileMemory(memoryFile=tmp_path / 'memory.yaml'))
     return jobsFile, result
 
@@ -149,7 +149,7 @@ def test_a_value_a_strategy_cannot_mask_fails_the_job_without_leaking_it(databas
 
 
 def test_masking_in_place_swaps_through_a_stage_table(databases, tmp_path):
-    inPlace = job('customers', CUSTOMER_POLICY, targetDatabase='prod', insertStrategy='swap', targetTableStage='customers_stage')
+    inPlace = job('customers', CUSTOMER_POLICY, targetConnection='prod', insertStrategy='swap', targetTableStage='customers_stage')
 
     _, result = run(databases, tmp_path, {'maskInPlace': inPlace})
 
@@ -163,7 +163,7 @@ def test_a_masked_swap_leaves_nothing_unmasked_in_the_stage_table(databases, tmp
     """The swap moves what the target held into the stage; masking in place
     that is the unmasked original, which used to stay readable there.
     """
-    inPlace = job('customers', CUSTOMER_POLICY, targetDatabase='prod', insertStrategy='swap', targetTableStage='customers_stage')
+    inPlace = job('customers', CUSTOMER_POLICY, targetConnection='prod', insertStrategy='swap', targetTableStage='customers_stage')
 
     _, result = run(databases, tmp_path, {'maskInPlace': inPlace})
 
@@ -258,7 +258,7 @@ def test_the_run_refuses_a_masked_watermark_column_that_skipped_validation(datab
     masked = config.model_copy(update={'masking': config.masking.model_copy(update={'defaultStrategy': {'strategy': 'hash'}})})
     jobsFile = jobsFile.model_copy(update={'jobs': {'maskCustomers': masked}})
 
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration=databases, logFile=tmp_path / 'jobs.log',
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=databases, logFile=tmp_path / 'jobs.log',
                          memory=FileMemory(memoryFile=tmp_path / 'memory.yaml'))
 
     assert result.failed[0].error.startswith('MaskingError')

@@ -4,7 +4,7 @@ The field reference. For *why* things behave as they do, see [design.md](design.
 
 - [Where configuration is found](#where-configuration-is-found)
 - [Credentials](#credentials)
-- [`database.yaml`](#databaseyaml)
+- [`connections.yaml`](#connectionsyaml)
   - [Driver options and TLS](#driver-options-and-tls)
 - [`jobs.yaml` — data jobs](#jobsyaml--data-jobs)
 - [Validation](#validation)
@@ -20,16 +20,16 @@ The CLI reads its configuration from one directory, found in this order:
 
 | File | Required | Holds | Read by |
 | --- | --- | --- | --- |
-| `database.yaml` | yes | The [database aliases](#databaseyaml). | Every command, except `history` and `verify-manifest` given a file. |
+| `connections.yaml` | yes | The [connection aliases](#connectionsyaml). | Every command, except `history` and `verify-manifest` given a file. |
 | `jobs.yaml` | for jobs | The [data jobs](#jobsyaml--data-jobs), and where run state, history and the manifest are kept. | `run`, `validate`, `jobs`, `audit`, `clear`; `history` and `verify-manifest` when no flag names a file or table. |
 | `discovery.yaml` | no | [Rules of your own](masking.md#your-own-rules-discoveryyaml) for recognising personal data. | `discover`, `subset --mask`, `audit`, `synthesize`, `validate`. |
 
-`--databases FILE`, `--jobs FILE` and `--rules FILE` name a file anywhere else.
+`--connections FILE`, `--jobs FILE` and `--rules FILE` name a file anywhere else.
 
 Paths inside `jobs.yaml` are relative to `jobs.yaml`, so a cron entry and a shell started elsewhere find the same files. Paths on the command line are relative to the working directory. A layout that keeps what you write apart from what runs write:
 
 ```
-configuration/    database.yaml, jobs.yaml, discovery.yaml
+configuration/    connections.yaml, jobs.yaml, discovery.yaml
 transaction/      run state, history and the manifest, which jobs.yaml points at as ../transaction/...
 ```
 
@@ -53,12 +53,12 @@ key: ${file:/run/secrets/masking-key}
 | `${file:/path}` | The file's content, without a trailing newline — how Docker, Kubernetes and secret-store drivers mount secrets. An unreadable file stops the run like an unset variable. |
 | `$${NAME}` | A literal `${NAME}`, for SQL that contains one. PostgreSQL dollar-quoting (`$$body$$`) needs no escaping. |
 
-Kept this way, `database.yaml` holds references to secrets rather than secrets, and is safe to commit.
+Kept this way, `connections.yaml` holds references to secrets rather than secrets, and is safe to commit.
 
 
-## `database.yaml`
+## `connections.yaml`
 
-One entry per database alias. Jobs refer to databases by these aliases.
+One entry per connection alias. Jobs refer to connections by these aliases, as `sourceConnection` and `targetConnection`.
 
 ```yaml
 warehouse:
@@ -69,24 +69,45 @@ warehouse:
   password: ${WAREHOUSE_PASSWORD}
 ```
 
-| Field | Required or default | Meaning |
-| --- | --- | --- |
-| `type` | required | `oracle`, `mysql`, `postgresql`, `mssql`, `mariadb` or `sqlite` |
-| `database` | required | The database name. For `sqlite`, a file path or `:memory:`. SQLite connections enforce declared foreign keys, as every other database does; SQLite itself leaves them off unless asked. |
-| `host`, `user` | required except for `sqlite` | SQLite is a local file with no server or authentication, so these are omitted for it. |
-| `password` | required except for `sqlite`, unless `passwordCommand` is set | Held as a secret, so it never appears in a log line or a traceback. |
-| `passwordCommand` | optional | A command whose output is the password, run at every connection. A string is split as a shell would split it, without a shell; `validate` rejects one that names no program or has an unterminated quote. For credentials that expire; see [passwords that expire](#passwords-that-expire). |
-| `port` | optional | The driver's standard port when omitted. |
-| `serviceName` / `sid` | oracle only | Exactly one is required for `type: oracle`. |
-| `currentSchema` | optional, postgresql and oracle only | The schema unqualified table names, and every key and column lookup, resolve in. PostgreSQL sets `search_path` to this schema alone; Oracle sets `CURRENT_SCHEMA`. On the other databases, qualify names as `schema.table` instead. |
-| `requireMasking` | optional, `false` | No job may read from or write to this database without a masking policy. See [requiring masking](#requiring-masking). |
-| `options` | optional | Extra keyword arguments for the driver's `connect()`, for anything the fields above don't cover. See below. |
+Each type takes only the settings that apply to it. A setting that belongs to another type -- a `serviceName` on a PostgreSQL connection, a `host` on a SQLite one -- is an error naming the types it belongs to, rather than accepted and ignored.
 
-Any other field is an error, so a misspelled setting stops `validate` rather than leaving the connection to behave in some way nobody configured.
+| Setting | Types | Required or default | Meaning |
+| --- | --- | --- | --- |
+| `type` | all | required | `postgresql`, `mysql`, `mariadb`, `mssql`, `oracle`, `sqlite` or `duckdb` |
+| `database` | postgresql, mysql, mariadb, mssql | required | The database name. |
+| `path` | sqlite, duckdb | required | The database file, or `:memory:`. SQLite connections enforce declared foreign keys, as every other database does; SQLite itself leaves them off unless asked. See [DuckDB](#duckdb) for what differs there. |
+| `host`, `user` | the five server types | required | |
+| `password` | the five server types | required, unless `passwordCommand` is set | Held as a secret, so it never appears in a log line or a traceback. |
+| `passwordCommand` | the five server types | optional | A command whose output is the password, run at every connection. A string is split as a shell would split it, without a shell; `validate` rejects one that names no program or has an unterminated quote. For credentials that expire; see [passwords that expire](#passwords-that-expire). |
+| `port` | the five server types | optional | The driver's standard port when omitted. |
+| `serviceName` / `sid` | oracle | exactly one | Oracle is reached by service name or SID; it has no `database`. |
+| `currentSchema` | postgresql, oracle, duckdb | optional | The schema unqualified table names, and every key and column lookup, resolve in. PostgreSQL sets `search_path` to this schema alone; Oracle sets `CURRENT_SCHEMA`; DuckDB sets `schema`. On the other databases, qualify names as `schema.table` instead. |
+| `maxConcurrentJobs` | all | optional, no limit | The most jobs that may use this connection at once, however many `workers` there are. A job that would pass it waits for one on this connection to finish, while jobs on other connections start. For a server that can take only so many loads at a time. Always 1 for `duckdb`; a higher value is refused. |
+| `requireMasking` | all | optional, `false` | No job may read from or write to this connection without a masking policy. See [requiring masking](#requiring-masking). |
+| `options` | all | optional | Extra keyword arguments for the driver's `connect()`, for anything the settings above don't cover; for `duckdb`, DuckDB's own settings, such as `memory_limit` and `threads`. See below. |
+
+Any other setting is an error, so a misspelled one stops `validate` rather than leaving the connection to behave in some way nobody configured.
+
+Before 0.1.9 this file was `database.yaml`, a job named its connections with `sourceDatabase` and `targetDatabase`, SQLite named its file with `database`, and Oracle required a `database` it never used. The old names are refused as unknown settings.
+
+### DuckDB
+
+```yaml
+analytics:
+  type: duckdb
+  path: /srv/data/analytics.duckdb
+  options: {memory_limit: 4GB}
+```
+
+Install it with `pip install "bauta[duckdb]"`, which brings pyarrow for fast loads. DuckDB is a source or target like any other database, with three differences, each stopped with an error that says so rather than left to fail part-way:
+
+- **One job at a time per file.** DuckDB lets one process open a file, and every job runs in a process of its own, so the run starts one job at a time on a DuckDB connection (its `maxConcurrentJobs` is always 1). `workers` still runs jobs on other connections alongside. Two aliases for one file are refused, since each would count its jobs apart. Anything else holding the file open -- another run, a program reading it -- makes a job wait up to a minute, then fail saying why.
+- **No run state in DuckDB.** The run holds its run-state connection for as long as it lasts, so `memory` can't be a DuckDB table. `history` and `manifest` can, since each is written once a cycle ends.
+- **No swap of a table in a foreign key, or with an index.** DuckDB won't rename a table with an index or one another references, and renaming one that references another corrupts its catalog. A `swap` job whose target or stage is either fails before renaming anything; use `upsert` for it. A primary key is fine. `clear` empties such tables one transaction per table, since DuckDB checks a foreign key against what is committed: a clear stopped part-way leaves the tables it reached empty, and running it again finishes it.
 
 ### Requiring masking
 
-`requireMasking: true` on an alias makes a job that names it as `sourceDatabase` or `targetDatabase` without a `masking` policy fail `bauta validate`, before anything connects:
+`requireMasking: true` on an alias makes a job that names it as `sourceConnection` or `targetConnection` without a `masking` policy fail `bauta validate`, before anything connects:
 
 ```yaml
 staging:
@@ -99,7 +120,7 @@ staging:
 ```
 
 ```
-copyCountries: targetDatabase "staging" is configured with requireMasking, and this job has no masking
+copyCountries: targetConnection "staging" is configured with requireMasking, and this job has no masking
 policy. Add one naming every column sourceQuery returns -- `keep` for the ones that need no masking
 ```
 
@@ -170,9 +191,9 @@ workers: 2
 jobs:
   loadOrders:
     active: true
-    sourceDatabase: app
+    sourceConnection: app
     sourceQuery: select id, customerId, amount from orders
-    targetDatabase: warehouse
+    targetConnection: warehouse
     targetTableFinal: orders
     insertStrategy: upsert
     chunkSize: 5000
@@ -184,12 +205,12 @@ jobs:
 | --- | --- | --- |
 | `workers` | required | Worker processes to run jobs concurrently, at least 1. |
 | `cycleSleepSeconds` | optional, `0.5` | Pause between cycles under `--forever`. |
-| `memory` | optional, `memory.yaml` | Where `run` keeps run state: last runs, watermarks and key fingerprints. A file, or a [table](#tables). `--memory FILE` or `--memory-database ALIAS` overrides it. See [run state](operations.md#run-state). |
-| `history` | optional | Where `run` records each job's outcome after every cycle, for `bauta history`. A JSON-lines file, or a [table](#tables). Not recorded when unset. `--history FILE` or `--history-database ALIAS` overrides it. See [run history](operations.md#run-history). |
-| `manifest` | optional | Where `run` writes its [masking manifest](masking.md#the-manifest), for `bauta verify-manifest`. A file, replaced each run, or a [table](#tables), which keeps every run's. Not written when unset. `--manifest FILE` or `--manifest-database ALIAS` overrides it. |
+| `memory` | optional, `memory.yaml` | Where `run` keeps run state: last runs, watermarks and key fingerprints. A file, or a [table](#tables). `--memory FILE` or `--memory-connection ALIAS` overrides it. See [run state](operations.md#run-state). |
+| `history` | optional | Where `run` records each job's outcome after every cycle, for `bauta history`. A JSON-lines file, or a [table](#tables). Not recorded when unset. `--history FILE` or `--history-connection ALIAS` overrides it. See [run history](operations.md#run-history). |
+| `manifest` | optional | Where `run` writes its [masking manifest](masking.md#the-manifest), for `bauta verify-manifest`. A file, replaced each run, or a [table](#tables), which keeps every run's. Not written when unset. `--manifest FILE` or `--manifest-connection ALIAS` overrides it. |
 | `maskingThreads` | optional, `1` | Threads the [native masker](masking.md#the-native-masker) masks each job with: `1`, a number up to the cores available, or `auto` to divide the cores between the jobs running. Results are the same for any count. `BAUTA_MASKING_THREADS` overrides it. See [masking threads](masking.md#masking-threads). |
 | `defaults` | optional | Settings every job takes unless it names its own. See [defaults](#defaults). |
-| `acknowledged` | optional | Tables no job copies, on purpose: database alias, then table, then why. What [`bauta coverage`](masking.md#coverage-what-the-jobs-do-not-cover) reads. |
+| `acknowledged` | optional | Tables no job copies, on purpose: connection alias, then table, then why. What [`bauta coverage`](masking.md#coverage-what-the-jobs-do-not-cover) reads. |
 | `jobs` | required | A map of job name to job definition. |
 
 `validate` prints where all three resolve, and how many masking threads a run would use.
@@ -216,7 +237,7 @@ What every job would otherwise repeat. A job that names any of these itself keep
 | Field | Meaning |
 | --- | --- |
 | `active`, `refresh` | As in [scheduling](#scheduling). |
-| `sourceDatabase`, `targetDatabase` | As in [extract](#extract) and [load](#load). |
+| `sourceConnection`, `targetConnection` | As in [extract](#extract) and [load](#load). |
 | `insertStrategy`, `chunkSize` | As in [load](#load) and [extract](#extract). |
 | `retries`, `retryDelaySeconds`, `timeoutSeconds` | As in [scheduling](#scheduling). |
 | `masking.key` | The key a masked job uses when it gives none of its own. |
@@ -228,8 +249,8 @@ A job with no `masking` block of its own does not grow one from `defaults`. An u
 ```yaml
 defaults:
   active: true
-  sourceDatabase: sourceDb
-  targetDatabase: targetDb
+  sourceConnection: sourceDb
+  targetConnection: targetDb
   insertStrategy: upsert
   chunkSize: 5000
   masking:
@@ -247,17 +268,17 @@ jobs:
 
 #### Tables
 
-In place of a file path, `memory`, `history` and `manifest` take a table in one of `database.yaml`'s aliases:
+In place of a file path, `memory`, `history` and `manifest` take a table in one of `connections.yaml`'s aliases:
 
 ```yaml
 memory:
-  database: warehouse
+  connection: warehouse
 history:
-  database: warehouse
+  connection: warehouse
   table: etl.run_history
 ```
 
-`table` defaults to `bauta_memory`, `bauta_history` or `bauta_manifest`, and `--memory-table`, `--history-table` or `--manifest-table` overrides it. The alias must be in `database.yaml`, and the table must exist first: [operations.md](operations.md#tables) has their definitions.
+`table` defaults to `bauta_memory`, `bauta_history` or `bauta_manifest`, and `--memory-table`, `--history-table` or `--manifest-table` overrides it. The alias must be in `connections.yaml`, and the table must exist first: [operations.md](operations.md#tables) has their definitions.
 
 ### Scheduling
 
@@ -274,7 +295,7 @@ history:
 
 | Field | Required or default | Meaning |
 | --- | --- | --- |
-| `sourceDatabase` | required | An alias from `database.yaml`. |
+| `sourceConnection` | required | An alias from `connections.yaml`. |
 | `sourceQuery` | required | The query to extract with. |
 | `chunkSize` | required, at least 1 | Rows per batch. Extracts stream, so this is the **memory dial**: peak memory is about `chunkSize` × row width however large the source is — three times that where the [native masker](masking.md#the-native-masker) overlaps reading, masking and writing. |
 | `watermarkColumn` | optional | Makes the job incremental. See [incremental loads](design.md#incremental-loads). Refused by `validate` on a column the masking policy masks, by name or through `defaultStrategy`: the watermark is read before masking and kept in run state, logs and `bauta jobs`, so it would leak the unmasked value. |
@@ -339,7 +360,7 @@ Transforms apply to **`sourceQuery`'s own result columns**, not the target's. Na
 
 | Field | Required or default | Meaning |
 | --- | --- | --- |
-| `targetDatabase` | required | An alias from `database.yaml`. |
+| `targetConnection` | required | An alias from `connections.yaml`. |
 | `targetTableFinal` | required | The table to load: `table`, or `schema.table` for one outside the connection's current schema. |
 | `insertStrategy` | required | `swap` or `upsert` — below. |
 | `targetTableStage` | required for `swap` | A staging table with the same shape, emptied before each load, so it must be a different table from `targetTableFinal` (compared ignoring case). For `swap`, it must be in the same schema as `targetTableFinal`. |

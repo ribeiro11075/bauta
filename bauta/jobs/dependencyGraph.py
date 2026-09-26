@@ -40,11 +40,18 @@ class DependencyGraph:
     """Which of one cycle's jobs may start, given which have finished.
     Bookkeeping only; it never waits. A cycle among the active jobs raises
     ConfigurationError.
+
+    `connectionLimits` caps how many running jobs may use a connection alias
+    at once (see ConnectionConfig.jobLimit). A job held back by one
+    waits for a job on that connection to finish; the jobs behind it that
+    use other connections start meanwhile.
     """
 
-    def __init__(self, jobs: Mapping[str, BaseJobConfig], memory: Optional[Dict[str, float]] = None) -> None:
+    def __init__(self, jobs: Mapping[str, BaseJobConfig], memory: Optional[Dict[str, float]] = None,
+                 connectionLimits: Optional[Mapping[str, int]] = None) -> None:
         self.jobs = jobs
         self.memory = memory
+        self.connectionLimits = dict(connectionLimits or {})
         self.activePredecessors: Dict[str, List[str]] = {}
         self.activeJobs = self._getActiveJobsWithActivePredecessors()
         self.outcomes: List[JobOutcome] = []
@@ -97,12 +104,33 @@ class DependencyGraph:
                 if unsuccessful:
                     self._skip(job, 'predecessor(s) did not complete: {}'.format(', '.join(unsuccessful)))
                     changed = True
-                elif (limit is None or len(ready) < limit) and all(predecessor in self._completed for predecessor in predecessors):
+                elif ((limit is None or len(ready) < limit) and all(predecessor in self._completed for predecessor in predecessors)
+                      and self._connectionsFree(job)):
                     self._notStarted.remove(job)
                     self._running.add(job)
                     ready.append(job)
 
         return ready
+
+
+    def connections(self, job: str) -> Set[str]:
+        """The connection aliases `job` uses, each once: a job reading and
+        writing one connection takes one of its places, not two.
+        """
+
+        config = self.jobs[job]
+
+        return {alias for alias in (getattr(config, 'sourceConnection', None), getattr(config, 'targetConnection', None)) if alias}
+
+
+    def _connectionsFree(self, job: str) -> bool:
+
+        for alias in self.connections(job) & set(self.connectionLimits):
+            inUse = sum(1 for other in self._running if alias in self.connections(other))
+            if inUse >= self.connectionLimits[alias]:
+                return False
+
+        return True
 
 
     def finish(self, outcome: JobOutcome) -> None:

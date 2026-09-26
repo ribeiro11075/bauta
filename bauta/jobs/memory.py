@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, Iterator, Optional, Tuple, TypeVar, Unio
 
 import yaml
 
-from ..configuration import DatabaseConnectionConfig
+from ..configuration import ConfigurationError, ConnectionConfig, DatabaseType
 from ..database import Database
 
 # Locks are taken on a separate, empty `.lock` file rather than on the data
@@ -133,12 +133,9 @@ class _MemoryLoader(yaml.SafeLoader):
 
 
 class _MemoryDumper(yaml.SafeDumper):
-    """SafeDumper that also writes Decimal, which Oracle returns for every NUMBER.
-
-    A Decimal used to be written as a float, which rounds: a watermark of
-    12345678901234567.1 came back as 1.2345678901234568e+16, *above* the
-    highest row read, so the rows in between were never extracted again --
-    the one direction run state must never move in.
+    """SafeDumper that also writes Decimal, which Oracle returns for every
+    NUMBER, exactly, as `!decimal`. As a float it would round, and a watermark
+    rounded up skips the rows below it for good.
     """
 
 
@@ -288,7 +285,14 @@ class DatabaseMemory(MemoryBackend):
     back as the type the source compares against.
     """
 
-    def __init__(self, connectionSettings: DatabaseConnectionConfig, table: str = 'bauta_memory') -> None:
+    def __init__(self, connectionSettings: ConnectionConfig, table: str = 'bauta_memory') -> None:
+        if connectionSettings.type == DatabaseType.DUCKDB:
+            # The run holds this connection open for as long as it lasts, and
+            # DuckDB lets one process at a time open a file, so every job that
+            # recorded its run would wait on the run itself, then fail.
+            raise ConfigurationError('run state cannot be kept in DuckDB ({}): DuckDB lets one process at a time open a file, and the run '
+                                     'and each job are processes of their own. Keep it in a file, or in a server database'.format(
+                                         connectionSettings.describeTarget()))
         self.connectionSettings = connectionSettings
         self.table = table
         self._database: Optional[Database] = None
@@ -341,14 +345,13 @@ class DatabaseMemory(MemoryBackend):
 
 
     def _run(self, work: 'Callable[[Database], Any]') -> Any:
-        """`work` against this process's connection, once more on a fresh one
-        if a connection that was already open failed.
+        """`work` against this process's connection, once more on a fresh one if
+        a connection that was already open failed -- a server restart, an idle
+        timeout, an expired token.
 
-        Reopening per call used to hide a server restart, an idle timeout or an
-        expired token; holding one means meeting them. Only a reused connection
-        is retried -- a failure on one opened in this same call is the
-        statement's, not the connection's -- so nothing runs twice because a
-        statement was wrong.
+        Only a reused connection is retried: a failure on one opened in this
+        same call is the statement's, not the connection's, and nothing runs
+        twice because a statement was wrong.
         """
 
         reused = self._database is not None and self._pid == os.getpid()
@@ -369,7 +372,7 @@ class DatabaseMemory(MemoryBackend):
             # Reading opens a transaction on PostgreSQL, which on a held
             # connection would stay open for the life of the run -- idle in
             # transaction, which holds back vacuum and trips server timeouts.
-            database.connection.rollback()
+            database.rollback()
             return rows
 
         return self._run(work)

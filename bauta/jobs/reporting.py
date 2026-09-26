@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
-from ..configuration import DatabaseConnectionConfig
+from ..configuration import ConnectionConfig
 from ..database import Database
 from .memory import exclusiveLock
 from .runner import RunResult
@@ -116,12 +116,10 @@ class FileHistory(RunHistory):
 
 
     def read(self, limit: int = 20, job: Optional[str] = None) -> List[Dict[str, Any]]:
-        """The newest records first, reading back from the end of the file
-        until it has `limit` of them.
-
-        History is append-only and never rotated, so a run of any age has a
-        file with millions of lines in it; parsing all of them to show twenty
-        made `bauta history` slower every day it ran.
+        """The newest records first, reading back from the end of the file until
+        it has `limit` of them. History is append-only and never rotated, so
+        the file only grows, and reading `limit` records costs the same
+        whatever its size.
         """
 
         if not self.historyFile.exists():
@@ -163,7 +161,7 @@ class DatabaseHistory(RunHistory):
     stores alike.
     """
 
-    def __init__(self, connectionSettings: DatabaseConnectionConfig, table: str = 'bauta_history') -> None:
+    def __init__(self, connectionSettings: ConnectionConfig, table: str = 'bauta_history') -> None:
         self.connectionSettings = connectionSettings
         self.table = table
 
@@ -248,7 +246,7 @@ class DatabaseManifests:
     signature shows that one was.
     """
 
-    def __init__(self, connectionSettings: DatabaseConnectionConfig, table: str = 'bauta_manifest') -> None:
+    def __init__(self, connectionSettings: ConnectionConfig, table: str = 'bauta_manifest') -> None:
         self.connectionSettings = connectionSettings
         self.table = table
 

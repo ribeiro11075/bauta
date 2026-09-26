@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import pytest
 
-from bauta.configuration import Configuration, ConfigurationError, DatabaseConnectionConfig, DatabaseType, DataJobConfig, DataJobsFile, \
+from bauta.configuration import Configuration, ConfigurationError, ConnectionConfig, connectionConfig, DatabaseType, DataJobConfig, DataJobsFile, \
     InsertStrategy
 from bauta.jobs.dependencyGraph import DependencyGraph, JobOutcome, JobStatus
 from bauta.jobs.memory import FileMemory, MemoryBackend
@@ -34,11 +34,11 @@ def test_worker_functions_are_picklable():
 
 
 def test_run_data_jobs_completes_with_zero_active_jobs_when_not_forever(tmp_path):
-    raw = {'workers': 2, 'jobs': {'noop': {'active': False, 'sourceDatabase': 'x', 'targetDatabase': 'y', 'insertStrategy': 'upsert',
+    raw = {'workers': 2, 'jobs': {'noop': {'active': False, 'sourceConnection': 'x', 'targetConnection': 'y', 'insertStrategy': 'upsert',
                                             'chunkSize': 1, 'targetTableFinal': 't', 'sourceQuery': 'select 1'}}}
     jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
 
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration={}, logFile=tmp_path / 'runner.log',
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration={}, logFile=tmp_path / 'runner.log',
                          memory=FileMemory(memoryFile=tmp_path / 'runner.yaml'), runForever=False)
 
     assert result == RunResult(outcomes=[], interrupted=False)
@@ -52,7 +52,7 @@ class _FakeDatabase:
     queryResult: List[Tuple[Any, ...]] = [(1, 'a'), (2, 'b')]
     columnNames: List[str] = ['id', 'name']
 
-    def __init__(self, connectionSettings: DatabaseConnectionConfig) -> None:
+    def __init__(self, connectionSettings: ConnectionConfig) -> None:
         self.connectionSettings = connectionSettings
         self.calls: List[Tuple[Any, ...]] = []
 
@@ -117,7 +117,7 @@ def installFakeDatabase(monkeypatch):
         created: List[_FakeDatabase] = []
 
         class _Tracked(fake):  # type: ignore[misc, valid-type]
-            def __init__(self, connectionSettings: DatabaseConnectionConfig) -> None:
+            def __init__(self, connectionSettings: ConnectionConfig) -> None:
                 super().__init__(connectionSettings)
                 created.append(self)
 
@@ -134,33 +134,33 @@ def fakeDatabases(installFakeDatabase):
     return installFakeDatabase()
 
 
-def _dbConfig(host: str = 'h') -> DatabaseConnectionConfig:
-    return DatabaseConnectionConfig(type=DatabaseType.MYSQL, user='u', password='p', database='d', host=host)
+def _dbConfig(host: str = 'h') -> ConnectionConfig:
+    return connectionConfig(type=DatabaseType.MYSQL, user='u', password='p', database='d', host=host)
 
 
-_dataJobConfig = functools.partial(dataJob, sourceDatabase='src', targetDatabase='tgt', targetTableFinal='people', sourceQuery='select * from people')
+_dataJobConfig = functools.partial(dataJob, sourceConnection='src', targetConnection='tgt', targetTableFinal='people', sourceQuery='select * from people')
 
 
 def test_execute_data_job_opens_source_and_target_with_the_right_settings(fakeDatabases):
     jobConfig = _dataJobConfig()
-    databaseConfiguration = {'src': _dbConfig('source-host'), 'tgt': _dbConfig('target-host')}
+    connectionConfiguration = {'src': _dbConfig('source-host'), 'tgt': _dbConfig('target-host')}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    sourceDatabase, targetDatabase = fakeDatabases
-    assert sourceDatabase.connectionSettings.host == 'source-host'
-    assert targetDatabase.connectionSettings.host == 'target-host'
-    assert ('stream', 'select * from people', jobConfig.chunkSize, None) in sourceDatabase.calls
+    sourceConnection, targetConnection = fakeDatabases
+    assert sourceConnection.connectionSettings.host == 'source-host'
+    assert targetConnection.connectionSettings.host == 'target-host'
+    assert ('stream', 'select * from people', jobConfig.chunkSize, None) in sourceConnection.calls
 
 
 def test_execute_data_job_upserts_directly_when_there_is_no_stage_table(fakeDatabases):
     jobConfig = _dataJobConfig()
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    calledMethods = [call[0] for call in targetDatabase.calls]
+    _, targetConnection = fakeDatabases
+    calledMethods = [call[0] for call in targetConnection.calls]
     assert 'upsert' in calledMethods
     assert 'upsertFromStage' not in calledMethods
     assert 'truncate' not in calledMethods
@@ -169,16 +169,16 @@ def test_execute_data_job_upserts_directly_when_there_is_no_stage_table(fakeData
 
 def test_execute_data_job_infers_columns_from_target_table_when_target_columns_is_unset(fakeDatabases):
     jobConfig = _dataJobConfig()
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
     assert jobConfig.targetColumns == []
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    calledMethods = [call[0] for call in targetDatabase.calls]
+    _, targetConnection = fakeDatabases
+    calledMethods = [call[0] for call in targetConnection.calls]
     assert 'getAllColumnNames' in calledMethods
-    upsertCall = next(call for call in targetDatabase.calls if call[0] == 'upsert')
-    assert upsertCall[4] == targetDatabase.columnNames  # the introspected column list, in the table's own order
+    upsertCall = next(call for call in targetConnection.calls if call[0] == 'upsert')
+    assert upsertCall[4] == targetConnection.columnNames  # the introspected column list, in the table's own order
 
 
 def test_execute_data_job_uses_target_columns_when_configured_instead_of_introspecting(fakeDatabases):
@@ -189,64 +189,64 @@ def test_execute_data_job_uses_target_columns_when_configured_instead_of_introsp
     insert/upsert call.
     """
     jobConfig = _dataJobConfig(targetColumns=['name', 'id'])
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    calledMethods = [call[0] for call in targetDatabase.calls]
+    _, targetConnection = fakeDatabases
+    calledMethods = [call[0] for call in targetConnection.calls]
     assert 'getAllColumnNames' not in calledMethods
-    upsertCall = next(call for call in targetDatabase.calls if call[0] == 'upsert')
+    upsertCall = next(call for call in targetConnection.calls if call[0] == 'upsert')
     assert upsertCall[4] == ['name', 'id']
 
 
 def test_execute_data_job_passes_target_columns_to_stage_insert_and_upsert_from_stage(fakeDatabases):
     jobConfig = _dataJobConfig(targetTableStage='people_stage', targetColumns=['name', 'id'])
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    insertCall = next(call for call in targetDatabase.calls if call[0] == 'insert')
-    upsertFromStageCall = next(call for call in targetDatabase.calls if call[0] == 'upsertFromStage')
+    _, targetConnection = fakeDatabases
+    insertCall = next(call for call in targetConnection.calls if call[0] == 'insert')
+    upsertFromStageCall = next(call for call in targetConnection.calls if call[0] == 'upsertFromStage')
     assert insertCall[4] == ['name', 'id']
     assert upsertFromStageCall[3] == ['name', 'id']
 
 
 def test_execute_data_job_upserts_from_stage_when_a_stage_table_is_set(fakeDatabases):
     jobConfig = _dataJobConfig(targetTableStage='people_stage')
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    assert ('truncate', 'people_stage') in targetDatabase.calls
-    assert any(call[0] == 'insert' and call[1] == 'people_stage' for call in targetDatabase.calls)
-    assert any(call[0] == 'upsertFromStage' for call in targetDatabase.calls)
-    assert not any(call[0] == 'upsert' for call in targetDatabase.calls)
+    _, targetConnection = fakeDatabases
+    assert ('truncate', 'people_stage') in targetConnection.calls
+    assert any(call[0] == 'insert' and call[1] == 'people_stage' for call in targetConnection.calls)
+    assert any(call[0] == 'upsertFromStage' for call in targetConnection.calls)
+    assert not any(call[0] == 'upsert' for call in targetConnection.calls)
 
 
 def test_execute_data_job_swap_loads_stage_then_swaps_not_upserts(fakeDatabases):
     jobConfig = _dataJobConfig(insertStrategy=InsertStrategy.SWAP, targetTableStage='people_stage')
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    calledMethods = [call[0] for call in targetDatabase.calls]
-    assert ('swap', 'people', 'people_stage') in targetDatabase.calls
+    _, targetConnection = fakeDatabases
+    calledMethods = [call[0] for call in targetConnection.calls]
+    assert ('swap', 'people', 'people_stage') in targetConnection.calls
     assert 'upsert' not in calledMethods
     assert 'upsertFromStage' not in calledMethods
 
 
 def test_execute_data_job_applies_column_transforms_before_loading(fakeDatabases):
     jobConfig = _dataJobConfig(sourceQueryColumnTransforms={'name': ['json:dumps']})
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    upsertCall = next(call for call in targetDatabase.calls if call[0] == 'upsert')
+    _, targetConnection = fakeDatabases
+    upsertCall = next(call for call in targetConnection.calls if call[0] == 'upsert')
     assert upsertCall[2] == [(1, '"a"'), (2, '"b"')]
 
 
@@ -257,13 +257,13 @@ def test_execute_data_job_raises_and_writes_nothing_when_a_transform_names_an_un
     silently never applying.
     """
     jobConfig = _dataJobConfig(sourceQueryColumnTransforms={'doesNotExist': ['json:dumps']})
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
     with pytest.raises(TransformError, match='doesNotExist'):
-        _executeDataJob('job1', jobConfig, databaseConfiguration)
+        _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    calledMethods = [call[0] for call in targetDatabase.calls]
+    _, targetConnection = fakeDatabases
+    calledMethods = [call[0] for call in targetConnection.calls]
     assert 'insert' not in calledMethods
     assert 'upsert' not in calledMethods
 
@@ -276,12 +276,12 @@ def test_execute_data_job_validates_transforms_against_the_source_querys_columns
     """
     monkeypatch.setattr(_FakeDatabase, 'getAllColumnNames', lambda self, table: ['totallyDifferentTargetColumn', 'andAnother'])
     jobConfig = _dataJobConfig(sourceQueryColumnTransforms={'name': ['json:dumps']})
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    upsertCall = next(call for call in targetDatabase.calls if call[0] == 'upsert')
+    _, targetConnection = fakeDatabases
+    upsertCall = next(call for call in targetConnection.calls if call[0] == 'upsert')
     assert upsertCall[2] == [(1, '"a"'), (2, '"b"')]
 
 
@@ -291,20 +291,20 @@ def test_execute_data_job_raises_with_column_and_value_context_when_a_transform_
     bare traceback from inside the row loop.
     """
     jobConfig = _dataJobConfig(sourceQueryColumnTransforms={'id': ['os.path:basename']})
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
     with pytest.raises(TransformError, match='column "id"'):
-        _executeDataJob('job1', jobConfig, databaseConfiguration)
+        _executeDataJob('job1', jobConfig, connectionConfiguration)
 
 
 def test_execute_data_job_runs_adhoc_queries_before_and_after_load(fakeDatabases):
     jobConfig = _dataJobConfig(preTargetAdhocQueries=['pre1'], postTargetAdhocQueries=['post1'])
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    calls = targetDatabase.calls
+    _, targetConnection = fakeDatabases
+    calls = targetConnection.calls
     preIndex = calls.index(('alter', 'pre1'))
     upsertIndex = next(index for index, call in enumerate(calls) if call[0] == 'upsert')
     postIndex = calls.index(('alter', 'post1'))
@@ -359,9 +359,9 @@ def test_a_post_query_that_fails_after_a_swap_reports_the_rows_the_target_holds(
 
     installFakeDatabase(_FailingPostQuery)
     jobConfig = _dataJobConfig(insertStrategy=InsertStrategy.SWAP, targetTableStage='people_stage', postTargetAdhocQueries=['post1'])
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    outcome = _runDataJob('job1', jobConfig, databaseConfiguration, _TimelineMemory([]))
+    outcome = _runDataJob('job1', jobConfig, connectionConfiguration, _TimelineMemory([]))
 
     assert outcome.status == JobStatus.FAILED
     assert outcome.rowCount == 2
@@ -398,12 +398,12 @@ def test_execute_data_job_runs_pre_adhoc_queries_before_loading_the_stage_table(
     """
     jobConfig = _dataJobConfig(insertStrategy=InsertStrategy.SWAP, targetTableStage='people_stage', preTargetAdhocQueries=['pre1'],
                                 postTargetAdhocQueries=['post1'])
-    databaseConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
+    connectionConfiguration = {'src': _dbConfig(), 'tgt': _dbConfig()}
 
-    _executeDataJob('job1', jobConfig, databaseConfiguration)
+    _executeDataJob('job1', jobConfig, connectionConfiguration)
 
-    _, targetDatabase = fakeDatabases
-    calls = targetDatabase.calls
+    _, targetConnection = fakeDatabases
+    calls = targetConnection.calls
     preIndex = calls.index(('alter', 'pre1'))
     truncateIndex = calls.index(('truncate', 'people_stage'))
     insertIndex = next(index for index, call in enumerate(calls) if call[0] == 'insert')
@@ -457,7 +457,7 @@ def _runJobWithTimeline(jobConfig: DataJobConfig, memory: '_TimelineMemory') -> 
 
 def _runDataWorkerOnce(monkeypatch, succeeds: bool, failing: Tuple[str, ...] = (), jobConfig: Optional[DataJobConfig] = None) -> List[Tuple[Any, ...]]:
 
-    def fakeExecute(job: Any, jobConfig: Any, databaseConfiguration: Any, watermark: Any = None) -> JobOutcome:
+    def fakeExecute(job: Any, jobConfig: Any, connectionConfiguration: Any, watermark: Any = None) -> JobOutcome:
         if not succeeds:
             raise RuntimeError('job blew up')
         return JobOutcome(job=job, status=JobStatus.COMPLETED, rowCount=1, watermark=7 if jobConfig.watermarkColumn else None)
@@ -544,7 +544,7 @@ def test_execute_data_job_streams_rather_than_materializing_the_whole_extract(mo
 
     class _StreamingFake:
 
-        def __init__(self, connectionSettings: DatabaseConnectionConfig) -> None:
+        def __init__(self, connectionSettings: ConnectionConfig) -> None:
             self.connectionSettings = connectionSettings
 
         def __enter__(self) -> '_StreamingFake':
@@ -614,7 +614,7 @@ def test_the_pipeline_can_be_turned_off(monkeypatch):
 
     class _StreamingFake:
 
-        def __init__(self, connectionSettings: DatabaseConnectionConfig) -> None:
+        def __init__(self, connectionSettings: ConnectionConfig) -> None:
             self.connectionSettings = connectionSettings
 
         def __enter__(self) -> '_StreamingFake':
@@ -672,8 +672,8 @@ def test_execute_data_job_never_holds_more_than_one_chunk_of_rows(fakeDatabases,
 
     _executeDataJob('job1', _dataJobConfig(chunkSize=64), {'src': _dbConfig(), 'tgt': _dbConfig()})
 
-    _, targetDatabase = fakeDatabases
-    loadSizes = [len(call[2]) for call in targetDatabase.calls if call[0] == 'upsert']
+    _, targetConnection = fakeDatabases
+    loadSizes = [len(call[2]) for call in targetConnection.calls if call[0] == 'upsert']
 
     assert max(loadSizes) == 64
     assert sum(loadSizes) == 1000
@@ -690,8 +690,8 @@ def test_execute_data_job_loads_nothing_for_an_empty_source(fakeDatabases, monke
 
     result = _executeDataJob('job1', _dataJobConfig(), {'src': _dbConfig(), 'tgt': _dbConfig()})
 
-    _, targetDatabase = fakeDatabases
-    calledMethods = [call[0] for call in targetDatabase.calls]
+    _, targetConnection = fakeDatabases
+    calledMethods = [call[0] for call in targetConnection.calls]
 
     assert result.rowCount == 0
     assert 'upsert' not in calledMethods
@@ -707,15 +707,15 @@ def test_execute_data_job_applies_transforms_to_every_chunk_not_just_the_first(f
 
     _executeDataJob('job1', jobConfig, {'src': _dbConfig(), 'tgt': _dbConfig()})
 
-    _, targetDatabase = fakeDatabases
-    loadedRows = [row for call in targetDatabase.calls if call[0] == 'upsert' for row in call[2]]
+    _, targetConnection = fakeDatabases
+    loadedRows = [row for call in targetConnection.calls if call[0] == 'upsert' for row in call[2]]
 
     assert len(loadedRows) == 250
     assert all(row[1] == '"a"' for row in loadedRows)
 
 
 def _watermarkJobConfig(**overrides: Any) -> DataJobConfig:
-    fields = dict(active=True, sourceDatabase='src', targetDatabase='tgt', insertStrategy=InsertStrategy.UPSERT,
+    fields = dict(active=True, sourceConnection='src', targetConnection='tgt', insertStrategy=InsertStrategy.UPSERT,
                    chunkSize=100, targetTableFinal='people', sourceQuery='select id, name from people where name > {{ watermark }}',
                    watermarkColumn='name', watermarkInitial='')
     fields.update(overrides)
@@ -729,8 +729,8 @@ def test_execute_data_job_binds_the_watermark_rather_than_interpolating_it(fakeD
     """
     _executeDataJob('job1', _watermarkJobConfig(), {'src': _dbConfig(), 'tgt': _dbConfig()}, watermark='a')
 
-    sourceDatabase, _ = fakeDatabases
-    streamCall = next(call for call in sourceDatabase.calls if call[0] == 'stream')
+    sourceConnection, _ = fakeDatabases
+    streamCall = next(call for call in sourceConnection.calls if call[0] == 'stream')
 
     assert '{{ watermark }}' not in streamCall[1]
     assert streamCall[1] == 'select id, name from people where name > ?'
@@ -765,8 +765,8 @@ def test_execute_data_job_takes_the_watermark_from_raw_rows_not_transformed_ones
 
     result = _executeDataJob('job1', jobConfig, {'src': _dbConfig(), 'tgt': _dbConfig()}, watermark='')
 
-    _, targetDatabase = fakeDatabases
-    upsertCall = next(call for call in targetDatabase.calls if call[0] == 'upsert')
+    _, targetConnection = fakeDatabases
+    upsertCall = next(call for call in targetConnection.calls if call[0] == 'upsert')
 
     assert upsertCall[2] == [(1, '"a"'), (2, '"b"')]
     assert result.watermark == 'b'
@@ -801,8 +801,8 @@ def test_execute_data_job_rejects_a_watermark_column_the_source_query_does_not_r
     with pytest.raises(ConfigurationError, match='notSelected'):
         _executeDataJob('job1', jobConfig, {'src': _dbConfig(), 'tgt': _dbConfig()})
 
-    _, targetDatabase = fakeDatabases
-    calledMethods = [call[0] for call in targetDatabase.calls]
+    _, targetConnection = fakeDatabases
+    calledMethods = [call[0] for call in targetConnection.calls]
 
     assert 'upsert' not in calledMethods
     assert 'insert' not in calledMethods
@@ -820,7 +820,7 @@ class _WatermarkTimelineMemory(_TimelineMemory):
 
 def _runWatermarkWorkerOnce(monkeypatch, tmp_path, succeeds: bool, watermarks: Dict[str, Any]) -> List[Tuple[Any, ...]]:
 
-    def fakeExecute(job: Any, jobConfig: Any, databaseConfiguration: Any, watermark: Any = None) -> JobOutcome:
+    def fakeExecute(job: Any, jobConfig: Any, connectionConfiguration: Any, watermark: Any = None) -> JobOutcome:
         if not succeeds:
             raise RuntimeError('job blew up')
         return JobOutcome(job=job, status=JobStatus.COMPLETED, rowCount=3, watermark='reached-{}'.format(watermark))
@@ -868,11 +868,11 @@ def test_run_data_jobs_returns_a_result_rather_than_discarding_it(tmp_path):
     throwing the numbers away -- so a scheduler wrapping it reported success on
     total failure. DependencyGraph already tracked this; nothing surfaced it.
     """
-    raw = {'workers': 1, 'jobs': {'noop': {'active': False, 'sourceDatabase': 'x', 'targetDatabase': 'y', 'insertStrategy': 'upsert',
+    raw = {'workers': 1, 'jobs': {'noop': {'active': False, 'sourceConnection': 'x', 'targetConnection': 'y', 'insertStrategy': 'upsert',
                                             'chunkSize': 1, 'targetTableFinal': 't', 'sourceQuery': 'select 1'}}}
     jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
 
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration={}, logFile=tmp_path / 'runner.log',
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration={}, logFile=tmp_path / 'runner.log',
                           memory=FileMemory(memoryFile=tmp_path / 'runner.yaml'), runForever=False)
 
     assert result.outcomes == []
@@ -927,7 +927,7 @@ def test_a_job_outcome_survives_pickling(fakeDatabases):
 
 def test_the_data_worker_reports_row_count_and_error_on_its_outcome(monkeypatch, tmp_path):
 
-    def fakeExecute(job: Any, jobConfig: Any, databaseConfiguration: Any, watermark: Any = None) -> JobOutcome:
+    def fakeExecute(job: Any, jobConfig: Any, connectionConfiguration: Any, watermark: Any = None) -> JobOutcome:
         return JobOutcome(job=job, status=JobStatus.COMPLETED, rowCount=42)
 
     monkeypatch.setattr('bauta.jobs.pipeline._executeDataJob', fakeExecute)
@@ -943,7 +943,7 @@ def test_the_data_worker_reports_row_count_and_error_on_its_outcome(monkeypatch,
 
 def test_the_data_worker_records_the_failure_text_on_its_outcome(monkeypatch, tmp_path):
 
-    def fakeExecute(job: Any, jobConfig: Any, databaseConfiguration: Any, watermark: Any = None) -> JobOutcome:
+    def fakeExecute(job: Any, jobConfig: Any, connectionConfiguration: Any, watermark: Any = None) -> JobOutcome:
         raise RuntimeError('the source went away')
 
     monkeypatch.setattr('bauta.jobs.pipeline._executeDataJob', fakeExecute)
@@ -1012,13 +1012,13 @@ def test_run_data_jobs_stops_on_sigterm_rather_than_running_forever(tmp_path):
     every ordinary pod shutdown, so it's the common path.
     """
     raw = {'workers': 1, 'cycleSleepSeconds': 0.1,
-           'jobs': {'noop': {'active': False, 'sourceDatabase': 'x', 'targetDatabase': 'y', 'insertStrategy': 'upsert',
+           'jobs': {'noop': {'active': False, 'sourceConnection': 'x', 'targetConnection': 'y', 'insertStrategy': 'upsert',
                               'chunkSize': 1, 'targetTableFinal': 't', 'sourceQuery': 'select 1'}}}
     jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
 
     threading.Timer(1.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
 
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration={}, logFile=tmp_path / 'runner.log',
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration={}, logFile=tmp_path / 'runner.log',
                           memory=FileMemory(memoryFile=tmp_path / 'runner.yaml'), runForever=True)
 
     assert result.succeeded is True
@@ -1026,7 +1026,7 @@ def test_run_data_jobs_stops_on_sigterm_rather_than_running_forever(tmp_path):
 
 
 def _retryJobConfig(**overrides: Any) -> DataJobConfig:
-    fields = dict(active=True, sourceDatabase='src', targetDatabase='tgt', insertStrategy=InsertStrategy.UPSERT,
+    fields = dict(active=True, sourceConnection='src', targetConnection='tgt', insertStrategy=InsertStrategy.UPSERT,
                    chunkSize=100, targetTableFinal='people', sourceQuery='select * from people',
                    retries=2, retryDelaySeconds=0.0)
     fields.update(overrides)
@@ -1163,7 +1163,7 @@ def test_the_stored_watermark_is_read_again_on_each_attempt(monkeypatch):
 
 
 def _sqliteJob(databasePath: Any, **overrides: Any) -> Dict[str, Any]:
-    fields = dict(active=True, sourceDatabase='lite', targetDatabase='lite', insertStrategy='upsert', chunkSize=10,
+    fields = dict(active=True, sourceConnection='lite', targetConnection='lite', insertStrategy='upsert', chunkSize=10,
                   sourceQuery='select id, name from source', targetTableFinal='target')
     fields.update(overrides)
     return fields
@@ -1181,7 +1181,7 @@ def sqliteDatabase(tmp_path):
                              'create table target (id integer primary key, name text);')
     connection.close()
 
-    return {'lite': DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(path))}
+    return {'lite': connectionConfig(type=DatabaseType.SQLITE, path=str(path))}
 
 
 def test_a_worker_that_dies_fails_its_job_instead_of_hanging_the_run(tmp_path, sqliteDatabase):
@@ -1198,7 +1198,7 @@ def test_a_worker_that_dies_fails_its_job_instead_of_hanging_the_run(tmp_path, s
     results: List[RunResult] = []
 
     thread = threading.Thread(target=lambda: results.append(runDataJobs(
-        jobsFile=jobsFile, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'))), daemon=True)
+        jobsFile=jobsFile, connectionConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'))), daemon=True)
     thread.start()
     thread.join(timeout=60)
 
@@ -1211,7 +1211,7 @@ def test_a_worker_that_dies_fails_its_job_instead_of_hanging_the_run(tmp_path, s
 def _runJobs(jobs: Dict[str, Any], databases: Dict[str, Any], tmp_path: Any, workers: int = 1) -> RunResult:
     jobsFile = Configuration.validateJobConfiguration({'workers': workers, 'jobs': jobs}, DataJobsFile)
 
-    return runDataJobs(jobsFile=jobsFile, databaseConfiguration=databases, memory=FileMemory(tmp_path / 'memory.yaml'))
+    return runDataJobs(jobsFile=jobsFile, connectionConfiguration=databases, memory=FileMemory(tmp_path / 'memory.yaml'))
 
 
 def test_a_dead_worker_takes_no_other_job_with_it(tmp_path, sqliteDatabase):
@@ -1295,7 +1295,7 @@ def test_worker_log_records_reach_the_parents_handlers_in_its_format(tmp_path, s
     jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
     logPath = tmp_path / 'run.log'
 
-    runDataJobs(jobsFile=jobsFile, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'),
+    runDataJobs(jobsFile=jobsFile, connectionConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'),
                 logFile=logPath, logFormat='json')
 
     records = [json.loads(line) for line in logPath.read_text().splitlines()]
@@ -1342,7 +1342,7 @@ def test_a_changed_key_is_accepted_when_acknowledged_and_then_recorded(tmp_path,
         {'workers': 1, 'jobs': {'masked': _maskedSqliteJob(sqliteDatabase, key='a-rotated-masking-key', idStrategy='keep')}},
         DataJobsFile)
 
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'),
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'),
                          acceptKeyChange=True)
 
     assert result.succeeded
@@ -1356,7 +1356,7 @@ def test_a_changed_key_is_refused_even_when_acknowledged_if_it_masks_the_primary
     them -- and a collision overwrites a different row. No flag makes that safe.
     """
     def targetRows():
-        with contextlib.closing(sqlite3.connect(sqliteDatabase['lite'].database)) as connection:
+        with contextlib.closing(sqlite3.connect(sqliteDatabase['lite'].path)) as connection:
             return sorted(connection.execute('select id, name from target'))
 
     _runJobs({'masked': _maskedSqliteJob(sqliteDatabase)}, sqliteDatabase, tmp_path)
@@ -1365,7 +1365,7 @@ def test_a_changed_key_is_refused_even_when_acknowledged_if_it_masks_the_primary
         {'workers': 1, 'jobs': {'masked': _maskedSqliteJob(sqliteDatabase, key='a-rotated-masking-key')}}, DataJobsFile)
 
     with pytest.raises(ConfigurationError) as error:
-        runDataJobs(jobsFile=jobsFile, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'),
+        runDataJobs(jobsFile=jobsFile, connectionConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'),
                     acceptKeyChange=True)
 
     assert 'masks the primary key' in str(error.value) and 'bauta clear' in str(error.value)
@@ -1432,7 +1432,7 @@ def test_a_changed_implementation_is_noted_but_does_not_stop_an_upsert_job(tmp_p
 
 def test_a_changed_key_does_not_stop_a_swap_job(tmp_path, sqliteDatabase):
     """A swap replaces its whole target, so nothing masked under the old key is left."""
-    connection = sqlite3.connect(sqliteDatabase['lite'].database)
+    connection = sqlite3.connect(sqliteDatabase['lite'].path)
     connection.execute('create table target_stage (id integer primary key, name text)')
     connection.close()
 
@@ -1450,7 +1450,7 @@ def test_each_cycle_is_reported_to_on_cycle_and_its_failures_are_contained(tmp_p
         seen.append(result)
         raise RuntimeError('the webhook host is down')
 
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'), onCycle=report)
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'), onCycle=report)
 
     assert result.succeeded
     assert [[outcome.job for outcome in cycle.outcomes] for cycle in seen] == [['copies']]
@@ -1468,7 +1468,7 @@ def test_stopping_a_job_mid_log_record_leaves_the_other_jobs_working(tmp_path, s
     results: List[RunResult] = []
 
     thread = threading.Thread(target=lambda: results.append(runDataJobs(
-        jobsFile=jobsFile, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'), logFile=logPath)), daemon=True)
+        jobsFile=jobsFile, connectionConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'), logFile=logPath)), daemon=True)
     thread.start()
     thread.join(timeout=60)
 
@@ -1649,7 +1649,7 @@ def test_masking_threads_reach_each_job_and_change_no_row(tmp_path, monkeypatch)
     connection.execute('create table four (id integer primary key, name text)')
     connection.commit()
     connection.close()
-    databases = {'lite': DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(path))}
+    databases = {'lite': connectionConfig(type=DatabaseType.SQLITE, path=str(path))}
 
     rows = {}
     for table, threads in (('one', 1), ('four', 4)):
@@ -1657,7 +1657,7 @@ def test_masking_threads_reach_each_job_and_change_no_row(tmp_path, monkeypatch)
             table: _sqliteJob(databases, targetTableFinal=table, chunkSize=1000,
                               masking={'key': 'a-threads-masking-key', 'columns': {'id': 'key', 'name': 'key'}})}}, DataJobsFile)
         with _warningsFromThePackage() as _, _infoFromThePackage() as messages:
-            assert runDataJobs(jobsFile=jobsFile, databaseConfiguration=databases, memory=FileMemory(tmp_path / (table + '.yaml'))).succeeded
+            assert runDataJobs(jobsFile=jobsFile, connectionConfiguration=databases, memory=FileMemory(tmp_path / (table + '.yaml'))).succeeded
         assert '{}: masking with {} thread(s) (1 job(s) running'.format(table, threads) in ' '.join(messages)
         connection = sqlite3.connect(path)
         rows[table] = connection.execute('select id, name from {} order by id'.format(table)).fetchall()
@@ -1696,7 +1696,7 @@ def test_each_job_shares_the_cores_with_the_jobs_running_alongside_it(tmp_path, 
     monkeypatch.setattr(masking, 'availableCores', lambda: 8)
     monkeypatch.setattr(runner, 'availableCores', lambda: 8)
 
-    path = sqliteDatabase['lite'].database
+    path = sqliteDatabase['lite'].path
     connection = sqlite3.connect(path)
     for table in ('first', 'second', 'after'):
         connection.execute('create table {} (id integer primary key, name text)'.format(table))
@@ -1727,11 +1727,11 @@ def test_masking_threads_default_to_one_and_refuse_more_than_the_cores(tmp_path,
     tooMany = Configuration.validateJobConfiguration({'workers': 1, 'maskingThreads': 5, 'jobs': {'masked': _maskedSqliteJob(sqliteDatabase)}},
                                                      DataJobsFile)
     with pytest.raises(ConfigurationError, match='maskingThreads is 5, but this machine has 4 core'):
-        runDataJobs(jobsFile=tooMany, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'))
+        runDataJobs(jobsFile=tooMany, connectionConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'))
 
     monkeypatch.setenv('BAUTA_MASKING_THREADS', 'lots')
     with pytest.raises(ConfigurationError, match='BAUTA_MASKING_THREADS must be a number or auto'):
-        runDataJobs(jobsFile=tooMany, databaseConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'))
+        runDataJobs(jobsFile=tooMany, connectionConfiguration=sqliteDatabase, memory=FileMemory(tmp_path / 'memory.yaml'))
 
 
 def test_a_signal_ends_the_pause_between_forever_cycles_promptly():

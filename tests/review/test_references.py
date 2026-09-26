@@ -4,7 +4,7 @@ import json
 import pytest
 
 from bauta.cli import EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, main
-from bauta.configuration import DatabaseConnectionConfig, DatabaseType
+from bauta.configuration import connectionConfig, DatabaseType
 from bauta.database import Database
 from bauta.database.dialects import ForeignKey
 from bauta.review.references import orphanQuery, verifyReferences
@@ -14,7 +14,7 @@ ORDERS_KEY = ForeignKey('ORDERS', ('CUSTOMER_ID',), 'CUSTOMERS', ('ID',), 'FK_OR
 
 @pytest.fixture
 def copy(tmp_path):
-    with Database(connectionSettings=DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(tmp_path / 'copy.db'))) as database:
+    with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'copy.db'))) as database:
         yield database
 
 
@@ -116,18 +116,18 @@ JOBS_YAML = """workers: 1
 jobs:
   loadCustomers:
     active: true
-    sourceDatabase: prod
+    sourceConnection: prod
     sourceQuery: SELECT * FROM customers
-    targetDatabase: copy
+    targetConnection: copy
     targetTableFinal: customers
     insertStrategy: upsert
     chunkSize: 10
   loadOrders:
     active: {active}
     predecessors: [loadCustomers]
-    sourceDatabase: prod
+    sourceConnection: prod
     sourceQuery: SELECT * FROM orders
-    targetDatabase: copy
+    targetConnection: copy
     targetTableFinal: orders
     insertStrategy: upsert
     chunkSize: 10
@@ -138,12 +138,12 @@ jobs:
 def workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'configuration').mkdir()
-    (tmp_path / 'configuration' / 'database.yaml').write_text(
-        'prod:\n  type: sqlite\n  database: prod.db\ncopy:\n  type: sqlite\n  database: copy.db\n')
+    (tmp_path / 'configuration' / 'connections.yaml').write_text(
+        'prod:\n  type: sqlite\n  path: prod.db\ncopy:\n  type: sqlite\n  path: copy.db\n')
     (tmp_path / 'configuration' / 'jobs.yaml').write_text(JOBS_YAML.format(active='true'))
 
     for name, orders in (('prod', 'customer_id INT REFERENCES customers(id)'), ('copy', 'customer_id INT')):
-        with Database(connectionSettings=DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(tmp_path / (name + '.db')))) as database:
+        with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / (name + '.db')))) as database:
             database.alter('CREATE TABLE customers (id INT PRIMARY KEY, email TEXT)')
             database.alter('CREATE TABLE orders (id INT PRIMARY KEY, {})'.format(orders))
             database.alter("INSERT INTO customers VALUES (1, 'a@corp.com')")
@@ -153,7 +153,7 @@ def workspace(tmp_path, monkeypatch):
 
 
 def _copyStatement(workspace, statement):
-    with Database(connectionSettings=DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(workspace / 'copy.db'))) as database:
+    with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(workspace / 'copy.db'))) as database:
         database.alter(statement)
 
 

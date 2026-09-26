@@ -14,7 +14,7 @@ from tests.examples.demos import loadedDemo
 
 @pytest.fixture(scope='module')
 def demo():
-    """The demo sets DEMO_DB_PATH itself -- it's how its database.yaml finds
+    """The demo sets DEMO_DB_PATH itself -- it's how its connections.yaml finds
     the file -- so it is put back afterwards."""
     with loadedDemo('incremental', 'incremental_demo', ['DEMO_DB_PATH']) as module:
         yield module

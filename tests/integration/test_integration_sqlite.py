@@ -36,7 +36,7 @@ def ordersTables(liveDatabase):
 
 def _incrementalJobsFile(source, target):
     raw = {'workers': 1, 'jobs': {'loadOrders': {
-        'active': True, 'sourceDatabase': 'db', 'targetDatabase': 'db', 'insertStrategy': 'upsert', 'chunkSize': 2,
+        'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'insertStrategy': 'upsert', 'chunkSize': 2,
         'targetTableFinal': target, 'watermarkColumn': 'updated_at', 'watermarkInitial': '1970-01-01',
         'sourceQuery': 'SELECT id, name, updated_at FROM {} WHERE updated_at > {{{{ watermark }}}} ORDER BY updated_at'.format(source),
         }}}
@@ -63,7 +63,7 @@ def test_an_incremental_job_loads_only_rows_past_its_watermark(liveDatabase, ord
         (3, 'third', '2026-01-03T00:00:00'),
         ], chunkSize=10)
 
-    runDataJobs(jobsFile=jobsFile, databaseConfiguration={'db': connectionSettings}, logFile=tmp_path / 'jobs.log',
+    runDataJobs(jobsFile=jobsFile, connectionConfiguration={'db': connectionSettings}, logFile=tmp_path / 'jobs.log',
                 memory=memory, runForever=False)
 
     assert liveDatabase.query('SELECT count(*) FROM {}'.format(target)) == [(3,)]
@@ -72,7 +72,7 @@ def test_an_incremental_job_loads_only_rows_past_its_watermark(liveDatabase, ord
     liveDatabase.alter("UPDATE {} SET name = 'CHANGED-BUT-NOT-TOUCHED' WHERE id = 1".format(source))
     liveDatabase.insert(table=source, data=[(4, 'fourth', '2026-01-04T00:00:00')], chunkSize=10)
 
-    runDataJobs(jobsFile=jobsFile, databaseConfiguration={'db': connectionSettings}, logFile=tmp_path / 'jobs.log',
+    runDataJobs(jobsFile=jobsFile, connectionConfiguration={'db': connectionSettings}, logFile=tmp_path / 'jobs.log',
                 memory=memory, runForever=False)
 
     assert liveDatabase.query('SELECT count(*) FROM {}'.format(target)) == [(4,)]
@@ -91,9 +91,9 @@ def test_an_incremental_job_with_nothing_new_loads_nothing_and_keeps_its_waterma
 
     liveDatabase.insert(table=source, data=[(1, 'first', '2026-01-01T00:00:00')], chunkSize=10)
 
-    runDataJobs(jobsFile=jobsFile, databaseConfiguration={'db': connectionSettings}, logFile=tmp_path / 'jobs.log',
+    runDataJobs(jobsFile=jobsFile, connectionConfiguration={'db': connectionSettings}, logFile=tmp_path / 'jobs.log',
                 memory=memory, runForever=False)
-    runDataJobs(jobsFile=jobsFile, databaseConfiguration={'db': connectionSettings}, logFile=tmp_path / 'jobs.log',
+    runDataJobs(jobsFile=jobsFile, connectionConfiguration={'db': connectionSettings}, logFile=tmp_path / 'jobs.log',
                 memory=memory, runForever=False)
 
     assert liveDatabase.query('SELECT count(*) FROM {}'.format(target)) == [(1,)]
@@ -126,7 +126,7 @@ def test_a_job_can_turn_enforcement_off_for_its_own_load(liveDatabase, connectio
 
     def job(preTargetAdhocQueries):
         return Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'load': {
-            'active': True, 'sourceDatabase': 'db', 'targetDatabase': 'db', 'sourceQuery': 'SELECT * FROM incoming',
+            'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'sourceQuery': 'SELECT * FROM incoming',
             'targetTableFinal': 'children', 'insertStrategy': 'upsert', 'chunkSize': 10,
             'preTargetAdhocQueries': preTargetAdhocQueries}}}, DataJobsFile).jobs['load']
 

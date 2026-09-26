@@ -6,41 +6,41 @@ import decimal
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from ...configuration import DatabaseConnectionConfig, DatabaseType
+from ..driver import Connection, Cursor, native
+from ...configuration import ConnectionConfig, DatabaseType, OracleConnection
 from ...log import LOGGER_NAME
-from .base import ColumnCategory, DatabaseDialect, _mergeUpdateInsertClause, _renameInThreeSteps, _renameSteps, _renameStatement
+from .base import ColumnCategory, DatabaseDialect, _mergeUpdateInsertClause, _renameInThreeSteps, _renameSteps, _renameStatement, settingsOf
 
 logger = logging.getLogger(LOGGER_NAME)
 
 
 
-def _oracleDatetimesAsTimestamps(cursor: Any, value: Any, arraysize: int) -> Any:
+def _oracleDatetimesAsTimestamps(cursor: Cursor, value: Any, arraysize: int) -> Any:
     """Bind a datetime as a TIMESTAMP, keeping its fraction of a second.
 
-    oracledb binds one as DB_TYPE_DATE, which holds whole seconds only, so
-    microseconds were silently dropped even into a TIMESTAMP(6) column. A
-    DATE column still takes a TIMESTAMP bind, truncating as Oracle's own
-    conversion does.
+    oracledb binds one as DB_TYPE_DATE, which holds whole seconds only, even
+    into a TIMESTAMP(6) column. A DATE column still takes a TIMESTAMP bind,
+    truncating as Oracle's own conversion does.
     """
 
     import oracledb
 
     if isinstance(value, datetime.datetime):
-        return cursor.var(oracledb.DB_TYPE_TIMESTAMP_TZ if value.tzinfo else oracledb.DB_TYPE_TIMESTAMP, arraysize=arraysize)
+        return native(cursor).var(oracledb.DB_TYPE_TIMESTAMP_TZ if value.tzinfo else oracledb.DB_TYPE_TIMESTAMP, arraysize=arraysize)
 
     return None
 
 
-def _oracleValues(cursor: Any, metadata: Any) -> Any:
+def _oracleValues(cursor: Cursor, metadata: Any) -> Any:
     """How a column is fetched, per connection rather than through oracledb's
     process-wide defaults, so an embedding application keeps its own.
 
     CLOB, NCLOB and BLOB come back as str and bytes, not LOB handles, which no
     other driver can bind. A NUMBER with a scale comes back as a Decimal:
     oracledb's default is a float, which loses digits an Oracle NUMBER holds
-    (123456789012345.6789 arrived as 123456789012345.67) and turns a large
-    value into one no target can store. A scale of 0 stays an int, and
-    BINARY_FLOAT and BINARY_DOUBLE stay floats, which is what they are.
+    and turns a large value into one no target can store. A scale of 0 stays
+    an int, and BINARY_FLOAT and BINARY_DOUBLE stay floats, which is what they
+    are.
     """
 
     import oracledb
@@ -52,10 +52,10 @@ def _oracleValues(cursor: Any, metadata: Any) -> Any:
         }
     conversion = conversions.get(metadata.type_code)
     if conversion is not None:
-        return cursor.var(conversion, arraysize=cursor.arraysize)
+        return native(cursor).var(conversion, arraysize=native(cursor).arraysize)
 
     if metadata.type_code is oracledb.DB_TYPE_NUMBER and metadata.scale != 0:
-        return cursor.var(decimal.Decimal, arraysize=cursor.arraysize)
+        return native(cursor).var(decimal.Decimal, arraysize=native(cursor).arraysize)
 
     return None
 
@@ -75,39 +75,42 @@ class OracleDialect(DatabaseDialect):
                        "NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF' "
                        "NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'")
 
-    def openConnection(self, settings: DatabaseConnectionConfig) -> Any:
+    def openConnection(self, settings: ConnectionConfig) -> Any:
 
         import oracledb
 
         return oracledb.connect(**self.connectArguments(settings))
 
 
-    def prepareSession(self, connection: Any, settings: DatabaseConnectionConfig) -> Any:
+    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Any:
 
-        connection.outputtypehandler = _oracleValues
-        connection.inputtypehandler = _oracleDatetimesAsTimestamps
+        native(connection).outputtypehandler = _oracleValues
+        native(connection).inputtypehandler = _oracleDatetimesAsTimestamps
         cursor = connection.cursor()
         cursor.execute(self.SESSION_FORMATS)
 
-        if settings.currentSchema:
-            cursor.execute('ALTER SESSION SET CURRENT_SCHEMA = {}'.format(settings.currentSchema))
+        currentSchema = settingsOf(settings, OracleConnection).currentSchema
+        if currentSchema:
+            cursor.execute('ALTER SESSION SET CURRENT_SCHEMA = {}'.format(currentSchema))
 
         return cursor
 
 
-    def _ownConnectArguments(self, settings: DatabaseConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+
+        settings = settingsOf(settings, OracleConnection)
 
         return {'user': settings.user, 'password': password, 'host': settings.host, 'port': settings.port,
                 'service_name': settings.serviceName, 'sid': settings.sid}
 
 
-    def streamingCursor(self, connection: Any, chunkSize: int) -> Any:
+    def streamingCursor(self, connection: Connection, chunkSize: int) -> Any:
         """A chunk per round trip rather than oracledb's default 100 rows.
         prefetchrows one above arraysize is oracledb's documented pairing.
         """
 
         cursor = connection.cursor()
-        cursor.arraysize = chunkSize
+        native(cursor).arraysize = chunkSize
         cursor.prefetchrows = chunkSize + 1
 
         return cursor
@@ -165,7 +168,7 @@ class OracleDialect(DatabaseDialect):
                 "FROM all_tab_columns WHERE owner = " + self.OWNER + " AND table_name = {} ORDER BY column_id")
 
 
-    def isEncrypted(self, cursor: Any) -> Optional[bool]:
+    def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
 
         cursor.execute("SELECT SYS_CONTEXT('USERENV', 'NETWORK_PROTOCOL') FROM dual")
         protocol = cursor.fetchone()[0]
@@ -222,14 +225,13 @@ class OracleDialect(DatabaseDialect):
         return _renameInThreeSteps(targetTable, stageTable, tempTable)
 
 
-    def swap(self, cursor: Any, targetTable: str, stageTable: str, tempTable: str) -> None:
+    def swap(self, cursor: Cursor, targetTable: str, stageTable: str, tempTable: str) -> None:
         """Renames one at a time, undoing the ones that worked if one fails.
 
         Oracle commits every DDL statement, so there is no transaction to roll
-        back. A rename that failed part-way -- another session holding the
-        table, which is ORA-00054 -- used to leave the stage table under the
-        temporary name, so the stage table was gone and every later run failed
-        with ORA-00942 until someone renamed it back by hand.
+        back; a rename failing part-way -- another session holding the table,
+        ORA-00054 -- would otherwise leave the stage table under the temporary
+        name, and every later run failing until it was renamed back.
 
         An undo that fails is left for the error about the swap itself, which
         says more about what went wrong.

@@ -125,7 +125,7 @@ def test_a_masked_job_keeps_types_and_references(schema, tmp_path):
     orderPolicy = {'id': 'keep', 'customer_id': {'strategy': 'key', 'domain': 'customer'}}
 
     def job(source, target, policy, **extra):
-        definition = {'active': True, 'sourceDatabase': 'db', 'targetDatabase': 'db', 'sourceQuery': 'SELECT * FROM {}'.format(source),
+        definition = {'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'sourceQuery': 'SELECT * FROM {}'.format(source),
                       'targetTableFinal': target, 'insertStrategy': 'upsert', 'chunkSize': 5, 'masking': {'key': KEY, 'columns': policy}}
         definition.update(extra)
         return definition
@@ -135,7 +135,7 @@ def test_a_masked_job_keeps_types_and_references(schema, tmp_path):
         'maskOrders': job(names['orders'], names['orders_copy'], orderPolicy, predecessors=['maskCustomers']),
         }}, DataJobsFile)
 
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration={'db': settings}, logFile=tmp_path / 'jobs.log',
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration={'db': settings}, logFile=tmp_path / 'jobs.log',
                          memory=FileMemory(memoryFile=tmp_path / 'memory.yaml'))
 
     assert result.succeeded, [outcome.error for outcome in result.outcomes if outcome.status != JobStatus.COMPLETED]
@@ -205,7 +205,7 @@ def test_the_deepest_subset_allowed_runs_on_every_server(server):
 
 def _maskedJob(source, target, policy):
     return Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'mask': {
-        'active': True, 'sourceDatabase': 'db', 'targetDatabase': 'db', 'sourceQuery': 'SELECT * FROM {}'.format(source),
+        'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'sourceQuery': 'SELECT * FROM {}'.format(source),
         'targetTableFinal': target, 'insertStrategy': 'upsert', 'chunkSize': 5, 'masking': {'key': KEY, 'columns': policy}}}}, DataJobsFile)
 
 
@@ -237,7 +237,7 @@ def test_a_policy_that_misses_a_column_fails_once_and_names_it(schema, tmp_path)
     jobsFile.jobs['mask'].retries = 2
     jobsFile.jobs['mask'].retryDelaySeconds = 0
 
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration={'db': settings}, memory=FileMemory(tmp_path / 'memory.yaml'),
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration={'db': settings}, memory=FileMemory(tmp_path / 'memory.yaml'),
                          logFile=tmp_path / 'runner.log')
 
     (outcome,) = result.outcomes

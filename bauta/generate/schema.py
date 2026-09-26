@@ -26,8 +26,8 @@ class PortableType(NamedTuple):
 
     `precision` and `scale` size a decimal. On an integer kind, `precision` is
     the digits the source column holds, set only where that is more than the
-    kind's name suggests -- MySQL's BIGINT UNSIGNED, SQLite's 64-bit INTEGER --
-    so the target's narrower type can be noted.
+    kind's name suggests -- SQLite's 64-bit INTEGER -- so the target's
+    narrower type can be noted.
     """
 
     kind: str
@@ -138,15 +138,44 @@ def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> Portable
             return PortableType('decimal', precision=column.precision, scale=column.scale)
         return PortableType('text', note='unrecognized SQLite type {}; mapped to text'.format(column.dataType))
 
-    # MySQL, MariaDB, PostgreSQL and SQL Server all report through
+    if sourceType == DatabaseType.DUCKDB:
+        # DuckDB's own names; the ones it shares with PostgreSQL fall through
+        # to the table below. Nested types have no counterpart elsewhere.
+        if base == 'boolean':
+            return PortableType('boolean')
+        if base == 'utinyint':
+            return PortableType('smallint')
+        if base == 'usmallint':
+            return PortableType('integer')
+        if base == 'uinteger':
+            return PortableType('bigint')
+        if base in ('ubigint', 'hugeint', 'uhugeint'):
+            # HUGEINT's range runs to 39 digits, one past what DECIMAL holds on
+            # DuckDB, Oracle and SQL Server; a target clamps it, and says so.
+            digits = {'ubigint': UNSIGNED_BIGINT_DIGITS, 'hugeint': 39, 'uhugeint': 39}[base]
+            return PortableType('decimal', precision=digits, scale=0,
+                                note='DuckDB {} has no integer counterpart; mapped to a decimal of {} digits'.format(base.upper(), digits))
+        if base in ('timestamp_s', 'timestamp_ms', 'timestamp_ns', 'datetime'):
+            return PortableType('timestamp')
+        if base.endswith(']') or base.startswith(('struct', 'map', 'union', 'list')):
+            return PortableType('json', note='DuckDB {} has no counterpart; mapped to JSON'.format(column.dataType))
+        if base == 'interval':
+            return PortableType('text', note='DuckDB INTERVAL has no portable counterpart; mapped to text')
+
+    # MySQL, MariaDB, PostgreSQL, SQL Server and DuckDB all report through
     # information_schema, with names that overlap enough to share one table.
+    if unsigned and base in _UNSIGNED:
+        # MySQL's unsigned integers run past the signed type of the same name
+        # -- a SMALLINT UNSIGNED to 65535, an INT UNSIGNED to 4294967295 -- so
+        # each takes the next type up, and BIGINT UNSIGNED, which no target's
+        # integer holds, a decimal.
+        return _UNSIGNED[base]
     if base in ('tinyint', 'smallint', 'int2'):
         return PortableType('smallint')
     if base in ('int', 'integer', 'mediumint', 'int4', 'serial'):
-        # An unsigned column reaches 4294967295, which no target's INT holds.
-        return PortableType('integer', precision=UNSIGNED_INTEGER_DIGITS) if unsigned else PortableType('integer')
+        return PortableType('integer')
     if base in ('bigint', 'int8', 'bigserial'):
-        return PortableType('bigint', precision=UNSIGNED_BIGINT_DIGITS) if unsigned else PortableType('bigint')
+        return PortableType('bigint')
     if base in ('decimal', 'numeric', 'money', 'smallmoney'):
         if base in ('money', 'smallmoney'):
             return PortableType('decimal', precision=19, scale=4)
@@ -198,10 +227,21 @@ ORACLE_TIME_LENGTH = 32
 
 SQLITE_INTEGER_DIGITS = 19
 
-# MySQL's and MariaDB's unsigned integers reach 4294967295 and
-# 18446744073709551615, which no other database's INT or BIGINT holds.
-UNSIGNED_INTEGER_DIGITS = 10
+# The digits of an unsigned 64-bit integer: MySQL's BIGINT UNSIGNED and
+# DuckDB's UBIGINT reach 18446744073709551615.
 UNSIGNED_BIGINT_DIGITS = 20
+
+# What each of MySQL's and MariaDB's unsigned integers is copied as: the
+# smallest type holding its whole range.
+_UNSIGNED = {
+    'tinyint': PortableType('smallint'),
+    'smallint': PortableType('integer'),
+    'mediumint': PortableType('integer'),
+    'int': PortableType('bigint'),
+    'integer': PortableType('bigint'),
+    'bigint': PortableType('decimal', precision=UNSIGNED_BIGINT_DIGITS, scale=0,
+                           note='BIGINT UNSIGNED runs past every signed 64-bit integer; mapped to a decimal of 20 digits'),
+    }
 
 # The digits each target's integer types take. SQLite gives all three the same
 # 64-bit affinity whatever they are called, and Oracle renders them as
@@ -270,7 +310,7 @@ def _renderedType(targetType: DatabaseType, portable: PortableType, isKey: bool)
     kind, length, precision, scale = portable.kind, portable.length, portable.precision, portable.scale
     note = None
 
-    if kind == 'text' and length is None and isKey and targetType != DatabaseType.POSTGRESQL and targetType != DatabaseType.SQLITE:
+    if kind == 'text' and length is None and isKey and targetType not in (DatabaseType.POSTGRESQL, DatabaseType.SQLITE, DatabaseType.DUCKDB):
         length = KEY_TEXT_LENGTH
         note = 'unbounded text in a key; bounded to {} characters'.format(KEY_TEXT_LENGTH)
 
@@ -334,13 +374,22 @@ def _renderedType(targetType: DatabaseType, portable: PortableType, isKey: bool)
             'timestamp': 'TIMESTAMP', 'timestampTz': 'TIMESTAMP WITH TIME ZONE', 'binary': 'BLOB', 'uuid': 'VARCHAR2(36 CHAR)',
             }[kind], note
 
+    if targetType == DatabaseType.DUCKDB:
+        if kind == 'decimal':
+            # DuckDB's bare DECIMAL is DECIMAL(18,3), which would round.
+            return _decimal('DECIMAL', precision, scale, 38, 38, defaultScale=10)
+        return {
+            'smallint': 'SMALLINT', 'integer': 'INTEGER', 'bigint': 'BIGINT', 'float': 'DOUBLE', 'boolean': 'BOOLEAN',
+            'text': 'VARCHAR', 'fixedText': 'VARCHAR', 'date': 'DATE', 'timestamp': 'TIMESTAMP', 'timestampTz': 'TIMESTAMPTZ', 'time': 'TIME',
+            'binary': 'BLOB', 'uuid': 'UUID', 'json': 'JSON',
+            }[kind], note or ('DuckDB has no fixed-length text; mapped to VARCHAR, which keeps no padding' if kind == 'fixedText' else None)
+
     # SQLite: declared names that give each value the right affinity.
     if kind == 'decimal':
         # TEXT, not DECIMAL: SQLite has no exact decimal type, and a column
-        # whose declared name gives it NUMERIC affinity converts the value to
-        # an integer or a float as it is stored. 123456789012345678.123456789
-        # came back as 123456789012345680, silently. Text keeps every digit,
-        # and the drivers that read the copy parse it back.
+        # whose declared name gives it NUMERIC affinity stores the value as an
+        # integer or a float, rounding it. Text keeps every digit, and the
+        # drivers that read the copy parse it back.
         return 'TEXT', ('SQLite has no exact decimal type; stored as text, which keeps every digit, rather than as the '
                         'float a DECIMAL column would hold')
     return {
@@ -362,13 +411,9 @@ def tableKey(table: str) -> str:
 
 
 def readTable(database: Any, table: str, foreignKeys: Sequence[ForeignKey]) -> TableDefinition:
-    """A table's shape from a live source Database, under the name asked for.
-
-    Spelling the name as a matching foreign key does instead spelled one table
-    the way the catalog holds it (upper case on Oracle) and the next the way it
-    was asked for, so one invocation emitted CREATE TABLE CUSTOMERS beside
-    CREATE TABLE type_zoo, and jobs written against the lower-case names then
-    found only half of them.
+    """A table's shape from a live source Database, named as it was asked for
+    rather than as the catalog spells it -- upper case on Oracle -- so every
+    table one invocation creates is named the same way.
     """
 
     columns = database.getColumnDefinitions(table)
@@ -574,18 +619,25 @@ def clearTables(database: Any, tables: Sequence[str]) -> List[Tuple[str, int]]:
     """Deletes every row of `tables`, in one transaction, children first, and
     returns (table, rows deleted). DELETE, since three dialects won't
     TRUNCATE a table a foreign key references.
+
+    On DuckDB, one transaction per table: it checks a foreign key against what
+    is committed, so a parent's DELETE is refused while its children's DELETE
+    is still uncommitted. A clear stopped part-way there leaves the tables it
+    reached empty, and running it again finishes it.
     """
 
     order = clearOrder(tables, database.getForeignKeys())
     cleared = []
+    commitEach = not database.dialect.checksForeignKeysWithinTransaction()
 
     try:
         for table in order:
-            database.cursor.execute('DELETE FROM {}'.format(database.statementName(table)))
-            cleared.append((table, database.cursor.rowcount))
-        database.connection.commit()
+            cleared.append((table, database.execute('DELETE FROM {}'.format(database.statementName(table)))))
+            if commitEach:
+                database.commit()
+        database.commit()
     except Exception:
-        database.connection.rollback()
+        database.rollback()
         raise
 
     return cleared

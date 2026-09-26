@@ -1,8 +1,10 @@
-"""Everything that differs between the six databases: one module each, the
+"""Everything that differs between the seven databases: one module each, the
 DatabaseDialect contract they share in `base`, and how a name is read and
 quoted in `names`.
 """
-from .base import ColumnCategory, ColumnDefinition, DatabaseDialect, ForeignKey, durationText
+from ..values import durationText
+from .base import ColumnCategory, ColumnDefinition, DatabaseDialect, ForeignKey
+from .duckdb import DuckDBDialect
 from .mssql import MSSQLDialect
 from .mysql import MariaDBDialect, MySQLDialect
 from .names import (IDENTIFIER_LIMITS, bareName, catalogName, catalogTable, catalogTableName, quoteFolded, quoteFoldedTable, quoteIdentifier,
@@ -19,6 +21,7 @@ __all__ = [
     'ColumnCategory',
     'ColumnDefinition',
     'DatabaseDialect',
+    'DuckDBDialect',
     'durationText',
     'ForeignKey',
     'IDENTIFIER_LIMITS',

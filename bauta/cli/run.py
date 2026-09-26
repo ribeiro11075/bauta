@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..configuration import ConfigurationError, DatabaseConnectionConfig, DataJobsFile, InsertStrategy
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobsFile, InsertStrategy
 from ..database import DIALECTS
 from ..jobs.dependencyGraph import DependencyGraph
 from ..log import Log
@@ -21,12 +21,12 @@ from ..jobs.memory import RunInProgressError, exclusiveRun
 from ..jobs.runner import RunResult, runDataJobs
 from ..log.scrubbing import describeError
 from .common import (DEFAULT_TABLES, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, NOTIFY_URL_VARIABLE, _Connections, Location,
-                     UsageError, _checkColumnCounts, _checkMaskingCoverage, _describeLocation, _discoveryRulesFile, _history, _loadDatabases,
+                     UsageError, _checkColumnCounts, _checkMaskingCoverage, _describeLocation, _discoveryRulesFile, _history, _loadConnections,
                      _loadDataJobs, _memoryBackend, _memoryLocation, _resolveConfigurationPaths, _resolveLocation, _selectJobs, _settingsFor,
                      _sourceQueryColumns, _toolVersion)
 
 
-def _cycleReporter(arguments: argparse.Namespace, jobsFile: DataJobsFile, databaseConfiguration: Dict[str, DatabaseConnectionConfig],
+def _cycleReporter(arguments: argparse.Namespace, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig],
                    log: Log) -> Optional[Callable[[RunResult], None]]:
     """What `run` does as each cycle ends: history and notifications, as the
     flags and the jobs file ask. None if they ask for nothing.
@@ -35,7 +35,7 @@ def _cycleReporter(arguments: argparse.Namespace, jobsFile: DataJobsFile, databa
     from ..jobs.reporting import RunHistory, newRunId, notify
 
     historyLocation = _resolveLocation(arguments, 'history', jobsFile.history)
-    history: Optional[RunHistory] = _history(historyLocation, databaseConfiguration) if historyLocation else None
+    history: Optional[RunHistory] = _history(historyLocation, connectionConfiguration) if historyLocation else None
 
     notifyUrl = arguments.notify_url or os.environ.get(NOTIFY_URL_VARIABLE)
 
@@ -91,34 +91,34 @@ def _commandRun(arguments: argparse.Namespace, log: Log) -> int:
     running the same jobs concurrently.
     """
 
-    jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
     jobsFile = _applyJobSelection(jobsFile, arguments, log)
 
     if arguments.dry_run:
-        return _dryRunDataJobs(jobsFile, databaseConfiguration, log)
+        return _dryRunDataJobs(jobsFile, connectionConfiguration, log)
 
-    memory, lockFile = _memoryBackend(arguments, jobsFile, databaseConfiguration)
+    memory, lockFile = _memoryBackend(arguments, jobsFile, connectionConfiguration)
     lockFile.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         with memory, exclusiveRun(lockFile):
-            result = runDataJobs(jobsFile=jobsFile, databaseConfiguration=databaseConfiguration, logFile=arguments.log,
+            result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=connectionConfiguration, logFile=arguments.log,
                                  memory=memory, runForever=arguments.forever,
                                  logLevel=getattr(logging, arguments.log_level.upper()), logFormat=arguments.log_format,
                                  acceptKeyChange=arguments.accept_key_change,
-                                 onCycle=_cycleReporter(arguments, jobsFile, databaseConfiguration, log))
+                                 onCycle=_cycleReporter(arguments, jobsFile, connectionConfiguration, log))
     except RunInProgressError as error:
         log.logging.error(str(error))
         return EXIT_JOBS_DID_NOT_SUCCEED
 
     manifestLocation = _resolveLocation(arguments, 'manifest', jobsFile.manifest)
     if manifestLocation:
-        _writeManifest(manifestLocation, result, jobsFile, databaseConfiguration, arguments, log)
+        _writeManifest(manifestLocation, result, jobsFile, connectionConfiguration, arguments, log)
 
     return _reportRun(result, log)
 
 
-def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile, databaseConfiguration: Dict[str, DatabaseConnectionConfig],
+def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig],
                    arguments: argparse.Namespace, log: Log) -> None:
     """Writes the run's masking manifest as sealed JSON, to a file or a table,
     even when a job failed, with the tool version and a digest of the jobs
@@ -141,7 +141,7 @@ def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile
         from ..jobs.reporting import DatabaseManifests, newRunId
 
         runId = newRunId()
-        DatabaseManifests(_settingsFor(location, databaseConfiguration), table=location.table or DEFAULT_TABLES['manifest']).write(manifest, runId)
+        DatabaseManifests(_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['manifest']).write(manifest, runId)
         where = '{}, run {}'.format(_describeLocation(location), runId)
 
     log.logging.info('Wrote the masking manifest for {} job(s) to {}, {}'.format(
@@ -150,22 +150,22 @@ def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile
 
 def _readManifest(arguments: argparse.Namespace) -> Tuple[str, Dict[str, Any]]:
     """The manifest to verify, and what to call it: the file named, else from
-    --manifest-database, else from wherever the jobs file's `manifest` says --
+    --manifest-connection, else from wherever the jobs file's `manifest` says --
     from a table, the latest run's unless --run names one.
     """
 
     location: Optional[Location]
     if arguments.manifest:
         location = Path(arguments.manifest)
-        databaseConfiguration: Dict[str, DatabaseConnectionConfig] = {}
-    elif arguments.manifest_database:
+        connectionConfiguration: Dict[str, ConnectionConfig] = {}
+    elif arguments.manifest_connection:
         location = _resolveLocation(arguments, 'manifest')
-        databaseConfiguration = _loadDatabases(arguments)
+        connectionConfiguration = _loadConnections(arguments)
     else:
-        jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+        jobsFile, connectionConfiguration = _loadDataJobs(arguments)
         location = _resolveLocation(arguments, 'manifest', jobsFile.manifest)
         if location is None:
-            raise UsageError('name the manifest to verify: a FILE, --manifest-database ALIAS, or `manifest` in the jobs file')
+            raise UsageError('name the manifest to verify: a FILE, --manifest-connection ALIAS, or `manifest` in the jobs file')
 
     if isinstance(location, Path):
         if arguments.run:
@@ -181,7 +181,7 @@ def _readManifest(arguments: argparse.Namespace) -> Tuple[str, Dict[str, Any]]:
 
     assert location is not None
     try:
-        runId, manifest = DatabaseManifests(_settingsFor(location, databaseConfiguration),
+        runId, manifest = DatabaseManifests(_settingsFor(location, connectionConfiguration),
                                             table=location.table or DEFAULT_TABLES['manifest']).read(arguments.run)
     except KeyError as error:
         raise UsageError(error.args[0]) from error
@@ -243,7 +243,7 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
 
     from ..transform import resolveTransformer
 
-    jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
 
     problems = []
     for name, job in jobsFile.jobs.items():
@@ -254,7 +254,7 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
                 except Exception as error:
                     problems.append('{}: {} -> {}'.format(name, column, error))
 
-    for alias, settings in sorted(databaseConfiguration.items()):
+    for alias, settings in sorted(connectionConfiguration.items()):
         try:
             DIALECTS[settings.type].connectArguments(settings, resolvePassword=False)
         except ConfigurationError as error:
@@ -270,7 +270,7 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
     if problems:
         raise ConfigurationError('invalid configuration:\n' + '\n'.join(problems))
 
-    print('configuration is valid: {} database alias(es), {} job(s)'.format(len(databaseConfiguration), len(jobsFile.jobs)))
+    print('configuration is valid: {} connection(s), {} job(s)'.format(len(connectionConfiguration), len(jobsFile.jobs)))
     print('run state: {}'.format(_describeLocation(_memoryLocation(arguments, jobsFile))))
     for setting, missing in (('history', 'not recorded'), ('manifest', 'not written')):
         location = _resolveLocation(arguments, setting, getattr(jobsFile, setting))
@@ -301,32 +301,32 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
     return EXIT_SUCCESS
 
 
-def _dryRunDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, DatabaseConnectionConfig], log: Log) -> int:
+def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig], log: Log) -> int:
     """Everything `validate` does, plus what needs a connection: that each alias
     connects, target tables exist, and upsert targets have a primary key.
     """
 
     problems: List[str] = []
     unreachable = set()
-    aliases = sorted({job.sourceDatabase for job in jobsFile.jobs.values()} | {job.targetDatabase for job in jobsFile.jobs.values()})
+    aliases = sorted({job.sourceConnection for job in jobsFile.jobs.values()} | {job.targetConnection for job in jobsFile.jobs.values()})
 
-    with _Connections(databaseConfiguration) as connections:
+    with _Connections(connectionConfiguration) as connections:
 
         for alias in aliases:
             try:
                 with connections.use(alias) as database:
                     encrypted = {True: 'encrypted', False: 'NOT encrypted', None: 'encryption unknown'}[database.isEncrypted()]
-                    log.logging.info('{}: connected ({}, {})'.format(alias, databaseConfiguration[alias].type.value, encrypted))
+                    log.logging.info('{}: connected ({}, {})'.format(alias, connectionConfiguration[alias].type.value, encrypted))
             except Exception as error:
                 unreachable.add(alias)
                 problems.append('{}: cannot connect to {} -- {}'.format(
-                    alias, databaseConfiguration[alias].describeTarget(), describeError(error)))
+                    alias, connectionConfiguration[alias].describeTarget(), describeError(error)))
 
         for name, job in jobsFile.jobs.items():
-            if job.targetDatabase in unreachable:
+            if job.targetConnection in unreachable:
                 continue
             try:
-                with connections.use(job.targetDatabase) as database:
+                with connections.use(job.targetConnection) as database:
                     columns = database.getAllColumnNames(table=job.targetTableFinal)
                     log.logging.info('{}: target {} has {} column(s)'.format(name, job.targetTableFinal, len(columns)))
 
@@ -337,11 +337,10 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, Dat
                 continue
 
             # The stage table is where the rows actually land, so a run fails at
-            # once without it -- which a dry run used to pass, looking only at the
-            # table the job names as its target.
+            # once without it.
             if job.targetTableStage:
                 try:
-                    with connections.use(job.targetDatabase) as database:
+                    with connections.use(job.targetConnection) as database:
                         staged = {column.upper() for column in database.getAllColumnNames(table=job.targetTableStage)}
                     log.logging.info('{}: stage table {} has {} column(s)'.format(name, job.targetTableStage, len(staged)))
                     missing = [column for column in columns if column.upper() not in staged]
@@ -351,7 +350,7 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, Dat
                 except Exception as error:
                     problems.append('{}: stage table {} is not readable -- {}'.format(name, job.targetTableStage, describeError(error)))
 
-            if job.sourceDatabase in unreachable:
+            if job.sourceConnection in unreachable:
                 continue
 
             try:
@@ -362,7 +361,7 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, Dat
 
             # The same comparison the load makes, made before it writes: a target
             # that gained or lost a column against a query that didn't is the
-            # ordinary way a working job stops working, and a run finds it at 03:00.
+            # ordinary way a working job stops working.
             problem = _checkColumnCounts(name, job, returned, columns)
             if problem:
                 problems.append(problem)
@@ -376,7 +375,7 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, Dat
             log.logging.error(problem)
         return EXIT_JOBS_DID_NOT_SUCCEED
 
-    print('dry run passed: {} database alias(es), {} job(s), no rows moved'.format(len(aliases), len(jobsFile.jobs)))
+    print('dry run passed: {} connection(s), {} job(s), no rows moved'.format(len(aliases), len(jobsFile.jobs)))
 
     return EXIT_SUCCESS
 
@@ -390,17 +389,17 @@ def _commandHistory(arguments: argparse.Namespace, log: Log) -> int:
 
     location: Optional[Location]
     if arguments.history:
-        location, databaseConfiguration = _resolveLocation(arguments, 'history'), {}
-    elif arguments.history_database:
-        location, databaseConfiguration = _resolveLocation(arguments, 'history'), _loadDatabases(arguments)
+        location, connectionConfiguration = _resolveLocation(arguments, 'history'), {}
+    elif arguments.history_connection:
+        location, connectionConfiguration = _resolveLocation(arguments, 'history'), _loadConnections(arguments)
     else:
-        jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+        jobsFile, connectionConfiguration = _loadDataJobs(arguments)
         location = _resolveLocation(arguments, 'history', jobsFile.history)
         if location is None:
-            raise UsageError('name the history to read: --history FILE, --history-database ALIAS, or `history` in the jobs file')
+            raise UsageError('name the history to read: --history FILE, --history-connection ALIAS, or `history` in the jobs file')
 
     assert location is not None
-    history = _history(location, databaseConfiguration)
+    history = _history(location, connectionConfiguration)
 
     records = history.read(limit=arguments.limit, job=arguments.job)
     sys.stdout.write(json.dumps(records, indent=2) + '\n' if arguments.format == 'json' else renderHistory(records))
@@ -413,8 +412,8 @@ def _commandJobs(arguments: argparse.Namespace, log: Log) -> int:
     their refresh window holds back.
     """
 
-    jobsFile, databaseConfiguration = _loadDataJobs(arguments)
-    memory, _ = _memoryBackend(arguments, jobsFile, databaseConfiguration)
+    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
+    memory, _ = _memoryBackend(arguments, jobsFile, connectionConfiguration)
     with memory:
         graph = DependencyGraph(jobs=jobsFile.jobs, memory=memory.read())
         watermarks = memory.readWatermarks()

@@ -133,7 +133,7 @@ Both of those exist so that a deliberate exception is written down rather than i
 
 **The watermark is not a way around masking.** It is read before masking and kept in run state and logs, so a `watermarkColumn` the policy masks, whether it names the column or leaves it to `defaultStrategy`, is refused by `validate` and again by `run`.
 
-**A misspelled key is not an exception.** An unknown field in `jobs.yaml` or `database.yaml` is an error: `maskng:` instead of `masking:` used to be dropped in silence, leaving a job that read as masked in the file and copied every column as it stood.
+**A misspelled key is not an exception.** An unknown field in `jobs.yaml` or `connections.yaml` is an error: `maskng:` instead of `masking:` used to be dropped in silence, leaving a job that read as masked in the file and copied every column as it stood.
 
 What none of this checks: whether the *strategy* chosen for a column is strong enough for the data in it. That is what [what masking does not hide](#what-masking-does-not-hide) is about, and it is a review, not a check.
 

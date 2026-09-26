@@ -59,9 +59,9 @@ def _nativeModule() -> Any:
     """The optional `bauta_rs` extension, or None if it isn't installed,
     BAUTA_NATIVE=0 turns it off, or its version isn't this package's.
 
-    The two install separately, so nothing else stops a pairing whose masks
-    differ -- which would reach a deployment as joins that quietly stop
-    matching. Masking in Python instead is only slower.
+    The two install separately, and a pairing whose masks differed would leave
+    joins in the copy quietly mismatched; masking in Python instead is only
+    slower.
     """
 
     if os.environ.get('BAUTA_NATIVE') == '0':
@@ -544,9 +544,8 @@ def policyFor(column: str, columns: Mapping[str, Mapping[str, Any]],
     """The policy that masks `column`: its own in `columns`, matched ignoring
     case as MaskingPlan.bind matches it, else `defaultStrategy`, else None.
 
-    The one place a column's policy is looked up outside a bound plan, so a
-    check made before the query runs can't forget the default -- which let a
-    watermark column masked by defaultStrategy through to run state.
+    The one lookup of a column's policy outside a bound plan, so that a check
+    made before the query runs sees the default too.
     """
 
     folded = column.upper()
@@ -656,8 +655,8 @@ class BoundMasking:
         self._maskedIndexes = [index for index, strategy in enumerate(self.strategies) if not strategy.PASSTHROUGH]
         self._passthrough = not self._maskedIndexes
         self._masks = [not strategy.PASSTHROUGH for strategy in self.strategies]
-        # Measured at 5,000 rows: rebuilding from columns wins up to about
-        # twenty columns, and past that once a third or more are masked.
+        # Rebuilding rows from columns is faster up to about twenty columns,
+        # and past that once a third or more of them are masked.
         width = len(self.strategies)
         self._transposeToSplice = width <= 20 or 3 * len(self._maskedIndexes) >= width
 
@@ -691,15 +690,13 @@ class BoundMasking:
                                'query it was bound to'.format(len(self.strategies), len(rows[0])))
 
         if self._transposeToSplice:
-            # Rows rebuilt from columns in C: three times as fast as splicing
-            # row by row where the table is narrow or much of it is masked.
-            # Each column is masked as the transpose yields it, rather than
-            # after all of them are listed: 10-28% faster on a mixed table.
+            # Rows rebuilt from columns in C, each column masked as the
+            # transpose yields it.
             return list(zip(*[self._maskColumn(index, column, chunkIndex) if self._masks[index] else column
                               for index, column in enumerate(zip(*rows))]))
 
-        # A wide table with few columns masked: transposing every column to
-        # rewrite two cost more than splicing those two into each row.
+        # A wide table with few columns masked: splice those into each row
+        # rather than transpose every column.
         masked = [self._maskColumn(index, [row[index] for row in rows], chunkIndex) for index in self._maskedIndexes]
 
         spliced = []

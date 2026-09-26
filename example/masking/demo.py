@@ -113,12 +113,12 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> Dict[str, Any]:
     os.environ['MASKING_DEMO_STAGING_PATH'] = str(workingDirectory / 'staging.db')
     os.environ.setdefault('MASKING_KEY', DEMO_MASKING_KEY)
 
-    databases = Configuration.validateDatabaseConfiguration(loadConfiguration('database.yaml'))
+    databases = Configuration.validateConnectionConfiguration(loadConfiguration('connections.yaml'))
     jobsFile = Configuration.validateJobConfiguration(loadConfiguration('jobs.yaml'), DataJobsFile)
-    Configuration.validateJobGraph(jobsFile.jobs, databaseAliases=set(databases))
+    Configuration.validateJobGraph(jobsFile.jobs, connectionAliases=set(databases))
     memory = FileMemory(memoryFile=workingDirectory / 'memory.yaml')
     observed: Dict[str, Any] = {}
-    # What the CLI needs to do the same: the paths database.yaml reads, and the
+    # What the CLI needs to do the same: the paths connections.yaml reads, and the
     # key -- shown only when it's the throwaway one, never a real key.
     paths = {'MASKING_DEMO_PROD_PATH': workingDirectory / 'prod.db', 'MASKING_DEMO_STAGING_PATH': workingDirectory / 'staging.db'}
     if os.environ['MASKING_KEY'] == DEMO_MASKING_KEY:
@@ -136,7 +136,7 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> Dict[str, Any]:
 
         print('\n1. MASK production into staging')
         showCommand(runCommand + ['--manifest', workingDirectory / 'manifest.json'], paths)
-        result = runDataJobs(jobsFile=jobsFile, databaseConfiguration=databases, memory=memory, logFile=logPath, logLevel=logging.DEBUG)
+        result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=databases, memory=memory, logFile=logPath, logLevel=logging.DEBUG)
         observed['firstRun'] = result.succeeded
         printRows('production customers:', prod.query('SELECT * FROM customers ORDER BY id'))
         printRows('staging customers:', staging.query('SELECT * FROM customers ORDER BY id'))
@@ -158,7 +158,7 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> Dict[str, Any]:
         prod.alter("INSERT INTO customers VALUES (6, 'fay@corp.example', 'Fay Ito', '+81 90 1234 5678', '1995-05-05', 'apac', NULL, '987-65-4321')")
 
         showCommand(runCommand, paths)
-        result = runDataJobs(jobsFile=jobsFile, databaseConfiguration=databases, memory=memory, logFile=logPath, logLevel=logging.DEBUG)
+        result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=databases, memory=memory, logFile=logPath, logLevel=logging.DEBUG)
         [failure] = [outcome for outcome in result.outcomes if outcome.job == 'maskCustomers']
         observed['secondRun'] = failure
         observed['stagingCustomersAfterFailure'] = staging.query('SELECT count(*) FROM customers')[0][0]
@@ -167,14 +167,14 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> Dict[str, Any]:
             observed['stagingCustomersAfterFailure'], staging.query('SELECT count(ssn) FROM customers')[0][0] == 0))
 
         print('\n3. DISCOVER a policy for the changed table')
-        showCommand(['discover', '--config', DEMO_CONFIGURATION_DIRECTORY, '--database', 'prod', '--table', 'customers', '--sample', '100'], paths)
+        showCommand(['discover', '--config', DEMO_CONFIGURATION_DIRECTORY, '--connection', 'prod', '--table', 'customers', '--sample', '100'], paths)
         proposal = proposeTable(prod, 'customers', sampleSize=100)
         observed['proposal'] = {suggestion.column: suggestion.policy for suggestion in proposal.columns}
         for suggestion in proposal.columns:
             print('  {:<11} {:<48} # {}'.format(suggestion.column, json.dumps(suggestion.policy), suggestion.reason))
 
         print("\n4. SUBSET: customers in region 'eu', and everything they need")
-        showCommand(['subset', '--config', DEMO_CONFIGURATION_DIRECTORY, '--database', 'prod', '--target', 'staging', '--root', 'customers',
+        showCommand(['subset', '--config', DEMO_CONFIGURATION_DIRECTORY, '--connection', 'prod', '--target', 'staging', '--root', 'customers',
                      '--where', "region = 'eu'"], paths)
         plan = planSubset(prod.getForeignKeys(), root='customers', where="region = 'eu'",
                           materialize=prod.dialect.supportsMaterializedSelections())

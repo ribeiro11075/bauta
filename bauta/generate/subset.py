@@ -4,7 +4,7 @@ From a root table and a filter, one source query per table, so every foreign
 key in the copied rows points at a copied row. Followed up always (what the
 selected rows reference) and down optionally (what references them).
 
-Queries are EXISTS over named common table expressions, which all six
+Queries are EXISTS over named common table expressions, which all seven
 dialects run. Cycles, self-references included, need recursive SQL the
 dialects don't share, so they're reported for the caller to break.
 """
@@ -195,9 +195,8 @@ def planSubset(foreignKeys: Sequence[ForeignKey], root: str, where: str, followC
     `materialize` writes `AS MATERIALIZED`, where the dialect supports it (see
     DatabaseDialect.supportsMaterializedSelections). `quote` quotes column
     names, e.g. `lambda name: quoteIdentifier(database.type, name)`, and
-    `quoteTable` the table names, without which a table named for a reserved
-    word made every generated query a syntax error. Raises SubsetError past
-    MAX_SELECTION_DEPTH.
+    `quoteTable` the table names, so a table named for a reserved word still
+    parses. Raises SubsetError past MAX_SELECTION_DEPTH.
     """
 
     ignoreSet = parseIgnore(ignore)

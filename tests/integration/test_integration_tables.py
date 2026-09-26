@@ -15,11 +15,11 @@ import pytest
 
 from bauta.configuration import DatabaseType
 from bauta.database import Database
-from tests.integration.servers import SERVERS, serverSettings
+from tests.integration.servers import EMBEDDED, SERVERS, serverSettings
 
 pytestmark = pytest.mark.integration
 
-NAMES = ['sqlite'] + sorted(SERVERS)
+NAMES = EMBEDDED + sorted(SERVERS)
 
 
 @pytest.fixture(params=NAMES)
@@ -137,7 +137,7 @@ def test_listing_a_named_schema_qualifies_what_it_returns(database):
 
     schema = {
         DatabaseType.MYSQL: 'bauta_test', DatabaseType.MARIADB: 'bauta_test',
-        DatabaseType.POSTGRESQL: 'public', DatabaseType.ORACLE: 'SYSTEM', DatabaseType.MSSQL: 'dbo',
+        DatabaseType.POSTGRESQL: 'public', DatabaseType.ORACLE: 'SYSTEM', DatabaseType.MSSQL: 'dbo', DatabaseType.DUCKDB: 'main',
         }[database.type]
 
     listed = database.listTables(schema=schema)

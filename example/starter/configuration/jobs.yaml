@@ -1,14 +1,14 @@
 # Sample configuration -- placeholder table/column names, not a real deployment.
 # Replace with your own job definitions; database aliases must match
-# database.yaml beside this file.
+# connections.yaml beside this file.
 workers: 2
 cycleSleepSeconds: 0.5
 # What every job would otherwise repeat. A job that names any of these itself
 # keeps its own value. A masking policy's `columns` stays with its job, so what
 # a job does to its data can be read in one place; only the key is shared.
 defaults:
-  sourceDatabase: sourceDb
-  targetDatabase: targetDb
+  sourceConnection: sourceDb
+  targetConnection: targetDb
   insertStrategy: upsert
   chunkSize: 5000
   refresh: 60

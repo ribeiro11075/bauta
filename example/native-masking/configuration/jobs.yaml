@@ -4,9 +4,9 @@ workers: 1
 jobs:
   maskCustomers:
     active: true
-    sourceDatabase: production
+    sourceConnection: production
     sourceQuery: select id, email, phone, national_id, token, full_name from customers
-    targetDatabase: staging
+    targetConnection: staging
     targetTableFinal: customers
     insertStrategy: upsert
     chunkSize: 5000

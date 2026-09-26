@@ -13,7 +13,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from ..configuration import ConfigurationError, DatabaseConnectionConfig, DataJobConfig, InsertStrategy
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, InsertStrategy
 from ..database import Database
 from ..log import LOGGER_NAME
 from ..log.scrubbing import describeError
@@ -28,9 +28,7 @@ logger = logging.getLogger(LOGGER_NAME)
 
 # How many chunks may be masked ahead of the one being written. One already
 # keeps the reader, masker and writer all busy, holding three chunks at once;
-# more buys no overlap and costs a chunk of memory each. (It also beats larger
-# chunks: at 10 ms a round trip, three chunks of 5,000 rows took 2.24s against
-# 2.63s for one of 20,000.)
+# more buys no overlap and costs a chunk of memory each.
 PIPELINE_DEPTH = 1
 
 
@@ -58,7 +56,7 @@ def _bindMasking(job: str, jobConfig: DataJobConfig, columns: List[str]) -> Opti
     return bound
 
 
-def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: Dict[str, DatabaseConnectionConfig], watermark: Any = None) -> JobOutcome:
+def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], watermark: Any = None) -> JobOutcome:
     """Runs one data job to completion, raising on failure. See "How a data job
     moves rows" in docs/design.md.
 
@@ -72,19 +70,19 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: D
         column: [resolveTransformer(reference) for reference in references] for column, references in jobConfig.sourceQueryColumnTransforms.items()
         }
 
-    with Database(connectionSettings=databaseConfiguration[jobConfig.sourceDatabase]) as sourceDatabase, \
-         Database(connectionSettings=databaseConfiguration[jobConfig.targetDatabase]) as targetDatabase:
+    with Database(connectionSettings=connectionConfiguration[jobConfig.sourceConnection]) as sourceConnection, \
+         Database(connectionSettings=connectionConfiguration[jobConfig.targetConnection]) as targetConnection:
 
         sourceQuery = jobConfig.sourceQuery
         parameters = None
 
         if jobConfig.watermarkColumn:
-            sourceQuery = sourceDatabase.substituteWatermarkPlaceholder(sourceQuery)
+            sourceQuery = sourceConnection.substituteWatermarkPlaceholder(sourceQuery)
             parameters = (watermark,)
-            logger.info('Extracting {} incrementally, from watermark {!r}'.format(jobConfig.sourceDatabase, watermark))
+            logger.info('Extracting {} incrementally, from watermark {!r}'.format(jobConfig.sourceConnection, watermark))
 
-        logger.debug('Streaming sourceQuery against {} in chunks of {}'.format(jobConfig.sourceDatabase, jobConfig.chunkSize))
-        sourceQueryColumns, chunks = sourceDatabase.stream(query=sourceQuery, chunkSize=jobConfig.chunkSize, parameters=parameters)
+        logger.debug('Streaming sourceQuery against {} in chunks of {}'.format(jobConfig.sourceConnection, jobConfig.chunkSize))
+        sourceQueryColumns, chunks = sourceConnection.stream(query=sourceQuery, chunkSize=jobConfig.chunkSize, parameters=parameters)
         logger.debug('sourceQuery returned columns: {}'.format(sourceQueryColumns))
 
         watermarkIndex = None
@@ -110,32 +108,30 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: D
                                'and logs, so it would leak the unmasked value'.format(
                                    jobConfig.watermarkColumn, masking.manifest[watermarkIndex].strategy))
 
-        columns = jobConfig.targetColumns or targetDatabase.getAllColumnNames(table=jobConfig.targetTableFinal)
+        columns = jobConfig.targetColumns or targetConnection.getAllColumnNames(table=jobConfig.targetTableFinal)
         logger.debug('Resolved target columns for {}: {}'.format(jobConfig.targetTableFinal, columns))
 
         if not jobConfig.targetColumns and len(columns) != len(sourceQueryColumns):
-            # The load binds by position, so the two lists must line up. The
-            # driver's own complaint names neither the table nor the columns:
-            # "the current statement uses 5, and there are 3 supplied".
+            # The load binds by position, so the two lists must line up, and
+            # the driver's own complaint names neither the table nor the columns.
             raise ConfigurationError(
                 'sourceQuery returns {} column(s) {} and {} has {} ({}). List the ones the query fills in targetColumns, in the '
                 'query\'s order'.format(len(sourceQueryColumns), sourceQueryColumns, jobConfig.targetTableFinal, len(columns),
                                         ', '.join(columns)))
 
-        if jobConfig.insertStrategy == InsertStrategy.UPSERT and not targetDatabase.getPrimaryColumnNames(table=jobConfig.targetTableFinal):
-            # Asked before anything is written, not when the first chunk is
-            # upserted: the job used to run its preTargetAdhocQueries and load
-            # every row into the stage table before finding this out.
+        if jobConfig.insertStrategy == InsertStrategy.UPSERT and not targetConnection.getPrimaryColumnNames(table=jobConfig.targetTableFinal):
+            # Asked before anything is written -- preTargetAdhocQueries, the
+            # stage table -- rather than when the first chunk is upserted.
             raise ConfigurationError('{} has no primary key, so an upsert cannot match its rows -- add one, or use '
                                      'insertStrategy: swap'.format(jobConfig.targetTableFinal))
 
         for preTargetAdhocQuery in jobConfig.preTargetAdhocQueries:
             logger.debug('Running preTargetAdhocQuery: {}'.format(preTargetAdhocQuery))
-            targetDatabase.alter(preTargetAdhocQuery)
+            targetConnection.alter(preTargetAdhocQuery)
 
         if jobConfig.targetTableStage:
             logger.debug('Truncating stage table {}'.format(jobConfig.targetTableStage))
-            targetDatabase.truncate(table=jobConfig.targetTableStage)
+            targetConnection.truncate(table=jobConfig.targetTableStage)
 
         loadTable = jobConfig.targetTableStage or jobConfig.targetTableFinal
         streamsDirectlyIntoTarget = jobConfig.insertStrategy == InsertStrategy.UPSERT and not jobConfig.targetTableStage
@@ -149,9 +145,9 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: D
             nonlocal rowCount, highWatermark
 
             if streamsDirectlyIntoTarget:
-                targetDatabase.upsert(table=loadTable, data=rows, chunkSize=jobConfig.chunkSize, columns=columns)
+                targetConnection.upsert(table=loadTable, data=rows, chunkSize=jobConfig.chunkSize, columns=columns)
             else:
-                targetDatabase.insert(table=loadTable, data=rows, chunkSize=jobConfig.chunkSize, columns=columns)
+                targetConnection.insert(table=loadTable, data=rows, chunkSize=jobConfig.chunkSize, columns=columns)
 
             rowCount += len(rows)
             # Only once the rows have landed, or a failed job's next run would
@@ -177,12 +173,12 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: D
                 _noteIfMaskedValueDoesNotFit(error, job, loadTable)
             raise
 
-        logger.info('Streamed {} row(s) from {} into {}'.format(rowCount, jobConfig.sourceDatabase, loadTable))
+        logger.info('Streamed {} row(s) from {} into {}'.format(rowCount, jobConfig.sourceConnection, loadTable))
 
         if jobConfig.insertStrategy == InsertStrategy.SWAP:
             assert jobConfig.targetTableStage is not None
             logger.info('Swapping {} with stage table {}'.format(jobConfig.targetTableFinal, jobConfig.targetTableStage))
-            targetDatabase.swap(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage)
+            targetConnection.swap(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage)
 
             if masking is not None:
                 # The swap moved what the target held into the stage. For a job
@@ -190,16 +186,16 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: D
                 # stay readable beside the masked copy.
                 logger.info('Emptying stage table {}, which now holds what {} held before the swap'.format(
                     jobConfig.targetTableStage, jobConfig.targetTableFinal))
-                targetDatabase.truncate(table=jobConfig.targetTableStage)
+                targetConnection.truncate(table=jobConfig.targetTableStage)
 
         if jobConfig.insertStrategy == InsertStrategy.UPSERT and jobConfig.targetTableStage:
             logger.info('Upserting {} from stage table {}'.format(jobConfig.targetTableFinal, jobConfig.targetTableStage))
-            targetDatabase.upsertFromStage(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage, columns=columns)
+            targetConnection.upsertFromStage(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage, columns=columns)
 
         for postTargetAdhocQuery in jobConfig.postTargetAdhocQueries:
             logger.debug('Running postTargetAdhocQuery: {}'.format(postTargetAdhocQuery))
             try:
-                targetDatabase.alter(postTargetAdhocQuery)
+                targetConnection.alter(postTargetAdhocQuery)
             except Exception as error:
                 raise PostLoadError(postTargetAdhocQuery, error, rowCount, jobConfig.targetTableFinal) from error
 
@@ -213,16 +209,10 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: D
 def _pipelineDepth() -> int:
     """PIPELINE_DEPTH, or 0 to read, mask and write strictly in turn.
 
-    On by default only with the native masker, the only place it pays:
-
-        200,000 rows, 6 masked columns, 5 ms round trip each way
-
-        Python masking, in turn      11.57s
-        Python masking, overlapped   11.79s     0.98x
-        native masking, in turn       2.92s     3.96x
-        native masking, overlapped    2.16s     5.35x
-
-    BAUTA_PIPELINE=1 or =0 overrides the default.
+    On by default only with the native masker. Masking in Python takes long
+    enough that overlapping it with the database gains nothing; natively it
+    cuts a masked job's time by about a quarter. BAUTA_PIPELINE=1 or =0
+    overrides the default.
     """
 
     setting = os.environ.get('BAUTA_PIPELINE')
@@ -308,10 +298,9 @@ def _noteIfMaskedValueDoesNotFit(error: Exception, job: str, table: str) -> None
 class PostLoadError(Exception):
     """A postTargetAdhocQuery that failed after the rows were already in place.
 
-    Carries the row count so the failure says how many rows the target holds,
-    rather than the nothing a failure usually loaded: a swap that has happened
-    has already replaced the target, and reporting 0 rows against a copy that
-    had just been rebuilt sent people looking in the wrong place.
+    Carries the row count, so the failure says how many rows the target holds:
+    a swap that has happened has already replaced the target, which a failure
+    reporting no rows would hide.
     """
 
     def __init__(self, query: str, error: Exception, rowCount: int, targetTable: str) -> None:
@@ -352,7 +341,7 @@ def _executeWithRetries(jobConfig: DataJobConfig, job: str, attempt: Callable[[]
     raise AssertionError('unreachable: the last attempt always returns')
 
 
-def _runDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: Dict[str, DatabaseConnectionConfig], memory: MemoryBackend) -> JobOutcome:
+def _runDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], memory: MemoryBackend) -> JobOutcome:
     """Runs one data job in a worker process, and records its success. The
     order of the records is what makes a crash safe; see "Crash safety" in
     docs/design.md.
@@ -369,7 +358,7 @@ def _runDataJob(job: str, jobConfig: DataJobConfig, databaseConfiguration: Dict[
         nonlocal watermark
         if jobConfig.watermarkColumn:
             watermark = memory.readWatermarks().get(job, jobConfig.watermarkInitial)
-        return _executeDataJob(job, jobConfig, databaseConfiguration, watermark=watermark)
+        return _executeDataJob(job, jobConfig, connectionConfiguration, watermark=watermark)
 
     outcome = _executeWithRetries(jobConfig, job, attempt)
 

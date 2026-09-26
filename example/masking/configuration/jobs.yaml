@@ -5,9 +5,9 @@ memory: ../transaction/memory.yaml
 jobs:
   maskCustomers:
     active: true
-    sourceDatabase: prod
+    sourceConnection: prod
     sourceQuery: SELECT * FROM customers
-    targetDatabase: staging
+    targetConnection: staging
     targetTableFinal: customers
     insertStrategy: upsert
     chunkSize: 4
@@ -31,9 +31,9 @@ jobs:
     active: true
     predecessors:
     - maskCustomers
-    sourceDatabase: prod
+    sourceConnection: prod
     sourceQuery: SELECT * FROM orders
-    targetDatabase: staging
+    targetConnection: staging
     targetTableFinal: orders
     insertStrategy: upsert
     chunkSize: 4

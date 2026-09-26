@@ -13,13 +13,13 @@ reachable skips its runs with the reason.
 """
 import pytest
 
-from bauta.configuration import Configuration, DataJobsFile
+from bauta.configuration import Configuration, DatabaseType, DataJobsFile
 from bauta.database import Database
 from bauta.jobs.memory import DatabaseMemory, FileMemory
 from bauta.jobs.runner import runDataJobs
-from tests.integration.servers import SERVERS
+from tests.integration.servers import EMBEDDED, SERVERS
 
-DATABASES = [pytest.param('sqlite')] + [pytest.param(name, marks=pytest.mark.integration) for name in sorted(SERVERS)]
+DATABASES = [pytest.param(name) for name in EMBEDDED] + [pytest.param(name, marks=pytest.mark.integration) for name in sorted(SERVERS)]
 
 
 @pytest.fixture(params=DATABASES)
@@ -53,13 +53,58 @@ def _createLike(database, table, suffix):
     return other
 
 
-def _runOneJob(settings, tmp_path, memory, **job):
+def _runOneJob(settings, tmp_path, memory, held=None, **job):
+    """Runs `job` against the database `settings` names. `held` is the test's
+    own connection to it, let go for the run on DuckDB, which lets one process
+    at a time open a file -- and the job runs in a process of its own.
+    """
 
-    raw = {'workers': 1, 'jobs': {'job1': dict({'active': True, 'sourceDatabase': 'db', 'targetDatabase': 'db', 'insertStrategy': 'upsert',
+    if held is not None and settings.type == DatabaseType.DUCKDB:
+        held.close()
+        try:
+            return _runOneJob(settings, tmp_path, memory, **job)
+        finally:
+            held.connect()
+
+    raw = {'workers': 1, 'jobs': {'job1': dict({'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'insertStrategy': 'upsert',
                                                 'chunkSize': 100}, **job)}}
 
-    return runDataJobs(jobsFile=Configuration.validateJobConfiguration(raw, DataJobsFile), databaseConfiguration={'db': settings},
+    return runDataJobs(jobsFile=Configuration.validateJobConfiguration(raw, DataJobsFile), connectionConfiguration={'db': settings},
                        logFile=tmp_path / 'runner.log', memory=memory, runForever=False)
+
+
+# The driver contract -------------------------------------------------------
+# What bauta relies on of every driver; see bauta/database/driver.py. DuckDB's
+# broke all four, and nothing said so until a swap failed to commit.
+
+def test_statements_share_one_transaction_until_rolled_back(liveDatabase, peopleTable):
+    liveDatabase.execute("INSERT INTO {} (id, name, amount) VALUES (1, 'a', 1)".format(peopleTable))
+    liveDatabase.execute("INSERT INTO {} (id, name, amount) VALUES (2, 'b', 2)".format(peopleTable))
+
+    liveDatabase.rollback()
+
+    assert liveDatabase.query('SELECT count(*) FROM {}'.format(peopleTable)) == [(0,)]
+
+
+def test_what_the_cursor_did_is_committed_by_the_connection(liveDatabase, peopleTable, connectionSettings):
+    liveDatabase.execute("INSERT INTO {} (id, name, amount) VALUES (1, 'a', 1)".format(peopleTable))
+    liveDatabase.commit()
+
+    with Database(connectionSettings=connectionSettings) as other:
+        assert other.query('SELECT count(*) FROM {}'.format(peopleTable)) == [(1,)]
+
+
+def test_a_statement_reports_the_rows_it_changed(liveDatabase, peopleTable):
+    liveDatabase.insert(table=peopleTable, data=[(1, 'a', 1), (2, 'b', 2), (3, 'c', 3)])
+
+    assert liveDatabase.execute('DELETE FROM {} WHERE id > 1'.format(peopleTable)) == 2
+    liveDatabase.rollback()
+
+
+def test_a_rollback_with_nothing_open_does_nothing(liveDatabase):
+    """It runs while another error is being handled, which it must not replace."""
+    liveDatabase.rollback()
+    liveDatabase.rollback()
 
 
 # Reading a table's shape -----------------------------------------------------
@@ -215,14 +260,24 @@ def test_stream_closes_its_cursor_when_abandoned_part_way_through(liveDatabase, 
 
 # Run state in a table --------------------------------------------------------
 
-def test_database_memory_records_and_reads_back_a_run(connectionSettings, memoryTable):
+@pytest.fixture
+def memoryDatabase(databaseName):
+    """Run state is refused in DuckDB, which lets one process at a time open a
+    file; see test_integration_duckdb.py.
+    """
+
+    if databaseName == 'duckdb':
+        pytest.skip('run state is refused in DuckDB')
+
+
+def test_database_memory_records_and_reads_back_a_run(connectionSettings, memoryTable, memoryDatabase):
     with DatabaseMemory(connectionSettings=connectionSettings, table=memoryTable) as memory:
         memory.recordRun(job='job1')
 
         assert 'job1' in memory.read()
 
 
-def test_database_memory_upserts_rather_than_duplicating(liveDatabase, connectionSettings, memoryTable):
+def test_database_memory_upserts_rather_than_duplicating(liveDatabase, connectionSettings, memoryTable, memoryDatabase):
     """read() returning one entry per job wouldn't actually prove there's no
     duplicate row (a dict comprehension would just keep the last one) -- check the
     row count directly instead.
@@ -249,7 +304,7 @@ def test_run_data_jobs_end_to_end(liveDatabase, peopleTable, connectionSettings,
     liveDatabase.insert(table=peopleTable, data=[(1, 'old', 1)])
     memoryPath = tmp_path / 'memory.yaml'
 
-    _runOneJob(connectionSettings, tmp_path, FileMemory(memoryFile=memoryPath), targetTableFinal=peopleTable,
+    _runOneJob(connectionSettings, tmp_path, FileMemory(memoryFile=memoryPath), held=liveDatabase, targetTableFinal=peopleTable,
                sourceQuery="select 2, 'new', 2" + _fromNothing(databaseName))
 
     rows = liveDatabase.query('SELECT id, name, amount FROM {} ORDER BY id'.format(peopleTable))
@@ -257,7 +312,8 @@ def test_run_data_jobs_end_to_end(liveDatabase, peopleTable, connectionSettings,
     assert 'job1' in FileMemory(memoryFile=memoryPath).read()
 
 
-def test_run_data_jobs_with_database_backed_memory(liveDatabase, peopleTable, memoryTable, connectionSettings, databaseName, tmp_path):
+def test_run_data_jobs_with_database_backed_memory(liveDatabase, peopleTable, memoryTable, connectionSettings, databaseName, tmp_path,
+                                                   memoryDatabase):
     """As above, with run state in a table: DatabaseMemory, which has no locking
     of its own, only Database.upsert's atomicity, through the same worker
     process round trip.
@@ -282,7 +338,8 @@ def test_run_data_jobs_streams_a_table_larger_than_its_chunk_size(liveDatabase, 
     liveDatabase.insert(table=peopleTable, data=rows, chunkSize=100)
 
     try:
-        _runOneJob(connectionSettings, tmp_path, FileMemory(memoryFile=tmp_path / 'jobs.yaml'), chunkSize=37, targetTableFinal=targetTable,
+        _runOneJob(connectionSettings, tmp_path, FileMemory(memoryFile=tmp_path / 'jobs.yaml'), held=liveDatabase, chunkSize=37,
+                   targetTableFinal=targetTable,
                    sourceQuery='SELECT id, name, amount FROM {} ORDER BY id'.format(peopleTable))
 
         assert liveDatabase.query('SELECT id, name, amount FROM {} ORDER BY id'.format(targetTable)) == rows
@@ -298,7 +355,7 @@ def test_run_data_jobs_with_target_columns_reordered_from_the_tables_own_order(l
     since both are real columns (see targetColumns in docs/configuration.md). Setting
     targetColumns to match the query's actual order is what keeps this correct.
     """
-    _runOneJob(connectionSettings, tmp_path, FileMemory(memoryFile=tmp_path / 'memory.yaml'), targetTableFinal=peopleTable,
+    _runOneJob(connectionSettings, tmp_path, FileMemory(memoryFile=tmp_path / 'memory.yaml'), held=liveDatabase, targetTableFinal=peopleTable,
                targetColumns=['name', 'amount', 'id'], sourceQuery="select 'alice', 100, 1" + _fromNothing(databaseName))
 
     rows = liveDatabase.query('SELECT id, name, amount FROM {}'.format(peopleTable))

@@ -17,11 +17,11 @@ from bauta.configuration import DatabaseType
 from bauta.database import Database
 from bauta.database.dialects import ForeignKey
 from bauta.review.references import verifyReferences
-from tests.integration.servers import SERVERS, serverSettings
+from tests.integration.servers import EMBEDDED, SERVERS, serverSettings
 
 pytestmark = pytest.mark.integration
 
-NAMES = ['sqlite'] + sorted(SERVERS)
+NAMES = EMBEDDED + sorted(SERVERS)
 
 
 @pytest.fixture(params=NAMES)
@@ -47,6 +47,8 @@ def _childPastItsKey(database, parent, rows):
     """
 
     key = 'CONSTRAINT fk_{{table}} FOREIGN KEY (parent_id) REFERENCES {} (id)'.format(parent)
+    if database.type == DatabaseType.DUCKDB:
+        pytest.skip('DuckDB can neither switch a foreign key off nor add one to a table that has rows, so it cannot hold orphans behind one')
     if database.type == DatabaseType.POSTGRESQL:
         child = _create(database, 'ref_child', 'id INT NOT NULL PRIMARY KEY, parent_id INT')
         database.insert(table=child, data=rows)

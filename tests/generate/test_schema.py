@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from bauta.configuration import DatabaseConnectionConfig, DatabaseType
+from bauta.configuration import connectionConfig, DatabaseType
 from bauta.database import Database
 from bauta.database.dialects import ColumnDefinition, ForeignKey
 from bauta.generate.schema import (PortableType, SchemaError, TableDefinition, clearOrder, clearTables, createStatements, orderParentsFirst,
@@ -173,17 +173,16 @@ def test_sqlites_64_bit_integer_says_where_it_does_not_fit(target, expected):
     assert (note is None) == (target == SQLITE)
 
 
-@pytest.mark.parametrize('dataType,rendered,digits', [('bigint unsigned', 'BIGINT', '20 digits'), ('int unsigned', 'INTEGER', '10 digits')])
-def test_an_unsigned_mysql_integer_says_its_values_will_not_load(dataType, rendered, digits):
-    """MySQL reports `unsigned` only in column_type, which is why the catalog
-    query reads that rather than data_type: an INT UNSIGNED reaches 4294967295
-    and looked exactly like an INT.
+@pytest.mark.parametrize('dataType,rendered', [('tinyint unsigned', 'SMALLINT'), ('smallint unsigned', 'INTEGER'),
+                                               ('mediumint unsigned', 'INTEGER'), ('int unsigned', 'BIGINT'), ('bigint unsigned', 'NUMERIC(20,0)')])
+def test_an_unsigned_mysql_integer_maps_to_a_type_holding_its_whole_range(dataType, rendered):
+    """Mapped to the signed type of its own size, an unsigned integer's upper
+    half was refused as it loaded -- a SMALLINT UNSIGNED past 32767, an INT
+    UNSIGNED past 2147483647 -- and a BIGINT UNSIGNED past 2**63 silently
+    became a float in SQLite. MySQL reports `unsigned` only in column_type,
+    which is why the catalog query reads that rather than data_type.
     """
-    renderedType, note = renderType(POSTGRESQL, portableType(MYSQL, column(dataType, precision=20, scale=0)), isKey=False)
-
-    assert renderedType == rendered
-    assert digits in note
-    assert renderType(POSTGRESQL, portableType(MYSQL, column('bigint', precision=19, scale=0)), isKey=False)[1] is None
+    assert renderType(POSTGRESQL, portableType(MYSQL, column(dataType)), isKey=False)[0] == rendered
 
 
 def table(name, columns, primaryKey=(), foreignKeys=()):
@@ -359,7 +358,7 @@ def sqliteDatabase(tmp_path):
         ''')
     connection.close()
 
-    with Database(connectionSettings=DatabaseConnectionConfig(type=SQLITE, database=str(tmp_path / 'schema.db'))) as database:
+    with Database(connectionSettings=connectionConfig(type=SQLITE, path=str(tmp_path / 'schema.db'))) as database:
         yield database
 
 
@@ -452,7 +451,7 @@ def test_read_table_rejects_a_missing_table(sqliteDatabase):
 def test_generated_sqlite_ddl_round_trips(sqliteDatabase, tmp_path):
     definitions = [readTable(sqliteDatabase, name, sqliteDatabase.getForeignKeys()) for name in ('orders', 'customers')]
 
-    with Database(connectionSettings=DatabaseConnectionConfig(type=SQLITE, database=str(tmp_path / 'copy.db'))) as copy:
+    with Database(connectionSettings=connectionConfig(type=SQLITE, path=str(tmp_path / 'copy.db'))) as copy:
         for statement in createStatements(SQLITE, SQLITE, definitions):
             copy.alter(statement.sql)
 
@@ -467,3 +466,34 @@ def test_clear_tables_empties_children_first(sqliteDatabase):
     sqliteDatabase.insert(table='orders', data=[(1, 1, 1), (2, 1, 1)])
 
     assert clearTables(sqliteDatabase, ['customers', 'orders']) == [('orders', 2), ('customers', 1)]
+
+
+@pytest.mark.parametrize('dataType, precision, scale, expected', [
+    ('BOOLEAN', None, None, 'boolean'), ('HUGEINT', 128, 0, 'decimal'), ('UBIGINT', 64, 0, 'decimal'), ('UINTEGER', 32, 0, 'bigint'),
+    ('INTEGER[]', None, None, 'json'), ('STRUCT(a INTEGER)', None, None, 'json'), ('TIMESTAMP_NS', None, None, 'timestamp'),
+    ('TIMESTAMP WITH TIME ZONE', None, None, 'timestampTz'), ('DECIMAL(12,2)', 12, 2, 'decimal'), ('VARCHAR', None, None, 'text'),
+    ])
+def test_duckdb_types_map_to_portable_ones(dataType, precision, scale, expected):
+    column = ColumnDefinition(name='c', dataType=dataType, length=None, precision=precision, scale=scale, nullable=True)
+
+    assert portableType(DatabaseType.DUCKDB, column).kind == expected
+
+
+def test_a_decimal_without_precision_is_not_left_to_duckdbs_default_of_three_places():
+    """DuckDB's bare DECIMAL is DECIMAL(18,3), which would round."""
+    rendered, note = renderType(DatabaseType.DUCKDB, PortableType('decimal'), isKey=False)
+
+    assert rendered == 'DECIMAL(38,10)' and note
+
+
+def test_hugeint_needs_39_digits_and_a_target_holding_fewer_says_it_clamps():
+    """HUGEINT runs to 170141183460469231731687303715884105727, one digit past
+    the DECIMAL(38) it was mapped to, so its largest values failed to load
+    with nothing in the generated DDL to say why.
+    """
+    column = ColumnDefinition(name='c', dataType='HUGEINT', length=None, precision=128, scale=0, nullable=True)
+    portable = portableType(DatabaseType.DUCKDB, column)
+
+    rendered, note = renderType(DatabaseType.MSSQL, portable, isKey=False)
+
+    assert (portable.precision, rendered) == (39, 'DECIMAL(38,0)') and 'clamped' in note

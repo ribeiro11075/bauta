@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from bauta.configuration import DatabaseConnectionConfig
+from bauta.configuration import connectionConfig
 from bauta.database import Database
 from bauta.generate import synthesize
 from bauta.generate.synthesize import SynthesisError, planTable, synthesizeTable
@@ -37,7 +37,7 @@ def database(tmp_path):
     connection.executescript(SCHEMA)
     connection.close()
 
-    with Database(DatabaseConnectionConfig(type='sqlite', database=str(path))) as opened:
+    with Database(connectionConfig(type='sqlite', path=str(path))) as opened:
         yield opened
 
 
@@ -118,7 +118,7 @@ def test_the_same_seed_makes_the_same_rows(tmp_path):
         connection = sqlite3.connect(path)
         connection.executescript(SCHEMA)
         connection.close()
-        with Database(DatabaseConnectionConfig(type='sqlite', database=str(path))) as opened:
+        with Database(connectionConfig(type='sqlite', path=str(path))) as opened:
             _fill(opened, ('customers', 20), ('orders', 30), seed=seed)
             return opened.query('SELECT * FROM customers'), opened.query('SELECT * FROM orders')
 
@@ -233,7 +233,7 @@ def test_your_own_rules_choose_realistic_values_too(tmp_path):
     rules = discoveryRules(Configuration.validateDiscoveryRules({'names': [{'words': ['nome'], 'policy': 'fakeName'},
                                                                            {'words': ['phone'], 'policy': 'keep'}]}))
 
-    with Database(DatabaseConnectionConfig(type='sqlite', database=str(path))) as opened:
+    with Database(connectionConfig(type='sqlite', path=str(path))) as opened:
         _, _, builtIn, _ = planTable(opened, 'clientes', 5)
         _, _, yours, _ = planTable(opened, 'clientes', 5, rules=rules)
 

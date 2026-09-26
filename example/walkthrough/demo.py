@@ -21,7 +21,7 @@ a safe staging copy of its Portuguese and Spanish customers:
                numbers never leave production, not even masked
 8. history     shows what ran
 
-It reads configuration/database.yaml beside this script, and writes everything
+It reads configuration/connections.yaml beside this script, and writes everything
 else -- the databases, the generated jobs, run state, the manifest and history
 -- to transaction/. Each command's output is printed as it runs, and the whole
 session is written to transaction/walkthrough.md.
@@ -48,7 +48,7 @@ from bauta.cli import main as cli  # noqa: E402
 
 DEFAULT_WORKING_DIRECTORY = demoDirectory / 'transaction'
 
-DATABASE_CONFIGURATION = demoDirectory / 'configuration' / 'database.yaml'
+DATABASE_CONFIGURATION = demoDirectory / 'configuration' / 'connections.yaml'
 
 # Throwaway keys for throwaway databases. Real ones are random, come from a
 # secret store, and are never written into a script.
@@ -198,7 +198,7 @@ def _walkthrough(workingDirectory: Path, production: Path, staging: Path) -> Dic
 
     # The configuration stays where it is, and the CLI is pointed at it; what
     # the commands generate stays here.
-    databases = ['--databases', os.path.relpath(DATABASE_CONFIGURATION, workingDirectory)]
+    databases = ['--connections', os.path.relpath(DATABASE_CONFIGURATION, workingDirectory)]
     jobs = databases + ['--jobs', 'jobs.yaml']
 
     say('# Walkthrough: a safe staging copy of production\n')
@@ -206,16 +206,16 @@ def _walkthrough(workingDirectory: Path, production: Path, staging: Path) -> Dic
         _count(production, 'customers')))
 
     say('\n## 1. Propose a policy')
-    command('discover', 'discover', *databases, '--database', 'production', '--table', 'customers', '--target', 'staging')
+    command('discover', 'discover', *databases, '--connection', 'production', '--table', 'customers', '--target', 'staging')
 
     say('\n## 2. Generate the subset, then review it')
-    command('subset', 'subset', *databases, '--database', 'production', '--target', 'staging', '--root', 'customers',
+    command('subset', 'subset', *databases, '--connection', 'production', '--target', 'staging', '--root', 'customers',
             '--where', "country IN ('PT', 'ES')", '--mask', '--output', 'generated.yaml')
     decisions = review(Path('generated.yaml'), Path('jobs.yaml'))
     say('Review decisions, recorded at the top of jobs.yaml:\n' + '\n'.join('- ' + decision for decision in decisions))
 
     say('\n## 3. Create staging\'s tables')
-    command('schema', 'schema', *databases, '--database', 'production', '--target', 'staging', '--table', 'customers', '--related', '--apply')
+    command('schema', 'schema', *databases, '--connection', 'production', '--target', 'staging', '--table', 'customers', '--related', '--apply')
 
     say('\n## 4. Audit the policy against production')
     command('audit', 'audit', *jobs, '--connect', '--strict', show=60)
@@ -228,7 +228,7 @@ def _walkthrough(workingDirectory: Path, production: Path, staging: Path) -> Dic
     command('verify-manifest', 'verify-manifest', 'manifest.json')
 
     say('\n## 7. Generate what may not be copied')
-    command('synthesize', 'synthesize', *databases, '--database', 'staging', '--table', 'payment_cards:40', '--seed', '1', '--yes')
+    command('synthesize', 'synthesize', *databases, '--connection', 'staging', '--table', 'payment_cards:40', '--seed', '1', '--yes')
 
     say('\n## 8. What ran')
     command('history', 'history', '--history', 'history.jsonl')

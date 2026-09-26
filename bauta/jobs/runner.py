@@ -12,7 +12,7 @@ from multiprocessing.connection import wait as waitForAny
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Mapping, NamedTuple, Optional, Union
 
-from ..configuration import ConfigurationError, DatabaseConnectionConfig, DataJobConfig, DataJobsFile
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile
 from ..log import LOGGER_NAME, Log
 from ..log.scrubbing import describeError
 from ..masking import availableCores, buildMaskingManifest, keyFingerprint, maskingThreadsFor
@@ -64,7 +64,7 @@ def _terminationHandling() -> Iterator[Dict[str, bool]]:
 def _sleepUnlessTerminated(seconds: float, termination: Dict[str, bool]) -> None:
     """Sleeps between --forever cycles, waking within SIGNAL_POLL_SECONDS of a
     SIGINT or SIGTERM. Python resumes a sleep once a signal's handler returns,
-    so one long sleep outlived a container's grace period and was killed.
+    so one long sleep would outlast a container's grace period.
     """
 
     wakeAt = time.monotonic() + seconds
@@ -129,8 +129,8 @@ def _declaredMasking(jobs: Mapping[str, DataJobConfig]) -> Dict[str, Dict[str, A
 
     return {
         name: {
-            'sourceDatabase': job.sourceDatabase,
-            'targetDatabase': job.targetDatabase,
+            'sourceConnection': job.sourceConnection,
+            'targetConnection': job.targetConnection,
             'targetTable': job.targetTableFinal,
             'keyFingerprint': keyFingerprint(job.masking.key.get_secret_value()),
             }
@@ -160,7 +160,15 @@ def _logCycleSummary(dependencyGraph: DependencyGraph) -> None:
                'skipped': len(result.skipped), 'rowCount': result.rowCount})
 
 
-def _runCycle(dependencyGraph: DependencyGraph, workers: int, databaseConfiguration: Dict[str, DatabaseConnectionConfig],
+def connectionLimits(connectionConfiguration: Mapping[str, ConnectionConfig]) -> Dict[str, int]:
+    """Alias -> the most jobs that may use it at once, for the connections
+    that have a limit.
+    """
+
+    return {alias: limit for alias, settings in connectionConfiguration.items() if (limit := settings.jobLimit()) is not None}
+
+
+def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfiguration: Dict[str, ConnectionConfig],
               memory: MemoryBackend, termination: Dict[str, bool], logLevel: int, maskingThreads: Union[str, int] = 1) -> None:
     """Runs one cycle's jobs to completion, each as soon as its predecessors
     finish and one of the `workers` slots is free.
@@ -188,7 +196,7 @@ def _runCycle(dependencyGraph: DependencyGraph, workers: int, databaseConfigurat
                     if native and getattr(jobConfig, 'masking', None) is not None:
                         logger.info('{}: masking with {} thread(s) ({} job(s) running, {} core(s))'.format(job, threads, alongside, availableCores()),
                                     extra={'job': job})
-                    running.append(_JobProcess(job, jobConfig, databaseConfiguration, memory, logLevel, threads))  # type: ignore[arg-type]
+                    running.append(_JobProcess(job, jobConfig, connectionConfiguration, memory, logLevel, threads))  # type: ignore[arg-type]
 
             if not running:
                 # Nothing running and nothing startable means every job is
@@ -216,7 +224,7 @@ def _runCycle(dependencyGraph: DependencyGraph, workers: int, databaseConfigurat
             process.stop()
 
 
-def runDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, DatabaseConnectionConfig], memory: MemoryBackend,
+def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig], memory: MemoryBackend,
                 logFile: Optional[Path] = None, runForever: bool = False, logLevel: int = logging.INFO,
                 logFormat: str = 'text', acceptKeyChange: bool = False,
                 onCycle: Optional[Callable[['RunResult'], None]] = None) -> RunResult:
@@ -234,7 +242,7 @@ def runDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, Databas
     call this under `if __name__ == '__main__':`.
     """
 
-    _requireUnchangedMaskingKeys(jobsFile, memory, acceptKeyChange, databaseConfiguration)
+    _requireUnchangedMaskingKeys(jobsFile, memory, acceptKeyChange, connectionConfiguration)
 
     if jobsFile.workers < 1:
         raise ConfigurationError('workers must be at least 1, got {}'.format(jobsFile.workers))
@@ -249,10 +257,10 @@ def runDataJobs(jobsFile: DataJobsFile, databaseConfiguration: Dict[str, Databas
     with _terminationHandling() as termination:
 
         while True:
-            dependencyGraph = DependencyGraph(jobs=jobsFile.jobs, memory=memory.read())
+            dependencyGraph = DependencyGraph(jobs=jobsFile.jobs, memory=memory.read(), connectionLimits=connectionLimits(connectionConfiguration))
             logger.info('Starting cycle with {} active job(s)'.format(len(dependencyGraph.activeJobs)))
 
-            _runCycle(dependencyGraph, jobsFile.workers, databaseConfiguration, memory, termination, logLevel, jobsFile.maskingThreads)
+            _runCycle(dependencyGraph, jobsFile.workers, connectionConfiguration, memory, termination, logLevel, jobsFile.maskingThreads)
             _logCycleSummary(dependencyGraph)
 
             if onCycle is not None:

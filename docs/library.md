@@ -21,11 +21,11 @@ Everything importable from `bauta` itself is the public API, and this page descr
 
 ## Configuration models
 
-`Configuration.validateDatabaseConfiguration(raw)` and `Configuration.validateJobConfiguration(raw, DataJobsFile)` turn loaded YAML into these pydantic models, raising `ConfigurationError`; `Configuration.validateJobGraph(jobs, databases=...)` checks predecessors and aliases. `expandEnvironmentVariables(raw)` does what the CLI does to `${NAME}` first. The fields are the ones [configuration.md](configuration.md) describes.
+`Configuration.validateConnectionConfiguration(raw)` and `Configuration.validateJobConfiguration(raw, DataJobsFile)` turn loaded YAML into these pydantic models, raising `ConfigurationError`; `Configuration.validateJobGraph(jobs, connections=...)` checks predecessors and aliases. `expandEnvironmentVariables(raw)` does what the CLI does to `${NAME}` first. The fields are the ones [configuration.md](configuration.md) describes.
 
 | Model | Holds |
 | --- | --- |
-| `DatabaseConnectionConfig` | One `database.yaml` alias. `type` is a `DatabaseType`. |
+| `ConnectionConfig` | One `connections.yaml` alias: a `PostgreSQLConnection`, `MySQLConnection`, `MariaDBConnection`, `MSSQLConnection`, `OracleConnection`, `SQLiteConnection` or `DuckDBConnection`, as its `type` says. Build one with that class, `SQLiteConnection(path='copy.db')`, or from settings as the file would give them, `connectionConfig(type='sqlite', path='copy.db')`. |
 | `DataJobsFile` | A whole `jobs.yaml`: `jobs`, `workers`, `maskingThreads` and the file-level settings, with `defaults` already applied. |
 | `DataJobConfig` | One job. `insertStrategy` is an `InsertStrategy`; `masking` a `MaskingConfig`, or `None`. |
 | `DiscoveryRulesFile` | A validated `discovery.yaml`, for `discoveryRules`. |
@@ -45,13 +45,13 @@ def load(path):
         return expandEnvironmentVariables(yaml.safe_load(file))
 
 def main():
-    databases = Configuration.validateDatabaseConfiguration(load('database.yaml'))
+    connections = Configuration.validateConnectionConfiguration(load('connections.yaml'))
     jobsFile = Configuration.validateJobConfiguration(load('jobs.yaml'), DataJobsFile)
-    Configuration.validateJobGraph(jobsFile.jobs, databaseAliases=set(databases))
+    Configuration.validateJobGraph(jobsFile.jobs, connectionAliases=set(connections))
 
     result = runDataJobs(
         jobsFile=jobsFile,
-        databaseConfiguration=databases,
+        connectionConfiguration=connections,
         memory=FileMemory(memoryFile='memory.yaml'),
         )
 
@@ -67,7 +67,7 @@ if __name__ == '__main__':
 `expandEnvironmentVariables` is what resolves `${NAME}` references — the CLI calls it for you, but a library caller must, before validating. It raises `ConfigurationError` naming every unset variable.
 
 ```python
-runDataJobs(jobsFile, databaseConfiguration, memory,
+runDataJobs(jobsFile, connectionConfiguration, memory,
             logFile=None, runForever=False, logLevel=logging.INFO, logFormat='text',
             acceptKeyChange=False, onCycle=None)
 ```
@@ -156,7 +156,7 @@ def report(result):
     history.append(result, newRunId())
     notify(os.environ['ALERT_WEBHOOK'], result)
 
-runDataJobs(jobsFile, databases, memory, onCycle=report)
+runDataJobs(jobsFile, connections, memory, onCycle=report)
 ```
 
 | Name | What it is |
@@ -180,7 +180,7 @@ plan = MaskingPlan(key=os.environ['MASKING_KEY'], columns={'id': 'keep', 'email'
 masking = plan.bind(['id', 'email'])      # raises MaskingError for an uncovered column
 masked = masking.apply([(1, 'ann@corp.com')])
 
-with Database(connectionSettings=databases['prod']) as database:
+with Database(connectionSettings=connections['prod']) as database:
     proposal = proposeTable(database, 'customers', sampleSize=500)
     subset = planSubset(database.getForeignKeys(), root='customers', where="region = 'eu'")
 ```
@@ -217,7 +217,7 @@ with Database(connectionSettings=databases['prod']) as database:
 ```python
 from bauta import Database
 
-with Database(connectionSettings=databases['app']) as database:
+with Database(connectionSettings=connections['app']) as database:
     columns, chunks = database.stream('select * from orders', chunkSize=5000)
     for chunk in chunks:
         ...

@@ -39,15 +39,15 @@ __all__ = [
 
 def _addCommonArguments(parser: argparse.ArgumentParser, jobs: bool = True, memory: bool = True) -> None:
 
-    parser.add_argument('--config', help='directory holding jobs.yaml and database.yaml (default: ${} or ./configuration)'.format(
+    parser.add_argument('--config', help='directory holding jobs.yaml and connections.yaml (default: ${} or ./configuration)'.format(
         CONFIG_DIRECTORY_VARIABLE))
     if jobs:
         parser.add_argument('--jobs', help='explicit path to the jobs file, overriding --config')
-    parser.add_argument('--databases', help='explicit path to the database file, overriding --config')
+    parser.add_argument('--connections', help='explicit path to the connections file, overriding --config')
     if jobs and memory:
         parser.add_argument('--memory', help='path to the run-memory file (default: jobs.yaml\'s `memory`, else memory.yaml beside jobs.yaml)')
-        parser.add_argument('--memory-database', metavar='ALIAS',
-                            help='keep run memory in this database instead of a file (see docs/operations.md)')
+        parser.add_argument('--memory-connection', metavar='ALIAS',
+                            help='keep run memory in a table of this connection instead of a file (see docs/operations.md)')
         parser.add_argument('--memory-table', help='the run-memory table (default: jobs.yaml\'s, else bauta_memory)')
     _addLoggingArguments(parser)
 
@@ -55,13 +55,13 @@ def _addCommonArguments(parser: argparse.ArgumentParser, jobs: bool = True, memo
 def _addHistoryArguments(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument('--history', metavar='FILE', help='run history as JSON lines (default: jobs.yaml\'s `history`)')
-    parser.add_argument('--history-database', metavar='ALIAS', help='run history in this database')
+    parser.add_argument('--history-connection', metavar='ALIAS', help='run history in a table of this connection')
     parser.add_argument('--history-table', help='the history table (default: jobs.yaml\'s, else bauta_history)')
 
 
 def _addManifestLocationArguments(parser: argparse.ArgumentParser) -> None:
 
-    parser.add_argument('--manifest-database', metavar='ALIAS', help='the masking manifest in this database')
+    parser.add_argument('--manifest-connection', metavar='ALIAS', help='the masking manifest in a table of this connection')
     parser.add_argument('--manifest-table', help='the manifest table (default: jobs.yaml\'s, else bauta_manifest)')
 
 
@@ -189,14 +189,14 @@ def _buildParser() -> argparse.ArgumentParser:
     coverageParser = subparsers.add_parser('coverage', help='list a source database\'s tables and what the jobs do with each')
     _addCommonArguments(coverageParser, memory=False)
     _addRulesArgument(coverageParser)
-    coverageParser.add_argument('--database', help='the source database alias to check; required when the jobs read from more than one')
+    coverageParser.add_argument('--connection', help='the source connection alias to check; required when the jobs read from more than one')
     coverageParser.add_argument('--schema', help='the schema to list, instead of the connection\'s own')
     coverageParser.add_argument('--job', action='append', help='only these jobs count as covering a table. Repeatable.')
     coverageParser.add_argument('--format', choices=['text', 'json'], default='text', help='output format')
     coverageParser.add_argument('--output', help='write to this file instead of stdout')
 
     verifyParser = subparsers.add_parser('verify-manifest', help='check that a manifest is unaltered, and who signed it')
-    verifyParser.add_argument('manifest', nargs='?', help='a manifest file (default: --manifest-database, else jobs.yaml\'s `manifest`)')
+    verifyParser.add_argument('manifest', nargs='?', help='a manifest file (default: --manifest-connection, else jobs.yaml\'s `manifest`)')
     _addManifestLocationArguments(verifyParser)
     verifyParser.add_argument('--run', metavar='RUN_ID', help='from a table, this run\'s manifest rather than the latest')
     _addCommonArguments(verifyParser, memory=False)
@@ -217,7 +217,7 @@ def _buildParser() -> argparse.ArgumentParser:
 
     discoverParser = subparsers.add_parser('discover', help='propose a masking policy for tables, from their schema and a sample')
     _addCommonArguments(discoverParser, jobs=False)
-    discoverParser.add_argument('--database', required=True, help='the alias to read from')
+    discoverParser.add_argument('--connection', required=True, help='the alias to read from')
     discoverParser.add_argument('--table', action='append', help='a table to propose a policy for (repeatable)')
     discoverParser.add_argument('--all-tables', action='store_true', help='every table in the database, instead of naming each with --table')
     discoverParser.add_argument('--schema', help='the schema --all-tables lists, instead of the connection\'s own')
@@ -228,7 +228,7 @@ def _buildParser() -> argparse.ArgumentParser:
 
     subsetParser = subparsers.add_parser('subset', help='generate jobs that copy a referentially complete subset')
     _addCommonArguments(subsetParser, jobs=False)
-    subsetParser.add_argument('--database', required=True, help='the alias to read from')
+    subsetParser.add_argument('--connection', required=True, help='the alias to read from')
     subsetParser.add_argument('--target', required=True, help='the alias the generated jobs load into')
     subsetParser.add_argument('--root', required=True, help='the table the subset starts from')
     subsetParser.add_argument('--where', required=True, help='SQL filter on the root table, e.g. "created_at >= \'2026-01-01\'"')
@@ -242,7 +242,7 @@ def _buildParser() -> argparse.ArgumentParser:
 
     schemaParser = subparsers.add_parser('schema', help='generate or apply CREATE TABLE statements for a target, from source tables')
     _addCommonArguments(schemaParser, jobs=False)
-    schemaParser.add_argument('--database', required=True, help='the alias to read table definitions from')
+    schemaParser.add_argument('--connection', required=True, help='the alias to read table definitions from')
     schemaParser.add_argument('--target', required=True, help='the alias the tables are for; its dialect decides the types')
     schemaParser.add_argument('--table', action='append', required=True, help='a table to create (repeatable)')
     schemaParser.add_argument('--related', action='store_true', help='also every table a subset rooted at --table would copy')
@@ -255,7 +255,7 @@ def _buildParser() -> argparse.ArgumentParser:
 
     synthesizeParser = subparsers.add_parser('synthesize', help='fill existing tables with generated rows, for data that can\'t be copied')
     _addCommonArguments(synthesizeParser, jobs=False)
-    synthesizeParser.add_argument('--database', required=True, help='the alias whose tables to fill')
+    synthesizeParser.add_argument('--connection', required=True, help='the alias whose tables to fill')
     synthesizeParser.add_argument('--table', action='append', required=True, metavar='TABLE[:ROWS]',
                                   help='a table to fill, and how many rows (repeatable); parents are filled first')
     synthesizeParser.add_argument('--rows', type=_positiveInteger, default=100, help='rows for a --table without a count (default: 100)')

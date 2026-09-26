@@ -101,18 +101,18 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> List[Optional[st
     shutil.rmtree(workingDirectory, ignore_errors=True)
     workingDirectory.mkdir(parents=True, exist_ok=True)
 
-    # database.yaml reads its path from the environment, exactly the mechanism a
+    # connections.yaml reads its path from the environment, exactly the mechanism a
     # real deployment uses for credentials.
     os.environ['DEMO_DB_PATH'] = str(workingDirectory / 'demo.db')
 
-    databaseConfiguration = Configuration.validateDatabaseConfiguration(loadConfiguration('database.yaml'))
+    connectionConfiguration = Configuration.validateConnectionConfiguration(loadConfiguration('connections.yaml'))
     jobsFile = Configuration.validateJobConfiguration(loadConfiguration('jobs.yaml'), DataJobsFile)
-    Configuration.validateJobGraph(jobsFile.jobs, databaseAliases=set(databaseConfiguration))
+    Configuration.validateJobGraph(jobsFile.jobs, connectionAliases=set(connectionConfiguration))
 
     watermarks: List[Optional[str]] = []
     memory = FileMemory(memoryFile=memoryPath)
 
-    with Database(connectionSettings=databaseConfiguration['demo']) as database:
+    with Database(connectionSettings=connectionConfiguration['demo']) as database:
 
         for table in ('ordersSource', 'ordersTarget'):
             database.alter('CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR(50), updatedAt TEXT)'.format(table))
@@ -127,7 +127,7 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> List[Optional[st
         showCommand(['run', '--config', DEMO_CONFIGURATION_DIRECTORY, '--log', logPath, '--log-level', 'debug', '--quiet'],
                     {'DEMO_DB_PATH': workingDirectory / 'demo.db'})
 
-        runDataJobs(jobsFile=jobsFile, databaseConfiguration=databaseConfiguration,
+        runDataJobs(jobsFile=jobsFile, connectionConfiguration=connectionConfiguration,
                      logFile=logPath, memory=memory, logLevel=logging.DEBUG)
         watermarks.append(describe(database, memory, 'RUN 1 -- first run, so it extracts everything from watermarkInitial'))
 
@@ -136,11 +136,11 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> List[Optional[st
         database.alter("UPDATE ordersSource SET name = 'edited-but-not-retouched' WHERE id = 1")
         database.insert(table='ordersSource', data=[(4, 'fourth', '2026-01-04T00:00:00')], chunkSize=10)
 
-        runDataJobs(jobsFile=jobsFile, databaseConfiguration=databaseConfiguration,
+        runDataJobs(jobsFile=jobsFile, connectionConfiguration=connectionConfiguration,
                      logFile=logPath, memory=memory, logLevel=logging.DEBUG)
         watermarks.append(describe(database, memory, 'RUN 2 -- only row 4 is past the watermark; row 1 keeps its old name'))
 
-        runDataJobs(jobsFile=jobsFile, databaseConfiguration=databaseConfiguration,
+        runDataJobs(jobsFile=jobsFile, connectionConfiguration=connectionConfiguration,
                      logFile=logPath, memory=memory, logLevel=logging.DEBUG)
         watermarks.append(describe(database, memory, 'RUN 3 -- nothing new, so nothing loads and the watermark stays put'))
 

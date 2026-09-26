@@ -3,8 +3,10 @@ from __future__ import annotations
 from types import TracebackType
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type
 
-from ..configuration import WATERMARK_PLACEHOLDER, ConfigurationError, DatabaseConnectionConfig, DatabaseType
-from .dialects import ColumnDefinition, DatabaseDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
+from .driver import Connection, Cursor
+from .values import WANTS_COLUMN_TYPES, prepareParameters, prepareValues
+from ..configuration import WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseType
+from .dialects import ColumnDefinition, DatabaseDialect, DuckDBDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
     SQLiteDialect, catalogName, quoteFoldedTable, quoteIdentifier, splitTableName, suffixedName, tooLongName
 
 DIALECTS: Dict[DatabaseType, DatabaseDialect] = {
@@ -14,6 +16,7 @@ DIALECTS: Dict[DatabaseType, DatabaseDialect] = {
     DatabaseType.MSSQL: MSSQLDialect(),
     DatabaseType.SQLITE: SQLiteDialect(),
     DatabaseType.MARIADB: MariaDBDialect(),
+    DatabaseType.DUCKDB: DuckDBDialect(),
     }
 
 
@@ -25,7 +28,7 @@ class RowStream:
     otherwise block the connection. Closes itself when exhausted or failing.
     """
 
-    def __init__(self, database: 'Database', cursor: Any, chunkSize: int, firstChunk: List[Tuple[Any, ...]]) -> None:
+    def __init__(self, database: 'Database', cursor: Cursor, chunkSize: int, firstChunk: List[Tuple[Any, ...]]) -> None:
         self._database = database
         self._cursor = cursor
         self._chunkSize = chunkSize
@@ -92,18 +95,21 @@ class RowStream:
 
 class Database:
 
-    def __init__(self, connectionSettings: DatabaseConnectionConfig) -> None:
+    def __init__(self, connectionSettings: ConnectionConfig) -> None:
         self.connectionSettings = connectionSettings
         self.type = connectionSettings.type
         self.dialect = DIALECTS[self.type]
         self.primaryKeyCache: Dict[str, List[str]] = {}
         self.columnNameCache: Dict[str, List[str]] = {}
+        self.columnTypeCache: Dict[str, Dict[str, Any]] = {}
         self._streams: Set[RowStream] = set()
         self.connect()
 
 
     def connect(self) -> None:
 
+        self.connection: Connection
+        self.cursor: Cursor
         self.connection, self.cursor = self.dialect.connect(self.connectionSettings)
 
 
@@ -175,7 +181,7 @@ class Database:
             if parameters is None:
                 cursor.execute(query)
             else:
-                cursor.execute(query, tuple(parameters))
+                cursor.execute(query, prepareParameters(self.type, parameters))
 
             stream._pending = list(cursor.fetchmany(chunkSize))
             columns = [row[0] for row in cursor.description]
@@ -184,6 +190,31 @@ class Database:
             raise
 
         return columns, stream
+
+
+    def execute(self, statement: str) -> int:
+        """Runs `statement` in the open transaction, without committing, and
+        returns the rows it changed. For work that must commit or roll back as
+        one, with commit() and rollback().
+        """
+
+        self.cursor.execute(statement)
+
+        return self.cursor.rowcount
+
+
+    def commit(self) -> None:
+
+        self.connection.commit()
+
+
+    def rollback(self) -> None:
+        """Undoes what the open transaction did, if one is open. A failed
+        statement leaves PostgreSQL's transaction refusing anything more until
+        it is rolled back.
+        """
+
+        self.connection.rollback()
 
 
     def alter(self, query: str) -> None:
@@ -202,9 +233,9 @@ class Database:
     def checkName(self, table: str) -> None:
         """Refuses a name this database would silently cut to its length limit.
 
-        Cutting is not an error anywhere, so two tables named alike up to the
-        limit are one table: two jobs loaded over each other, and the second
-        swap renamed over the first's rows while both jobs reported failure.
+        Cutting is not an error on any database, so two tables named alike up
+        to the limit would be one table, and two jobs would load and swap over
+        each other.
         """
 
         problem = tooLongName(self.type, table)
@@ -244,8 +275,28 @@ class Database:
 
 
     def getAllColumnNames(self, table: str) -> List[str]:
+        """The table's columns, in order. Their types are kept from the same
+        statement, for the conversions that depend on the column; see values.
+        """
 
-        return [row[0] for row in self._describe(table)]
+        description = self._describe(table)
+        self.columnTypeCache[table] = {row[0]: row[1] for row in description}
+
+        return [row[0] for row in description]
+
+
+    def _columnTypes(self, table: str, columns: Sequence[str]) -> Optional[List[Any]]:
+        """The type codes of `columns`, catalog-spelled, where the conversions
+        for this database depend on the column (WANTS_COLUMN_TYPES), and None
+        for the rest. Read with the column names, which every load resolves
+        first, so they cost no statement.
+        """
+
+        types = self.columnTypeCache.get(table)
+        if self.type not in WANTS_COLUMN_TYPES or types is None:
+            return None
+
+        return [types.get(column) for column in columns]
 
 
     def catalogColumns(self, table: str, columns: Optional[Sequence[str]] = None) -> List[str]:
@@ -316,7 +367,7 @@ class Database:
 
         # Sorted here rather than left to the server: each orders by its own
         # collation -- SQL Server's ignores case, Oracle's does not -- and a
-        # name that had to be quoted sorts by its quote. One order on all six
+        # name that had to be quoted sorts by its quote. One order on all seven
         # is what makes a report comparable between them.
         return sorted(names)
 
@@ -423,13 +474,15 @@ class Database:
         commits on its own.
         """
 
-        resolvedColumns = self.quoted(self.catalogColumns(table=table, columns=columns))
+        catalogColumns = self.catalogColumns(table=table, columns=columns)
+        columnTypes = self._columnTypes(table, catalogColumns)
+        resolvedColumns = self.quoted(catalogColumns)
         statementTable = self.statementName(table)
         query = 'INSERT INTO {} ({}) VALUES ({})'.format(
             statementTable, ', '.join(resolvedColumns), ', '.join(self.dialect.placeholders(len(resolvedColumns))))
 
         for batch in self._batches(data, chunkSize):
-            batch = self.dialect.prepareValues(batch)
+            batch = prepareValues(self.type, batch, columnTypes)
             if not self.dialect.bulkInsert(self.cursor, statementTable, resolvedColumns, batch):
                 self.cursor.executemany(query, batch)
             self.connection.commit()
@@ -441,6 +494,7 @@ class Database:
         """
 
         allColumns, primaryKeyColumns, nonPrimaryKeyColumns = self._getColumnBuckets(table=table, columns=columns)
+        columnTypes = self._columnTypes(table, allColumns)
 
         normalizedColumns = [column.upper() for column in allColumns]
         keyIndexes = [normalizedColumns.index(column.upper()) for column in primaryKeyColumns if column.upper() in normalizedColumns]
@@ -452,7 +506,7 @@ class Database:
                                          nonPrimaryKeyColumns=nonPrimaryKeyColumns)
 
         for batch in self._batches(data, chunkSize):
-            batch = self.dialect.prepareValues(batch)
+            batch = prepareValues(self.type, batch, columnTypes)
             loaded = False
             if canCollapse:
                 lastPerKey = list({tuple(row[index] for index in keyIndexes): row for row in batch}.values())

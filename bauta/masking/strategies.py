@@ -1,10 +1,10 @@
-"""The masking strategies that ship with the package: `keep` through `redact`,
-and the lists the `fake*` ones pick from.
+"""The masking strategies that ship with the package, `keep` through `redact`;
+the lists the `fake*` ones pick from are in fakeData.
 
-The fake* strategies' lists are in fakeData. A policy names these by their NAME; your own strategies are referenced as
+A policy names these by their NAME. Your own strategies are referenced as
 module.path:ClassName and subclass bauta.masking.Strategy, as these do, so
-nothing here is privileged. core holds what they share -- the keyed
-hash, the Strategy base, the native masker -- and the plans that apply them.
+nothing here is privileged. core holds what they share -- the keyed hash, the
+Strategy base, the native masker -- and the plans that apply them.
 
 Changing what any of these returns changes every mask already made with it:
 mask-rs/vectors/reference.json records them, and the native masker must match.
@@ -451,16 +451,13 @@ class DateShiftStrategy(Strategy):
 
     def _offset(self, value: Any) -> datetime.timedelta:
         """Keyed on the day alone, never the time of day, so everything that
-        happened on one day moves to one day.
+        happened on one day moves to one day, whether a date, a timestamp or
+        text.
 
-        Keyed on the whole value, two timestamps hours apart landed days apart,
-        a day's rows scattered across the month, and a DATE column and a
-        TIMESTAMP column holding the same day disagreed about where it went.
-
-        Derived once per day: a date column holds a few thousand distinct days
-        and as many rows as the table has. The ordinal stands in for the day
-        the hash is keyed on, which is that day's ISO text, and the two agree
-        one for one -- so the shift is the one it always was.
+        Derived once per day, since a date column holds a few thousand
+        distinct days and as many rows as the table. The ordinal stands in for
+        the day's ISO text, which the hash is keyed on; the two agree one for
+        one.
         """
 
         day = value.date() if isinstance(value, datetime.datetime) else value

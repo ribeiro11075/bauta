@@ -48,7 +48,7 @@ def orphanQuery(databaseType: Any, table: str, columns: Sequence[str], reference
 
     A key with a NULL column is skipped, as databases skip it when enforcing.
     Tables are used as given and columns are quoted, so both must be spelled as
-    the target spells them. NOT EXISTS runs on all six databases, as `subset`'s
+    the target spells them. NOT EXISTS runs on all seven databases, as `subset`'s
     queries do.
     """
 
@@ -146,7 +146,7 @@ def verifyReferences(database: Any, alias: str, loaded: Mapping[str, str], sourc
                                                          check.referencedColumns))[0][0])
             except Exception as error:
                 # A failed statement aborts PostgreSQL's transaction until rolled back.
-                database.connection.rollback()
+                database.rollback()
                 problem = describeError(error)
         if check.declared:
             names = key.table, key.columns, key.referencedTable, key.referencedColumns

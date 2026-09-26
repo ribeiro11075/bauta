@@ -214,3 +214,38 @@ def test_skips_cascade_even_when_no_job_may_start():
 
     assert graph.takeReady(limit=0) == []
     assert graph.finished
+
+
+def _using(source: str, target: str):
+    from tests.jobConfigs import dataJob
+
+    return dataJob(sourceConnection=source, targetConnection=target)
+
+
+def test_a_connection_at_its_limit_holds_its_next_job_back_and_lets_others_start():
+    """`workers` stays a whole-run setting; a connection that allows one job at
+    a time -- DuckDB, which one process at a time may open -- still gets one.
+    """
+    graph = DependencyGraph(jobs={'a': _using('prod', 'lake'), 'b': _using('prod', 'lake'), 'c': _using('prod', 'warehouse')},
+                            connectionLimits={'lake': 1})
+
+    assert graph.takeReady() == ['a', 'c']
+
+    graph.finish(JobOutcome(job='a', status=JobStatus.COMPLETED))
+
+    assert graph.takeReady() == ['b']
+
+
+def test_a_job_reading_and_writing_one_connection_takes_one_of_its_places():
+    graph = DependencyGraph(jobs={'a': _using('lake', 'lake'), 'b': _using('prod', 'lake')}, connectionLimits={'lake': 2})
+
+    assert graph.takeReady() == ['a', 'b']
+
+
+def test_a_connection_limit_frees_its_place_when_a_job_fails():
+    graph = DependencyGraph(jobs={'a': _using('prod', 'lake'), 'b': _using('prod', 'lake')}, connectionLimits={'lake': 1})
+    graph.takeReady()
+
+    graph.finish(JobOutcome(job='a', status=JobStatus.FAILED, error='RuntimeError: boom'))
+
+    assert graph.takeReady() == ['b']

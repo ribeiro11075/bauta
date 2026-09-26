@@ -17,9 +17,9 @@ JOBS_YAML = """workers: 1
 jobs:
   loadRows:
     active: true
-    sourceDatabase: demo
+    sourceConnection: demo
     sourceQuery: SELECT id, name FROM src
-    targetDatabase: demo
+    targetConnection: demo
     targetTableFinal: tgt
     insertStrategy: upsert
     chunkSize: 2
@@ -27,9 +27,9 @@ jobs:
     active: true
     predecessors:
     - loadRows
-    sourceDatabase: demo
+    sourceConnection: demo
     sourceQuery: SELECT id, name FROM src
-    targetDatabase: demo
+    targetConnection: demo
     targetTableFinal: tgt
     insertStrategy: upsert
     chunkSize: 2
@@ -51,7 +51,7 @@ def workspace(tmp_path, monkeypatch):
     connection.commit()
     connection.close()
 
-    (configuration / 'database.yaml').write_text('demo:\n  type: sqlite\n  database: demo.db\n')
+    (configuration / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: demo.db\n')
     (configuration / 'jobs.yaml').write_text(JOBS_YAML)
 
     monkeypatch.chdir(tmp_path)
@@ -192,7 +192,7 @@ def test_dry_run_connects_once_per_alias(workspace, monkeypatch):
     original = Database.connect
 
     def counting(self):
-        connects.append(self.connectionSettings.database)
+        connects.append(self.connectionSettings.path)
         original(self)
 
     monkeypatch.setattr(Database, 'connect', counting)
@@ -275,7 +275,7 @@ def test_clear_dry_run_says_when_a_table_is_not_there(workspace, capsys):
 
 
 def test_dry_run_reports_a_database_it_cannot_reach(workspace):
-    (workspace / 'configuration' / 'database.yaml').write_text(
+    (workspace / 'configuration' / 'connections.yaml').write_text(
         'demo:\n  type: postgresql\n  database: d\n  user: u\n  password: p\n  host: 127.0.0.1\n  port: 1\n')
 
     assert main(['run', '--quiet', '--dry-run']) == EXIT_JOBS_DID_NOT_SUCCEED
@@ -304,7 +304,7 @@ def test_jobs_shows_a_throttled_job_after_it_has_run(workspace, capsys):
 def test_the_cli_expands_environment_variables_in_configuration(workspace, monkeypatch):
     """Credentials belong in the environment, not in the file beside the jobs."""
     monkeypatch.setenv('DEMO_DB_PATH', 'demo.db')
-    (workspace / 'configuration' / 'database.yaml').write_text('demo:\n  type: sqlite\n  database: ${DEMO_DB_PATH}\n')
+    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: ${DEMO_DB_PATH}\n')
 
     assert main(['run', '--quiet']) == EXIT_SUCCESS
     assert _targetRowCount(workspace) == 5
@@ -312,7 +312,7 @@ def test_the_cli_expands_environment_variables_in_configuration(workspace, monke
 
 def test_an_unset_variable_stops_the_run_before_anything_happens(workspace, monkeypatch):
     monkeypatch.delenv('DEMO_DB_PATH', raising=False)
-    (workspace / 'configuration' / 'database.yaml').write_text('demo:\n  type: sqlite\n  database: ${DEMO_DB_PATH}\n')
+    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: ${DEMO_DB_PATH}\n')
 
     assert main(['run', '--quiet']) == EXIT_BAD_CONFIGURATION
     assert _targetRowCount(workspace) == 0
@@ -334,9 +334,9 @@ MASKED_JOBS_YAML = """workers: 1
 jobs:
   maskRows:
     active: true
-    sourceDatabase: demo
+    sourceConnection: demo
     sourceQuery: SELECT id, name FROM src
-    targetDatabase: demo
+    targetConnection: demo
     targetTableFinal: tgt
     insertStrategy: upsert
     chunkSize: 2
@@ -413,14 +413,14 @@ def schemaWorkspace(workspace):
     connection.commit()
     connection.close()
 
-    (workspace / 'configuration' / 'database.yaml').write_text(
-        'demo:\n  type: sqlite\n  database: demo.db\ncopy:\n  type: sqlite\n  database: copy.db\n')
+    (workspace / 'configuration' / 'connections.yaml').write_text(
+        'demo:\n  type: sqlite\n  path: demo.db\ncopy:\n  type: sqlite\n  path: copy.db\n')
 
     return workspace
 
 
 def test_discover_proposes_a_policy_without_printing_values(schemaWorkspace, capsys):
-    assert main(['discover', '--quiet', '--database', 'demo', '--table', 'customers', '--table', 'orders', '--target', 'copy']) == EXIT_SUCCESS
+    assert main(['discover', '--quiet', '--connection', 'demo', '--table', 'customers', '--table', 'orders', '--target', 'copy']) == EXIT_SUCCESS
 
     output = capsys.readouterr().out
 
@@ -432,20 +432,20 @@ def test_discover_proposes_a_policy_without_printing_values(schemaWorkspace, cap
 def test_discover_refuses_to_overwrite_a_file(schemaWorkspace):
     (schemaWorkspace / 'proposal.yaml').write_text('reviewed\n')
 
-    assert main(['discover', '--quiet', '--database', 'demo', '--table', 'customers', '--output', 'proposal.yaml']) == EXIT_BAD_CONFIGURATION
+    assert main(['discover', '--quiet', '--connection', 'demo', '--table', 'customers', '--output', 'proposal.yaml']) == EXIT_BAD_CONFIGURATION
     assert (schemaWorkspace / 'proposal.yaml').read_text() == 'reviewed\n'
 
 
 @pytest.mark.parametrize('command', [['subset', '--root', 'customers', '--where', '1=1'], ['discover', '--table', 'customers']])
 def test_generated_jobs_need_a_chunk_size_of_at_least_one(schemaWorkspace, command):
     with pytest.raises(SystemExit) as raised:
-        main(command + ['--quiet', '--database', 'demo', '--target', 'copy', '--chunk-size', '0'])
+        main(command + ['--quiet', '--connection', 'demo', '--target', 'copy', '--chunk-size', '0'])
 
     assert raised.value.code == EXIT_BAD_CONFIGURATION
 
 
 def test_discover_rejects_an_unknown_alias(schemaWorkspace):
-    assert main(['discover', '--quiet', '--database', 'nope', '--table', 'customers']) == EXIT_BAD_CONFIGURATION
+    assert main(['discover', '--quiet', '--connection', 'nope', '--table', 'customers']) == EXIT_BAD_CONFIGURATION
 
 
 def test_audit_connect_flags_a_reference_masked_unlike_its_key(schemaWorkspace, capsys):
@@ -454,9 +454,9 @@ def test_audit_connect_flags_a_reference_masked_unlike_its_key(schemaWorkspace, 
 jobs:
   maskCustomers:
     active: true
-    sourceDatabase: demo
+    sourceConnection: demo
     sourceQuery: SELECT id, email, tier FROM customers
-    targetDatabase: copy
+    targetConnection: copy
     targetTableFinal: customers
     targetColumns: [id, email, tier]
     insertStrategy: upsert
@@ -467,9 +467,9 @@ jobs:
   maskOrders:
     active: true
     predecessors: [maskCustomers]
-    sourceDatabase: demo
+    sourceConnection: demo
     sourceQuery: SELECT id, customer_id, total FROM orders
-    targetDatabase: copy
+    targetConnection: copy
     targetTableFinal: orders
     targetColumns: [id, customer_id, total]
     insertStrategy: upsert
@@ -492,9 +492,9 @@ AUDIT_SWAP_JOBS_YAML = """workers: 1
 jobs:
   loadCustomers:
     active: true
-    sourceDatabase: demo
+    sourceConnection: demo
     sourceQuery: SELECT id, email, tier FROM customers
-    targetDatabase: copy
+    targetConnection: copy
     targetTableStage: customers_stage
     targetTableFinal: customers
     insertStrategy: swap
@@ -503,9 +503,9 @@ jobs:
   loadOrders:
     active: true
     predecessors: [loadCustomers]
-    sourceDatabase: demo
+    sourceConnection: demo
     sourceQuery: SELECT id, customer_id, total FROM orders
-    targetDatabase: copy
+    targetConnection: copy
     targetTableFinal: orders
     insertStrategy: upsert
     chunkSize: 10
@@ -543,9 +543,9 @@ def test_subset_generates_jobs_that_run(schemaWorkspace, monkeypatch):
         ''')
     copy.close()
 
-    assert main(['subset', '--quiet', '--database', 'demo', '--target', 'copy', '--root', 'customers',
+    assert main(['subset', '--quiet', '--connection', 'demo', '--target', 'copy', '--root', 'customers',
                  '--where', "tier = 'gold'", '--mask', '--output', 'subset/jobs.yaml']) == EXIT_SUCCESS
-    (schemaWorkspace / 'subset' / 'database.yaml').write_text((schemaWorkspace / 'configuration' / 'database.yaml').read_text())
+    (schemaWorkspace / 'subset' / 'connections.yaml').write_text((schemaWorkspace / 'configuration' / 'connections.yaml').read_text())
 
     assert main(['run', '--quiet', '--config', 'subset']) == EXIT_SUCCESS
 
@@ -559,7 +559,7 @@ def test_subset_generates_jobs_that_run(schemaWorkspace, monkeypatch):
 
 
 def test_subset_refuses_to_load_over_its_own_source(schemaWorkspace):
-    assert main(['subset', '--quiet', '--database', 'demo', '--target', 'demo', '--root', 'customers', '--where', '1 = 1']) == EXIT_BAD_CONFIGURATION
+    assert main(['subset', '--quiet', '--connection', 'demo', '--target', 'demo', '--root', 'customers', '--where', '1 = 1']) == EXIT_BAD_CONFIGURATION
 
 
 def test_subset_reports_a_cycle_as_a_usage_error(schemaWorkspace, caplog):
@@ -568,15 +568,15 @@ def test_subset_reports_a_cycle_as_a_usage_error(schemaWorkspace, caplog):
     connection.commit()
     connection.close()
 
-    assert main(['subset', '--quiet', '--database', 'demo', '--target', 'copy', '--root', 'employees', '--where', '1 = 1']) == EXIT_BAD_CONFIGURATION
+    assert main(['subset', '--quiet', '--connection', 'demo', '--target', 'copy', '--root', 'employees', '--where', '1 = 1']) == EXIT_BAD_CONFIGURATION
     assert '--ignore-foreign-key' in caplog.text
 
-    assert main(['subset', '--quiet', '--database', 'demo', '--target', 'copy', '--root', 'employees', '--where', '1 = 1',
+    assert main(['subset', '--quiet', '--connection', 'demo', '--target', 'copy', '--root', 'employees', '--where', '1 = 1',
                  '--ignore-foreign-key', 'employees.manager_id', '--output', 'employees.yaml']) == EXIT_SUCCESS
 
 
 def test_schema_prints_ddl_for_the_target(schemaWorkspace, capsys):
-    assert main(['schema', '--quiet', '--database', 'demo', '--target', 'copy', '--table', 'orders', '--related']) == EXIT_SUCCESS
+    assert main(['schema', '--quiet', '--connection', 'demo', '--target', 'copy', '--table', 'orders', '--related']) == EXIT_SUCCESS
 
     output = capsys.readouterr().out
 
@@ -591,7 +591,7 @@ def test_schema_apply_creates_missing_tables_and_leaves_existing_ones(schemaWork
     copy.commit()
     copy.close()
 
-    assert main(['schema', '--quiet', '--database', 'demo', '--target', 'copy', '--table', 'customers', '--related', '--apply']) == EXIT_SUCCESS
+    assert main(['schema', '--quiet', '--connection', 'demo', '--target', 'copy', '--table', 'customers', '--related', '--apply']) == EXIT_SUCCESS
     assert '1 table(s) created, 1 already existed' in capsys.readouterr().out
 
     copy = sqlite3.connect(str(schemaWorkspace / 'copy.db'))
@@ -603,8 +603,8 @@ def test_schema_apply_creates_missing_tables_and_leaves_existing_ones(schemaWork
 
 
 def test_schema_against_the_source_itself_creates_only_stage_tables(schemaWorkspace):
-    assert main(['schema', '--quiet', '--database', 'demo', '--target', 'demo', '--table', 'customers']) == EXIT_BAD_CONFIGURATION
-    assert main(['schema', '--quiet', '--database', 'demo', '--target', 'demo', '--table', 'customers',
+    assert main(['schema', '--quiet', '--connection', 'demo', '--target', 'demo', '--table', 'customers']) == EXIT_BAD_CONFIGURATION
+    assert main(['schema', '--quiet', '--connection', 'demo', '--target', 'demo', '--table', 'customers',
                  '--stage-suffix', '_masked_stage', '--apply']) == EXIT_SUCCESS
 
     connection = sqlite3.connect(str(schemaWorkspace / 'demo.db'))
@@ -615,7 +615,7 @@ def test_schema_against_the_source_itself_creates_only_stage_tables(schemaWorksp
 
 
 def test_schema_reports_a_missing_table_as_a_usage_error(schemaWorkspace):
-    assert main(['schema', '--quiet', '--database', 'demo', '--target', 'copy', '--table', 'nope']) == EXIT_BAD_CONFIGURATION
+    assert main(['schema', '--quiet', '--connection', 'demo', '--target', 'copy', '--table', 'nope']) == EXIT_BAD_CONFIGURATION
 
 
 def test_clear_needs_yes_and_dry_run_changes_nothing(workspace, capsys):
@@ -679,7 +679,7 @@ def test_the_jobs_file_says_where_run_state_lives(workspace, monkeypatch):
     from anywhere finds the same file -- and nothing lands in configuration/.
     """
     (workspace / 'configuration' / 'jobs.yaml').write_text('memory: ../transaction/memory.yaml\n' + JOBS_YAML)
-    (workspace / 'configuration' / 'database.yaml').write_text('demo:\n  type: sqlite\n  database: {}\n'.format(workspace / 'demo.db'))
+    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: {}\n'.format(workspace / 'demo.db'))
     elsewhere = workspace / 'elsewhere'
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
@@ -688,7 +688,7 @@ def test_the_jobs_file_says_where_run_state_lives(workspace, monkeypatch):
 
     assert 'loadRows' in (workspace / 'transaction' / 'memory.yaml').read_text()
     assert (workspace / 'transaction' / 'memory.yaml.run.lock').exists()
-    assert {path.name for path in (workspace / 'configuration').iterdir()} == {'jobs.yaml', 'database.yaml'}
+    assert {path.name for path in (workspace / 'configuration').iterdir()} == {'jobs.yaml', 'connections.yaml'}
     assert not any(elsewhere.iterdir())
 
 
@@ -754,9 +754,9 @@ AUDIT_JOBS_YAML = """workers: 1
 jobs:
   maskRows:
     active: true
-    sourceDatabase: demo
+    sourceConnection: demo
     sourceQuery: SELECT id, name AS email FROM src
-    targetDatabase: demo
+    targetConnection: demo
     targetTableFinal: tgt
     insertStrategy: upsert
     chunkSize: 2
@@ -844,14 +844,14 @@ def test_coverage_passes_once_the_rest_is_acknowledged_and_names_a_stale_declara
 
 
 def test_coverage_needs_database_when_the_jobs_read_from_several(coverageWorkspace, caplog):
-    (coverageWorkspace / 'configuration' / 'database.yaml').write_text(
-        'demo:\n  type: sqlite\n  database: demo.db\nother:\n  type: sqlite\n  database: other.db\n')
-    _writeJobs(coverageWorkspace, dependent={'sourceDatabase': 'other'})
+    (coverageWorkspace / 'configuration' / 'connections.yaml').write_text(
+        'demo:\n  type: sqlite\n  path: demo.db\nother:\n  type: sqlite\n  path: other.db\n')
+    _writeJobs(coverageWorkspace, dependent={'sourceConnection': 'other'})
 
     assert main(['coverage', '--quiet']) == EXIT_BAD_CONFIGURATION
-    assert '--database is required: the jobs read from demo, other' in caplog.text
+    assert '--connection is required: the jobs read from demo, other' in caplog.text
 
-    assert main(['coverage', '--quiet', '--database', 'demo']) == EXIT_JOBS_DID_NOT_SUCCEED
+    assert main(['coverage', '--quiet', '--connection', 'demo']) == EXIT_JOBS_DID_NOT_SUCCEED
 
 
 def test_coverage_still_reports_a_table_whose_columns_it_cannot_read(coverageWorkspace, monkeypatch, caplog, capsys):
@@ -866,7 +866,7 @@ def test_coverage_still_reports_a_table_whose_columns_it_cannot_read(coverageWor
 
 
 def test_validate_refuses_an_option_that_duplicates_a_field(workspace):
-    (workspace / 'configuration' / 'database.yaml').write_text('demo:\n  type: sqlite\n  database: demo.db\n  options:\n    database: other.db\n')
+    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: demo.db\n  options:\n    database: other.db\n')
 
     assert main(['validate', '--quiet']) == EXIT_BAD_CONFIGURATION
 
@@ -1013,7 +1013,7 @@ def test_run_memory_can_live_in_a_database(workspace):
 
     (workspace / 'configuration' / 'jobs.yaml').write_text('memory: ../transaction/memory.yaml\n' + JOBS_YAML)
 
-    assert main(['run', '--quiet', '--memory-database', 'demo']) == EXIT_SUCCESS
+    assert main(['run', '--quiet', '--memory-connection', 'demo']) == EXIT_SUCCESS
 
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     assert {row[0] for row in connection.execute('SELECT job FROM bauta_memory')} == {'loadRows', 'dependent'}
@@ -1040,25 +1040,25 @@ def test_a_rotated_masking_key_needs_clear_or_acknowledgement(workspace, monkeyp
 
 
 def test_validate_never_runs_a_password_command(workspace, capsys):
-    (workspace / 'configuration' / 'database.yaml').write_text(
-        'demo:\n  type: sqlite\n  database: demo.db\n'
+    (workspace / 'configuration' / 'connections.yaml').write_text(
+        'demo:\n  type: sqlite\n  path: demo.db\n'
         'warehouse:\n  type: postgresql\n  database: w\n  host: h\n  user: u\n  passwordCommand: [/no/such/command]\n')
 
     assert main(['validate', '--quiet']) == EXIT_SUCCESS
-    assert '2 database alias(es)' in capsys.readouterr().out
+    assert '2 connection(s)' in capsys.readouterr().out
 
 
 def test_synthesize_needs_yes_and_dry_run_writes_nothing(workspace, capsys):
     import sqlite3
 
-    assert main(['synthesize', '--quiet', '--database', 'demo', '--table', 'tgt:3']) == EXIT_BAD_CONFIGURATION
+    assert main(['synthesize', '--quiet', '--connection', 'demo', '--table', 'tgt:3']) == EXIT_BAD_CONFIGURATION
 
-    assert main(['synthesize', '--quiet', '--database', 'demo', '--table', 'tgt:3', '--dry-run']) == EXIT_SUCCESS
+    assert main(['synthesize', '--quiet', '--connection', 'demo', '--table', 'tgt:3', '--dry-run']) == EXIT_SUCCESS
     out = capsys.readouterr().out
     assert 'tgt: 3 row(s)' in out and 'primary key' in out and out.count('sample:') == 3
     assert _targetRowCount(workspace) == 0
 
-    assert main(['synthesize', '--quiet', '--database', 'demo', '--table', 'tgt:3', '--table', 'src', '--rows', '2', '--seed', '4', '--yes']) == EXIT_SUCCESS
+    assert main(['synthesize', '--quiet', '--connection', 'demo', '--table', 'tgt:3', '--table', 'src', '--rows', '2', '--seed', '4', '--yes']) == EXIT_SUCCESS
     assert _targetRowCount(workspace) == 3
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     assert connection.execute('SELECT count(*) FROM src').fetchone() == (7,)
@@ -1066,7 +1066,7 @@ def test_synthesize_needs_yes_and_dry_run_writes_nothing(workspace, capsys):
 
 
 def test_synthesize_rejects_a_bad_table_argument(workspace):
-    assert main(['synthesize', '--quiet', '--database', 'demo', '--table', 'tgt:0', '--yes']) == EXIT_BAD_CONFIGURATION
+    assert main(['synthesize', '--quiet', '--connection', 'demo', '--table', 'tgt:0', '--yes']) == EXIT_BAD_CONFIGURATION
 
 
 def _createTables(workspace, *schemas):
@@ -1102,7 +1102,7 @@ def test_memory_history_and_the_manifest_can_all_live_in_tables(maskedWorkspace,
 
     _createTables(maskedWorkspace, DATABASE_MEMORY_SCHEMA.replace('bauta_memory', 'etl_memory'), DATABASE_HISTORY_SCHEMA, DATABASE_MANIFEST_SCHEMA)
     (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(
-        'memory:\n  database: demo\n  table: etl_memory\nhistory:\n  database: demo\nmanifest:\n  database: demo\n' + MASKED_JOBS_YAML)
+        'memory:\n  connection: demo\n  table: etl_memory\nhistory:\n  connection: demo\nmanifest:\n  connection: demo\n' + MASKED_JOBS_YAML)
 
     assert main(['validate', '--quiet']) == EXIT_SUCCESS
     output = capsys.readouterr().out
@@ -1134,14 +1134,14 @@ def test_a_manifest_edited_in_its_table_fails_verification(maskedWorkspace):
     from bauta.jobs.reporting import DATABASE_MANIFEST_SCHEMA
 
     _createTables(maskedWorkspace, DATABASE_MANIFEST_SCHEMA)
-    assert main(['run', '--quiet', '--manifest-database', 'demo']) == EXIT_SUCCESS
+    assert main(['run', '--quiet', '--manifest-connection', 'demo']) == EXIT_SUCCESS
 
     connection = sqlite3.connect(str(maskedWorkspace / 'demo.db'))
     connection.execute('UPDATE bauta_manifest SET content = replace(content, \'"rowCount": 5\', \'"rowCount": 6\')')
     connection.commit()
     connection.close()
 
-    assert main(['verify-manifest', '--quiet', '--manifest-database', 'demo']) == EXIT_JOBS_DID_NOT_SUCCEED
+    assert main(['verify-manifest', '--quiet', '--manifest-connection', 'demo']) == EXIT_JOBS_DID_NOT_SUCCEED
 
 
 def test_flags_override_the_jobs_file(maskedWorkspace):
@@ -1154,14 +1154,14 @@ def test_flags_override_the_jobs_file(maskedWorkspace):
 
 
 def test_a_table_setting_needs_a_known_alias(workspace, caplog):
-    (workspace / 'configuration' / 'jobs.yaml').write_text('history:\n  database: nowhere\n' + JOBS_YAML)
+    (workspace / 'configuration' / 'jobs.yaml').write_text('history:\n  connection: nowhere\n' + JOBS_YAML)
 
     assert main(['validate']) == EXIT_BAD_CONFIGURATION
-    assert 'history: database "nowhere" is not a known database alias' in caplog.text
+    assert 'history: connection "nowhere" is not a known connection alias' in caplog.text
 
 
 def test_a_misspelled_table_setting_is_refused(workspace, caplog):
-    (workspace / 'configuration' / 'jobs.yaml').write_text('history:\n  database: demo\n  tabel: runs\n' + JOBS_YAML)
+    (workspace / 'configuration' / 'jobs.yaml').write_text('history:\n  connection: demo\n  tabel: runs\n' + JOBS_YAML)
 
     assert main(['validate']) == EXIT_BAD_CONFIGURATION
     assert 'tabel' in caplog.text
@@ -1183,7 +1183,7 @@ names:
 def test_discover_reads_discovery_yaml_from_the_configuration_directory(schemaWorkspace, capsys):
     (schemaWorkspace / 'configuration' / 'discovery.yaml').write_text(DISCOVERY_YAML)
 
-    assert main(['discover', '--quiet', '--database', 'demo', '--table', 'customers', '--target', 'copy']) == EXIT_SUCCESS
+    assert main(['discover', '--quiet', '--connection', 'demo', '--table', 'customers', '--target', 'copy']) == EXIT_SUCCESS
 
     output = capsys.readouterr().out
     assert 'tier: {strategy: shuffle}  # membership tier, which singles people out' in output
@@ -1194,9 +1194,9 @@ def test_discover_reads_discovery_yaml_from_the_configuration_directory(schemaWo
 def test_rules_can_be_named_on_the_command_line(schemaWorkspace, capsys):
     (schemaWorkspace / 'mine.yaml').write_text(DISCOVERY_YAML)
 
-    assert main(['discover', '--quiet', '--database', 'demo', '--table', 'customers', '--rules', 'mine.yaml']) == EXIT_SUCCESS
+    assert main(['discover', '--quiet', '--connection', 'demo', '--table', 'customers', '--rules', 'mine.yaml']) == EXIT_SUCCESS
     assert 'membership tier' in capsys.readouterr().out
-    assert main(['discover', '--quiet', '--database', 'demo', '--table', 'customers', '--rules', 'missing.yaml']) == EXIT_BAD_CONFIGURATION
+    assert main(['discover', '--quiet', '--connection', 'demo', '--table', 'customers', '--rules', 'missing.yaml']) == EXIT_BAD_CONFIGURATION
 
 
 def test_audit_questions_a_kept_column_by_your_own_rules(maskedWorkspace, capsys):
@@ -1281,7 +1281,7 @@ def test_only_commands_that_read_run_state_offer_its_flags(command, offers):
     subparsers = next(action for action in _buildParser()._actions if action.dest == 'command')
     flags = {flag for action in subparsers.choices[command]._actions for flag in action.option_strings}
 
-    assert ({'--memory', '--memory-database', '--memory-table'} <= flags) is offers
+    assert ({'--memory', '--memory-connection', '--memory-table'} <= flags) is offers
 
 
 def test_dry_run_compares_the_column_counts_it_already_prints():
@@ -1292,8 +1292,8 @@ def test_dry_run_compares_the_column_counts_it_already_prints():
     from bauta.cli.common import _checkColumnCounts
     from bauta.configuration import DataJobConfig
 
-    job = DataJobConfig(active=True, sourceDatabase='prod', sourceQuery='select * from customers',
-                        targetDatabase='staging', targetTableFinal='customers', insertStrategy='upsert', chunkSize=10)
+    job = DataJobConfig(active=True, sourceConnection='prod', sourceQuery='select * from customers',
+                        targetConnection='staging', targetTableFinal='customers', insertStrategy='upsert', chunkSize=10)
 
     assert _checkColumnCounts('maskCustomers', job, ['id', 'email'], ['id', 'email']) is None
 
@@ -1305,8 +1305,8 @@ def test_dry_run_counts_only_the_columns_target_columns_names():
     from bauta.cli.common import _checkColumnCounts
     from bauta.configuration import DataJobConfig
 
-    job = DataJobConfig(active=True, sourceDatabase='prod', sourceQuery='select id, email from customers',
-                        targetDatabase='staging', targetTableFinal='customers', insertStrategy='upsert', chunkSize=10,
+    job = DataJobConfig(active=True, sourceConnection='prod', sourceQuery='select id, email from customers',
+                        targetConnection='staging', targetTableFinal='customers', insertStrategy='upsert', chunkSize=10,
                         targetColumns=['id', 'email'])
 
     assert _checkColumnCounts('maskCustomers', job, ['id', 'email'], ['id', 'email', 'created_at']) is None
@@ -1342,3 +1342,4 @@ def test_discover_needs_exactly_one_way_of_choosing_tables():
     for bad in (Arguments(None, False), Arguments(['customers'], True)):
         with pytest.raises(UsageError):
             _requireTableSelection(bad)
+

@@ -183,7 +183,7 @@ def test_a_swap_leaves_other_tables_keys_on_the_old_table(server):
         return {foreignKey.referencedTable.lower() for foreignKey in database.getForeignKeys() if foreignKey.table.lower() == child.lower()}
 
     def errors():
-        jobs = {'loadParent': DataJobConfig(active=True, sourceDatabase='prod', sourceQuery='select * from parent', targetDatabase='copy',
+        jobs = {'loadParent': DataJobConfig(active=True, sourceConnection='prod', sourceQuery='select * from parent', targetConnection='copy',
                                             targetTableStage=stage, targetTableFinal=final, insertStrategy='swap', chunkSize=10)}
         return [finding['message'] for finding in auditJobs(jobs, declaredForeignKeys={'copy': database.getForeignKeys()})['findings']
                 if finding['severity'] == 'error']

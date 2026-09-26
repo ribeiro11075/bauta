@@ -412,8 +412,8 @@ def synthesizeTable(database: Any, table: str, rows: int, seed: int = 0, foreign
     keyColumns = {column.upper() for column in database.getPrimaryColumnNames(table)}
     keyIndexes = [index for index, column in enumerate(columns) if column.upper() in keyColumns]
     # Only a key made wholly of foreign keys can repeat: any other has a part
-    # generated unique. Remembering those keys cost 116 MiB a million rows
-    # of a table keyed by one integer, to find nothing.
+    # generated unique, and remembering its keys would cost memory to find
+    # nothing.
     if not all(plans[index].source == 'foreign key' for index in keyIndexes):
         keyIndexes = []
     seen: Set[Tuple[Any, ...]] = set()

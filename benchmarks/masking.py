@@ -41,7 +41,7 @@ from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bauta.configuration import DatabaseConnectionConfig, DataJobConfig
+from bauta.configuration import DataJobConfig, connectionConfig
 from bauta.jobs.pipeline import _executeDataJob
 from bauta.masking import core as maskingCore
 
@@ -92,11 +92,11 @@ def runOnce(source: Path, target: Path, policy: str) -> Dict[str, Any]:
     connection.commit()
     connection.close()
 
-    job = DataJobConfig(sourceDatabase='source', sourceQuery='SELECT id, ref, account, email, token, secret, phone FROM people',
-                        targetDatabase='target', targetTableFinal='people', targetTableStage='people_stage', insertStrategy='swap',
+    job = DataJobConfig(sourceConnection='source', sourceQuery='SELECT id, ref, account, email, token, secret, phone FROM people',
+                        targetConnection='target', targetTableFinal='people', targetTableStage='people_stage', insertStrategy='swap',
                         masking={'key': BENCHMARK_KEY, 'columns': dict(POLICIES[policy][1], id='keep')})
-    databases = {'source': DatabaseConnectionConfig(type='sqlite', database=str(source)),
-                 'target': DatabaseConnectionConfig(type='sqlite', database=str(target))}
+    databases = {'source': connectionConfig(type='sqlite', path=str(source)),
+                 'target': connectionConfig(type='sqlite', path=str(target))}
     maskingCore.setMaskingThreads(maskingCore.maskingThreadsFor(maskingCore.effectiveMaskingThreads(1), 1))
 
     started = time.perf_counter()

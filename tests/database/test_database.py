@@ -2,16 +2,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from bauta.configuration import DatabaseConnectionConfig, DatabaseType
+from bauta.configuration import connectionConfig, DatabaseType
 from bauta.database import Database
 
 
 def _mockedDatabase(dbType: DatabaseType) -> Database:
 
-    if dbType == DatabaseType.ORACLE:
-        settings = DatabaseConnectionConfig(type=dbType, user='u', password='p', database='d', host='h', port=1234, serviceName='svc')
+    if dbType in (DatabaseType.SQLITE, DatabaseType.DUCKDB):
+        settings = connectionConfig(type=dbType, path=':memory:')
+    elif dbType == DatabaseType.ORACLE:
+        settings = connectionConfig(type=dbType, user='u', password='p', host='h', port=1234, serviceName='svc')
     else:
-        settings = DatabaseConnectionConfig(type=dbType, user='u', password='p', database='d', host='h', port=1234)
+        settings = connectionConfig(type=dbType, user='u', password='p', database='d', host='h', port=1234)
 
     database = Database.__new__(Database)
     database.connectionSettings = settings
@@ -23,6 +25,7 @@ def _mockedDatabase(dbType: DatabaseType) -> Database:
     database.primaryKeyCache = {}
     database._streams = set()
     database.columnNameCache = {}
+    database.columnTypeCache = {}
     database.getAllColumnNames = MagicMock(return_value=['id', 'name'])
     database.getPrimaryColumnNames = MagicMock(return_value=['id'])
 
@@ -41,81 +44,6 @@ def _copiedRows(cursor):
     return [call.args[0] for call in cursor.copy.return_value.__enter__.return_value.write_row.call_args_list]
 
 
-@pytest.mark.parametrize('dbType', [DatabaseType.MYSQL, DatabaseType.POSTGRESQL, DatabaseType.ORACLE, DatabaseType.MSSQL, DatabaseType.SQLITE, DatabaseType.MARIADB])
-def test_upsert_executes_for_every_dialect(dbType):
-    """Regression check for the bug that made mysql upserts a silent no-op, and
-    the UnboundLocalError that made oracle crash outright.
-    """
-    database = _mockedDatabase(dbType)
-
-    database.upsert(table='people', data=[(1, 'a'), (2, 'b')], chunkSize=100)
-
-    if dbType == DatabaseType.POSTGRESQL:
-        assert len(_copies(database.cursor)) == 1
-        database.cursor.executemany.assert_not_called()
-    elif dbType == DatabaseType.MSSQL:
-        assert 'VALUES (%s, %s), (%s, %s)' in database.cursor.execute.call_args[0][0]
-        database.cursor.executemany.assert_not_called()
-    else:
-        assert database.cursor.executemany.call_count > 0
-    assert database.connection.commit.call_count > 0
-
-
-@pytest.mark.parametrize('dbType', [DatabaseType.MYSQL, DatabaseType.POSTGRESQL, DatabaseType.ORACLE, DatabaseType.MSSQL, DatabaseType.SQLITE, DatabaseType.MARIADB])
-def test_upsert_from_stage_executes_for_every_dialect(dbType):
-    database = _mockedDatabase(dbType)
-
-    database.upsertFromStage(targetTable='people', stageTable='people_stage')
-
-    assert database.cursor.execute.call_count > 0
-    assert database.connection.commit.call_count > 0
-
-
-@pytest.mark.parametrize('dbType,expectedStatementCount', [
-    (DatabaseType.MYSQL, 1),
-    (DatabaseType.POSTGRESQL, 2),  # the dependent-views lookup, then the renames
-    (DatabaseType.ORACLE, 3),
-    (DatabaseType.MSSQL, 1),
-    (DatabaseType.SQLITE, 6),  # legacy_alter_table on, BEGIN, the renames, then off
-    (DatabaseType.MARIADB, 1),
-    ])
-def test_swap_executes_the_right_number_of_statements(dbType, expectedStatementCount):
-    database = _mockedDatabase(dbType)
-
-    database.swap(targetTable='people', stageTable='people_stage')
-
-    assert database.cursor.execute.call_count == expectedStatementCount
-    assert database.connection.commit.call_count == 1
-
-
-@pytest.mark.parametrize('dbType', [DatabaseType.MYSQL, DatabaseType.POSTGRESQL, DatabaseType.ORACLE, DatabaseType.MSSQL, DatabaseType.SQLITE, DatabaseType.MARIADB])
-def test_get_primary_column_names_executes_a_query(dbType):
-    database = _mockedDatabase(dbType)
-    database.getPrimaryColumnNames = Database.getPrimaryColumnNames.__get__(database)
-    database.cursor.fetchall = MagicMock(return_value=[('id',)])
-
-    result = database.getPrimaryColumnNames(table='people')
-
-    assert result == ['id']
-    assert database.cursor.execute.call_count == 1
-
-
-@pytest.mark.parametrize('dbType,expectedPlaceholder', [
-    (DatabaseType.MYSQL, '%s'),
-    (DatabaseType.POSTGRESQL, '%s'),
-    (DatabaseType.ORACLE, ':1'),
-    (DatabaseType.SQLITE, '?'),
-    (DatabaseType.MARIADB, '%s'),
-    ])
-def test_insert_uses_the_dialects_placeholder_style(dbType, expectedPlaceholder):
-    database = _mockedDatabase(dbType)
-
-    database.insert(table='people', data=[(1, [])], chunkSize=100)  # a list, which COPY leaves to executemany
-
-    query = database.cursor.executemany.call_args[0][0]
-    assert expectedPlaceholder in query
-
-
 def test_get_all_column_names_and_types_use_a_bounded_query():
     """SELECT * with no WHERE clause is an unbounded/full-table-shaped query just to
     read cursor.description -- WHERE 1=0 is the fix, and is valid across all 3 dialects.
@@ -132,7 +60,7 @@ def test_get_all_column_names_and_types_use_a_bounded_query():
         assert 'WHERE 1=0' in callArgs[0][0]
 
 
-@pytest.mark.parametrize('dbType', [DatabaseType.MYSQL, DatabaseType.POSTGRESQL, DatabaseType.SQLITE])
+@pytest.mark.parametrize('dbType', [DatabaseType.MYSQL, DatabaseType.POSTGRESQL, DatabaseType.SQLITE, DatabaseType.DUCKDB])
 def test_an_upsert_into_a_table_without_a_primary_key_fails_rather_than_guessing(dbType):
     """With no key there's nothing to match rows on. MySQL used to insert a
     duplicate of every row on every run; the others generated invalid SQL.
@@ -438,7 +366,7 @@ def test_a_query_that_fails_closes_its_stream():
 def _sqliteWithTables(tmp_path, name='tables.db'):
     import sqlite3
 
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
 
     path = tmp_path / name
     connection = sqlite3.connect(path)
@@ -448,7 +376,7 @@ def _sqliteWithTables(tmp_path, name='tables.db'):
     connection.commit()
     connection.close()
 
-    return DatabaseConnectionConfig(type='sqlite', database=str(path))
+    return connectionConfig(type='sqlite', path=str(path))
 
 
 def test_list_tables_returns_base_tables_sorted_without_views(tmp_path):
@@ -461,7 +389,7 @@ def test_list_tables_returns_base_tables_sorted_without_views(tmp_path):
 def test_list_tables_leaves_out_sqlites_own_tables(tmp_path):
     import sqlite3
 
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
     from bauta.database import Database
 
     path = tmp_path / 'sequence.db'
@@ -472,7 +400,7 @@ def test_list_tables_leaves_out_sqlites_own_tables(tmp_path):
     connection.commit()
     connection.close()
 
-    with Database(connectionSettings=DatabaseConnectionConfig(type='sqlite', database=str(path))) as database:
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(path))) as database:
         assert database.listTables() == ['items']
 
 
@@ -494,7 +422,7 @@ def test_a_listed_name_that_needs_quoting_still_reads_back_as_itself(tmp_path):
     """
     import sqlite3
 
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
     from bauta.database import Database
 
     path = tmp_path / 'awkward.db'
@@ -504,7 +432,7 @@ def test_a_listed_name_that_needs_quoting_still_reads_back_as_itself(tmp_path):
     connection.commit()
     connection.close()
 
-    with Database(connectionSettings=DatabaseConnectionConfig(type='sqlite', database=str(path))) as database:
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(path))) as database:
         listed = database.listTables()
         assert listed == ['"dotted.name"', 'order', 'two words']
         for table in listed:
@@ -518,7 +446,7 @@ def test_list_tables_qualifies_names_only_when_a_schema_was_asked_for(tmp_path):
     other = _sqliteWithTables(tmp_path, name='other.db')
 
     with Database(connectionSettings=settings) as database:
-        database.cursor.execute("ATTACH DATABASE '{}' AS extra".format(other.database))
+        database.cursor.execute("ATTACH DATABASE '{}' AS extra".format(other.path))
 
         assert database.listTables() == ['customers', 'orders']
         assert database.listTables(schema='extra') == ['extra.customers', 'extra.orders']

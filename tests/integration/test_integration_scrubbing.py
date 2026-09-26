@@ -87,12 +87,12 @@ def test_a_failed_job_reports_and_logs_no_values(tables, tmp_path):
     database.insert(table=names['source'], data=[(1, 'ann', AWKWARD)], chunkSize=10)
 
     jobsFile = Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'copy': {
-        'active': True, 'sourceDatabase': 'db', 'targetDatabase': 'db', 'insertStrategy': 'upsert', 'chunkSize': 10,
+        'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'insertStrategy': 'upsert', 'chunkSize': 10,
         'sourceQuery': 'SELECT id, v, n FROM {}'.format(names['source']), 'targetTableFinal': names['target'],
         }}}, DataJobsFile)
     logFile = tmp_path / 'runner.log'
 
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration={'db': settings}, memory=FileMemory(tmp_path / 'memory.yaml'), logFile=logFile)
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration={'db': settings}, memory=FileMemory(tmp_path / 'memory.yaml'), logFile=logFile)
 
     (outcome,) = result.outcomes
     assert outcome.status == JobStatus.FAILED

@@ -1,5 +1,5 @@
 """How a table or column name is read, quoted and folded, the same way on
-all six databases. See "How names are written" in docs/design.md.
+all seven databases. See "How names are written" in docs/design.md.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ _QUOTE_PAIRS = dict([('"', '"')] + list(_IDENTIFIER_QUOTES.values()))
 
 # The longest name each database keeps, and whether it counts bytes or
 # characters. A longer name isn't refused: it is silently cut to the limit, so
-# two names alike up to it become one table. SQLite has no limit.
+# two names alike up to it become one table. SQLite and DuckDB have none.
 IDENTIFIER_LIMITS = {
     DatabaseType.POSTGRESQL: (63, 'bytes'),
     DatabaseType.MYSQL: (64, 'characters'),
@@ -101,13 +101,12 @@ def _isQuoted(databaseType: DatabaseType, name: str) -> bool:
 
 
 def catalogName(databaseType: DatabaseType, name: str) -> str:
-    """`name` as the catalog holds it: a quoted name unquoted, and a name
-    written without quotes folded the way this database folds one.
+    """`name` as the catalog holds it: a quoted name unquoted, and a name written
+    without quotes folded the way this database folds one.
 
     Catalog queries bind these, so a table a person can only name in quotes --
     a reserved word, mixed case on Oracle or PostgreSQL, a space -- is found
-    rather than looked up with its quotes still on, which used to report every
-    such table as having no columns and no primary key.
+    rather than looked up with its quotes still on.
 
     A name no database would accept without quotes is taken as it is written,
     since there is no unquoted spelling of it to fold -- the same rule
@@ -160,9 +159,8 @@ def _quotedParts(databaseType: DatabaseType, table: str, quote: Callable[[Databa
 def tooLongName(databaseType: DatabaseType, table: str) -> Optional[str]:
     """Says which part of `table` this database would cut, and to what, or None.
 
-    PostgreSQL cutting a name to 63 bytes is silent: two jobs whose targets
-    differ only past that loaded the same table, and the second swap then
-    renamed over the first's rows.
+    Cutting is silent: two targets differing only past the limit would be one
+    table, and one swap would rename over the other's rows.
     """
 
     limit = IDENTIFIER_LIMITS.get(databaseType)

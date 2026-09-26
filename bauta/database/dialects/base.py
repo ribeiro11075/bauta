@@ -4,15 +4,14 @@ records it returns, and the helpers a load uses on each chunk.
 from __future__ import annotations
 
 import contextlib
-import datetime
 import itertools
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple, Type, TypeVar
 
-from ...configuration import ConfigurationError, DatabaseConnectionConfig, DatabaseType
+from ..driver import Connection, Cursor
+from ...configuration import ConfigurationError, ConnectionConfig, DatabaseType
 from .names import catalogName, catalogTableName, unqualifiedName
-
 
 
 class ForeignKey(NamedTuple):
@@ -100,26 +99,6 @@ def _mergeUpdateInsertClause(targetAlias: str, sourceAlias: str, allColumns: Lis
     return 'ON ({}) {}WHEN NOT MATCHED THEN INSERT ({}) VALUES ({})'.format(onClause, whenMatched, insertColumns, insertValues)
 
 
-def durationText(value: datetime.timedelta) -> str:
-    """A duration as `[-]HH:MM:SS[.ffffff]`, the way MySQL writes a TIME.
-
-    MySQL's TIME is a duration, from -838:59:59 to 838:59:59, and its driver
-    returns a timedelta. Nothing else takes one: SQL Server's and SQLite's
-    drivers refuse it outright, psycopg writes it as an interval -- which
-    PostgreSQL then squeezed into a TIME column as a wrong time of day, without
-    a word -- and Oracle stored Python's own `-35 days, 1:00:01`. Every
-    database parses this spelling back into whatever the column is.
-    """
-
-    sign = '-' if value < datetime.timedelta(0) else ''
-    magnitude = abs(value)
-    hours, rest = divmod(int(magnitude.total_seconds()), 3600)
-    minutes, seconds = divmod(rest, 60)
-    fraction = '.{:06d}'.format(magnitude.microseconds) if magnitude.microseconds else ''
-
-    return '{}{:02d}:{:02d}:{:02d}{}'.format(sign, hours, minutes, seconds, fraction)
-
-
 def _holdsAny(rows: Sequence[Sequence[Any]], kinds: Tuple[type, ...]) -> bool:
     """Whether any value in `rows` is one of `kinds`, a subclass included.
 
@@ -156,6 +135,21 @@ def _renameInThreeSteps(targetTable: str, stageTable: str, tempTable: str) -> Li
     return [_renameStatement(*step) for step in _renameSteps(targetTable, stageTable, tempTable)]
 
 
+M = TypeVar('M')
+
+
+def settingsOf(settings: ConnectionConfig, model: Type[M]) -> M:
+    """`settings` as the connection type `model` is, for a dialect reading the
+    settings only that type has. A dialect handed another type's settings is
+    a bug in bauta, not in the configuration.
+    """
+
+    if not isinstance(settings, model):
+        raise TypeError('{} settings reached the dialect for {}'.format(settings.type.value, getattr(model, '__name__', model)))
+
+    return settings
+
+
 class DatabaseDialect(ABC):
     """Everything that differs between database types lives here, not in Database.
 
@@ -165,7 +159,7 @@ class DatabaseDialect(ABC):
 
     databaseType: DatabaseType
 
-    def connect(self, settings: DatabaseConnectionConfig) -> Tuple[Any, Any]:
+    def connect(self, settings: ConnectionConfig) -> Tuple[Connection, Cursor]:
         """Returns (connection, cursor), the session prepared. A connection
         whose preparation fails is closed before the error goes on, or every
         retry of a misconfigured job would leave one open.
@@ -183,12 +177,12 @@ class DatabaseDialect(ABC):
         return connection, cursor
 
     @abstractmethod
-    def openConnection(self, settings: DatabaseConnectionConfig) -> Any:
+    def openConnection(self, settings: ConnectionConfig) -> Connection:
         """A new connection. Drivers are imported here, so only the one in use
         needs installing.
         """
 
-    def prepareSession(self, connection: Any, settings: DatabaseConnectionConfig) -> Any:
+    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Cursor:
         """Sets the session up the way every statement expects, returning the
         cursor to run them on.
         """
@@ -196,10 +190,10 @@ class DatabaseDialect(ABC):
         return connection.cursor()
 
     @abstractmethod
-    def _ownConnectArguments(self, settings: DatabaseConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
         """The driver keyword arguments the connection fields map to."""
 
-    def connectArguments(self, settings: DatabaseConnectionConfig, resolvePassword: bool = True) -> Dict[str, Any]:
+    def connectArguments(self, settings: ConnectionConfig, resolvePassword: bool = True) -> Dict[str, Any]:
         """The fields' driver arguments plus settings.options, refusing an
         option that duplicates a field. resolvePassword=False lets `validate`
         check this without running a passwordCommand.
@@ -214,7 +208,7 @@ class DatabaseDialect(ABC):
 
         return {**own, **settings.options}
 
-    def streamingCursor(self, connection: Any, chunkSize: int) -> Any:
+    def streamingCursor(self, connection: Connection, chunkSize: int) -> Cursor:
         """A cursor that doesn't buffer the whole result set client-side, which
         fetchmany() alone doesn't prevent. A plain cursor already streams on
         sqlite3 and pymssql.
@@ -223,18 +217,7 @@ class DatabaseDialect(ABC):
         return connection.cursor()
 
 
-    def prepareValues(self, rows: List[Tuple[Any, ...]]) -> List[Tuple[Any, ...]]:
-        """A batch as this driver must receive it. Every dialect writes a
-        duration as text; PostgreSQL and SQL Server have more to do.
-        """
-
-        if not _holdsAny(rows, (datetime.timedelta,)):
-            return rows
-
-        return [tuple(durationText(value) if isinstance(value, datetime.timedelta) else value for value in row) for row in rows]
-
-
-    def discardRemaining(self, connection: Any, cursor: Any) -> None:
+    def discardRemaining(self, connection: Connection, cursor: Cursor) -> None:
         """Release rows left unread by an abandoned stream, so `connection` stays
         usable. Closing the cursor is enough everywhere but MySQL.
         """
@@ -251,21 +234,29 @@ class DatabaseDialect(ABC):
 
         return False
 
-    def isEncrypted(self, cursor: Any) -> Optional[bool]:
+    def checksForeignKeysWithinTransaction(self) -> bool:
+        """Whether a foreign key sees the transaction's own changes, so that a
+        parent's rows can be deleted after its children's, before either
+        commits. DuckDB checks against what is committed.
+        """
+
+        return True
+
+    def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
         """Whether the server reports this connection as encrypted in transit;
         None where there's no network or no way to tell.
         """
 
         return None
 
-    def bulkInsert(self, cursor: Any, table: str, columns: List[str], rows: Sequence[Sequence[Any]]) -> bool:
+    def bulkInsert(self, cursor: Cursor, table: str, columns: List[str], rows: Sequence[Sequence[Any]]) -> bool:
         """Loads `rows` in fewer round trips than executemany, for drivers whose
         executemany sends a statement per row. False means nothing was sent.
         """
 
         return False
 
-    def bulkUpsert(self, cursor: Any, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str],
+    def bulkUpsert(self, cursor: Cursor, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str],
                    rows: Sequence[Sequence[Any]]) -> bool:
         """bulkInsert for an upsert: the same contract. `rows` hold no two rows
         with the same key.
@@ -308,21 +299,21 @@ class DatabaseDialect(ABC):
 
         raise NotImplementedError('{} cannot check for tables'.format(type(self).__name__))
 
-    def _catalog(self, cursor: Any, query: str, table: str) -> List[Any]:
+    def _catalog(self, cursor: Cursor, query: str, table: str) -> List[Any]:
 
         cursor.execute(query.format(*self.placeholders(2)), catalogTableName(self.databaseType, table))
 
         return cursor.fetchall()
 
-    def primaryKey(self, cursor: Any, table: str) -> List[str]:
+    def primaryKey(self, cursor: Cursor, table: str) -> List[str]:
 
         return [row[0] for row in self._catalog(cursor, self.primaryKeyQuery(), table)]
 
-    def columnDefinitions(self, cursor: Any, table: str) -> List[ColumnDefinition]:
+    def columnDefinitions(self, cursor: Cursor, table: str) -> List[ColumnDefinition]:
 
         return _columnDefinitions(self._catalog(cursor, self.columnsQuery(), table))
 
-    def tableExists(self, cursor: Any, table: str) -> bool:
+    def tableExists(self, cursor: Cursor, table: str) -> bool:
 
         return bool(self._catalog(cursor, self.tableExistsQuery(), table)[0][0])
 
@@ -336,7 +327,7 @@ class DatabaseDialect(ABC):
 
         raise NotImplementedError('{} cannot list tables'.format(type(self).__name__))
 
-    def listTables(self, cursor: Any, schema: Optional[str] = None) -> List[str]:
+    def listTables(self, cursor: Cursor, schema: Optional[str] = None) -> List[str]:
         """The schema's base tables, named as the catalog holds them.
 
         `schema` is bound the way every other catalog lookup binds one --
@@ -357,7 +348,7 @@ class DatabaseDialect(ABC):
 
         raise NotImplementedError('{} cannot list foreign keys'.format(type(self).__name__))
 
-    def foreignKeys(self, cursor: Any) -> List[ForeignKey]:
+    def foreignKeys(self, cursor: Cursor) -> List[ForeignKey]:
         """For planning subsets. SQLite, which can't do it in one query,
         overrides this.
         """
@@ -383,7 +374,7 @@ class DatabaseDialect(ABC):
         table between schemas. Renames take the new name unqualified.
         """
 
-    def swap(self, cursor: Any, targetTable: str, stageTable: str, tempTable: str) -> None:
+    def swap(self, cursor: Cursor, targetTable: str, stageTable: str, tempTable: str) -> None:
         """Runs the swap on `cursor`; the caller commits. A dialect with more to
         do around the renames overrides this.
         """
@@ -393,11 +384,11 @@ class DatabaseDialect(ABC):
 
 
 class _OnConflictDialect(DatabaseDialect):
-    """PostgreSQL and SQLite share `INSERT ... ON CONFLICT` word for word. A
-    key-only table gets DO NOTHING, since an empty SET is invalid.
+    """PostgreSQL, SQLite and DuckDB share `INSERT ... ON CONFLICT` word for
+    word. A key-only table gets DO NOTHING, since an empty SET is invalid.
 
-    The stage form's `WHERE true` is SQLite's documented workaround for reading
-    ON as the start of a join constraint.
+    The stage form's `WHERE true` is SQLite's documented workaround for
+    reading ON as the start of a join constraint.
     """
 
     @staticmethod

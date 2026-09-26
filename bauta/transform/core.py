@@ -145,8 +145,8 @@ class Transform:
             return data
 
         # Most jobs configure no transforms at all, and every chunk of every
-        # job passes through here: without this, each one was copied to lists
-        # and back to tuples to change nothing.
+        # job passes through here, so a chunk with nothing to do is returned
+        # as it is.
         if not self._transformsByIndex:
             return data
 

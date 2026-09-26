@@ -1,15 +1,11 @@
-"""Transformer functions that ship with the package.
-
-Referenced from a job's sourceQueryColumnTransforms the same way any other
-transformer is -- by import path -- so nothing here is privileged:
+"""Transformer functions that ship with the package, referenced from a job's
+sourceQueryColumnTransforms by import path, as your own are:
 
     sourceQueryColumnTransforms:
       amount:
       - bauta.builtinTransforms:currency
       name:
       - bauta.builtinTransforms:truncate(50)
-
-Nothing here is privileged: your own module is referenced the same way.
 
 Each passes NULL through -- except defaultIfNull -- and raises on a value it
 can't convert rather than guessing.

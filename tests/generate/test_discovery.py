@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 import yaml
 
-from bauta.configuration import Configuration, DatabaseConnectionConfig, DatabaseType, DataJobsFile, expandEnvironmentVariables
+from bauta.configuration import Configuration, connectionConfig, DatabaseType, DataJobsFile, expandEnvironmentVariables
 from bauta.database import Database
 from bauta.database.dialects import ColumnCategory, ForeignKey
 from bauta.generate.discovery import JobDraft, keyReferences, proposeTable, renderJobs, suggestColumn
@@ -118,7 +118,7 @@ def sampleDatabase(tmp_path):
     connection.commit()
     connection.close()
 
-    settings = DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(tmp_path / 'sample.db'))
+    settings = connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'sample.db'))
     with Database(connectionSettings=settings) as database:
         yield database
 
@@ -152,6 +152,12 @@ def test_a_predecessor_is_named_as_its_own_job_is():
     drafts = [JobDraft('orders', 'SELECT 1', [], None), JobDraft('Orders', 'SELECT 1', ['orders'], None)]
 
     assert '    - maskOrders\n' in renderJobs(drafts, 'prod', 'staging', [])
+
+
+def test_masking_duckdb_in_place_warns_that_a_table_in_a_foreign_key_cannot_be_swapped():
+    text = renderJobs([JobDraft('orders', 'SELECT 1', [], None)], 'lake', 'lake', [], targetType=DatabaseType.DUCKDB)
+
+    assert 'DuckDB cannot swap a table in a foreign key' in text
 
 
 def test_rendered_jobs_are_valid_configuration_and_carry_their_reasons(sampleDatabase, monkeypatch):

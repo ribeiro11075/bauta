@@ -12,7 +12,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from ..configuration import DatabaseConnectionConfig, DataJobConfig
+from ..configuration import ConnectionConfig, DataJobConfig
 from ..log import LOGGER_NAME, ConnectionForwarder, forwardToConnection, handleForwardedRecord
 from ..masking import setMaskingThreads
 from .dependencyGraph import JobOutcome, JobStatus
@@ -52,14 +52,14 @@ def _exitWhenOrphaned(parentAlive: Any) -> None:
     """Ends this process the moment the run that started it is gone.
 
     `parentAlive` is a pipe the parent holds the other end of and never writes
-    to, so it reads end-of-file exactly when the parent dies -- including under
-    SIGKILL, which runs none of the parent's cleanup and used to leave the job
-    loading rows and writing run state for as long as its query lasted. The run
-    lock dies with the parent, so the next `bauta run` would start alongside it
-    and the two would load over each other.
+    to, so it reads end-of-file exactly when the parent dies -- including
+    under SIGKILL, which runs none of the parent's cleanup. The run lock dies
+    with the parent, so a job left running would load alongside the next
+    `bauta run`.
 
     os._exit, not sys.exit: an orphan must stop writing now, not unwind. Its
-    connections die with it, so each server rolls back what it hadn't committed.
+    connections die with it, so each server rolls back what it hadn't
+    committed.
     """
 
     try:
@@ -83,7 +83,7 @@ def _initializeWorker(connection: Any, parentAlive: Any, logLevel: int) -> Conne
 
 
 def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobConfig: DataJobConfig,
-                databaseConfiguration: Dict[str, DatabaseConnectionConfig], memory: MemoryBackend, maskingThreads: int = 1) -> None:
+                connectionConfiguration: Dict[str, ConnectionConfig], memory: MemoryBackend, maskingThreads: int = 1) -> None:
     """The whole life of one job's process: run the job, and send its log
     records and then its outcome back on `connection`, which it alone writes to.
 
@@ -95,7 +95,7 @@ def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobC
     setMaskingThreads(maskingThreads)
 
     try:
-        forwarder.send('outcome', _runDataJob(job, jobConfig, databaseConfiguration, memory))
+        forwarder.send('outcome', _runDataJob(job, jobConfig, connectionConfiguration, memory))
     finally:
         # After the outcome is sent, so closing never delays it.
         memory.close()
@@ -110,7 +110,7 @@ class _JobProcess:
     The child holds the only sending end, so its death shows up as end-of-file.
     """
 
-    def __init__(self, job: str, jobConfig: DataJobConfig, databaseConfiguration: Dict[str, DatabaseConnectionConfig],
+    def __init__(self, job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig],
                  memory: MemoryBackend, logLevel: int, maskingThreads: int = 1) -> None:
         self.job = job
         self.startedAt = time.time()
@@ -125,7 +125,7 @@ class _JobProcess:
         childEnd, self._alive = PROCESS_CONTEXT.Pipe(duplex=False)
         self.process = PROCESS_CONTEXT.Process(
             target=_jobProcess, name='bauta {}'.format(job), daemon=True,
-            args=(sendingEnd, childEnd, logLevel, job, jobConfig, databaseConfiguration, memory, maskingThreads))
+            args=(sendingEnd, childEnd, logLevel, job, jobConfig, connectionConfiguration, memory, maskingThreads))
         self.process.start()
         sendingEnd.close()
         childEnd.close()

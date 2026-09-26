@@ -1,4 +1,4 @@
-"""The configuration's pydantic models -- database aliases, jobs, discovery
+"""The configuration's pydantic models -- connection aliases, jobs, discovery
 rules -- and the validation that turns loaded YAML into them.
 """
 from __future__ import annotations
@@ -8,7 +8,7 @@ import re
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple, Type, TypeVar, Union
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, TypeAdapter, ValidationError, field_validator, model_validator
 
 from ..masking import changesValues, policyFor, validateColumnPolicy, validateKey
 from .environment import ConfigurationError, runPasswordCommand, splitPasswordCommand
@@ -84,6 +84,11 @@ class DatabaseType(str, Enum):
     MSSQL = 'mssql'
     SQLITE = 'sqlite'
     MARIADB = 'mariadb'
+    DUCKDB = 'duckdb'
+
+
+# The databases that run in this process, from a file, with no server or login.
+EMBEDDED_TYPES = frozenset({DatabaseType.SQLITE, DatabaseType.DUCKDB})
 
 
 WATERMARK_PLACEHOLDER = re.compile(r'\{\{\s*watermark\s*\}\}')
@@ -98,114 +103,257 @@ class InsertStrategy(str, Enum):
 # statement as, so nothing else may get through.
 IDENTIFIER = re.compile(r'^[A-Za-z_][A-Za-z0-9_$#]*$')
 
-# The dialects that can change a session's current schema with a statement.
-# SQL Server takes the default schema from the login, and MySQL, MariaDB and
-# SQLite have no schema separate from the database.
-CURRENT_SCHEMA_TYPES = frozenset({'postgresql', 'oracle'})
 
 
-class DatabaseConnectionConfig(BaseModel):
-    """One database connection. `password` is a SecretStr, and `options` --
-    extra driver arguments, TLS above all -- are left out of the repr, since
-    they can hold secrets too. `passwordCommand` runs at every connect, for
-    expiring credentials such as IAM tokens.
+class _Connection(BaseModel):
+    """What every connection has, whatever it connects to. `options` -- extra
+    driver arguments, TLS above all -- are left out of the repr, since they
+    can hold secrets.
 
-    An unknown key is an error: a misspelled setting that was quietly ignored
-    would leave the connection behaving in some way nobody configured.
+    Each type is a model of its own, taking only the settings that type has,
+    so a setting given to the wrong type is refused rather than ignored. See
+    ConnectionConfig.
     """
 
     model_config = ConfigDict(extra='forbid')
 
     type: DatabaseType
-    database: str
-    user: Optional[str] = None
-    password: Optional[SecretStr] = None
-    host: Optional[str] = None
-    port: Optional[int] = None
-    serviceName: Optional[str] = None
-    sid: Optional[str] = None
-    passwordCommand: Optional[Union[str, List[str]]] = None
-    currentSchema: Optional[str] = None
-    # No job may read from or write to this database without masking. The line
-    # a reviewer signs: "this copy can only ever hold masked data." Unlike a
-    # job's own `unmasked`, nothing overrides it.
+    # No job may read from or write to this connection without masking. The
+    # line a reviewer signs: "this copy can only ever hold masked data." Unlike
+    # a job's own `unmasked`, nothing overrides it.
     requireMasking: bool = False
+    # The most jobs that may use this connection at once, whatever `workers`
+    # allows. None is no limit. See jobLimit.
+    maxConcurrentJobs: Optional[int] = Field(default=None, ge=1)
     options: CleanedMapping = Field(default_factory=dict, repr=False)
 
+    @model_validator(mode='before')
+    @classmethod
+    def _refuseAnotherTypesSetting(cls, value: Any) -> Any:
+        """A setting that belongs to other types is named with the types it
+        belongs to, rather than as an unknown setting.
+        """
+
+        if not isinstance(value, Mapping):
+            return value
+
+        connectionType = getattr(value.get('type'), 'value', value.get('type'))
+        problems = []
+        for name in sorted(set(value) - set(cls.model_fields)):
+            owners = sorted(owner.value for owner, model in _CONNECTION_MODELS.items() if name in model.model_fields)
+            if owners:
+                hint = '; a {} connection names its file with path'.format(connectionType) if name == 'database' and 'path' in cls.model_fields else ''
+                problems.append('{} is a setting of {} connections, not {}{}'.format(name, _listed(owners), connectionType, hint))
+
+        if problems:
+            raise ValueError('; '.join(problems))
+
+        return value
+
+    def jobLimit(self) -> Optional[int]:
+        """How many jobs may use this connection at once, or None for as many
+        as `workers` allows.
+        """
+
+        return self.maxConcurrentJobs
+
+    def plainPassword(self) -> Optional[str]:
+        """The password to connect with. Only a server connection has one."""
+
+        return None
+
     def describeTarget(self) -> str:
-        """What this connection points at, for an error that has to say so.
-
-        A driver's own message names nothing: SQLite's "unable to open database
-        file" leaves a relative path and the working directory it resolved
-        against both unsaid, which is the hard part of the failure. Never the
-        password, and never `options`, which can carry one.
+        """What this connection points at, for an error that has to say so --
+        a driver's own message names nothing. Never a password, and never
+        `options`, which can carry one.
         """
 
-        if self.type == DatabaseType.SQLITE:
-            if self.database == ':memory:':
-                return 'sqlite :memory:'
-
-            return 'sqlite file {}'.format(os.path.abspath(self.database))
-
-        where = self.host or '?'
-        if self.port:
-            where = '{}:{}'.format(where, self.port)
-
-        return '{} {} on {}'.format(self.type.value, self.serviceName or self.sid or self.database, where)
+        raise NotImplementedError
 
 
-    @model_validator(mode='after')
-    def _checkCurrentSchema(self) -> 'DatabaseConnectionConfig':
+class _CurrentSchema(BaseModel):
+    """The schema unqualified names resolve in, for the types that can set
+    one per session. Written into a session statement, so it must be a plain
+    identifier.
+    """
 
-        if self.currentSchema is None:
-            return self
+    currentSchema: Optional[str] = None
 
-        if self.type.value not in CURRENT_SCHEMA_TYPES:
-            raise ValueError('currentSchema is supported for {} only; for {}, qualify table names as schema.table instead'.format(
-                ' and '.join(sorted(CURRENT_SCHEMA_TYPES)), self.type.value))
+    @field_validator('currentSchema')
+    @classmethod
+    def _plainIdentifier(cls, currentSchema: Optional[str]) -> Optional[str]:
 
-        if not IDENTIFIER.match(self.currentSchema):
-            raise ValueError('currentSchema must be a plain identifier, got {!r}'.format(self.currentSchema))
+        if currentSchema is not None and not IDENTIFIER.match(currentSchema):
+            raise ValueError('currentSchema must be a plain identifier, got {!r}'.format(currentSchema))
 
-        return self
+        return currentSchema
 
-    @model_validator(mode='after')
-    def _requireOracleIdentifier(self) -> 'DatabaseConnectionConfig':
-        """Oracle connections need exactly one of serviceName/sid to build a DSN;
-        without this check, connect() would silently never assign self.connection.
-        """
 
-        if self.type == DatabaseType.ORACLE and not (bool(self.serviceName) ^ bool(self.sid)):
-            raise ValueError('oracle connections require exactly one of serviceName or sid')
+class _ServerConnection(_Connection):
+    """A database on a server, reached with a login. `password` is a
+    SecretStr; `passwordCommand` runs at every connect, for expiring
+    credentials such as IAM tokens. Exactly one of the two.
+    """
 
-        return self
-
+    host: str
+    port: Optional[int] = None
+    user: str
+    password: Optional[SecretStr] = None
+    passwordCommand: Optional[Union[str, List[str]]] = None
 
     @model_validator(mode='after')
-    def _requireNetworkCredentialsExceptSqlite(self) -> 'DatabaseConnectionConfig':
-        """Every dialect but sqlite, a local file, needs a server and a login."""
+    def _requireOnePassword(self) -> '_ServerConnection':
 
         if self.password is not None and self.passwordCommand is not None:
             raise ValueError('set password or passwordCommand, not both')
-
+        if self.password is None and not self.passwordCommand:
+            raise ValueError('{} connections need a password or a passwordCommand'.format(self.type.value))
         if self.passwordCommand is not None:
             splitPasswordCommand(self.passwordCommand)
 
-        if self.type != DatabaseType.SQLITE and (self.user is None or self.host is None or (self.password is None and not self.passwordCommand)):
-            raise ValueError('user, host, and a password or passwordCommand are required for every database type except sqlite')
-
         return self
 
-
     def plainPassword(self) -> Optional[str]:
-        """The password to connect with -- running passwordCommand, if that's
-        how it is configured, so call it only when about to connect.
+        """Runs passwordCommand, if that's how it is configured, so call it
+        only when about to connect.
         """
 
         if self.passwordCommand:
             return runPasswordCommand(self.passwordCommand)
 
         return None if self.password is None else self.password.get_secret_value()
+
+    def _name(self) -> str:
+
+        return getattr(self, 'database')
+
+    def describeTarget(self) -> str:
+
+        where = self.host if not self.port else '{}:{}'.format(self.host, self.port)
+
+        return '{} {} on {}'.format(self.type.value, self._name(), where)
+
+
+class PostgreSQLConnection(_ServerConnection, _CurrentSchema):
+
+    type: Literal[DatabaseType.POSTGRESQL] = DatabaseType.POSTGRESQL
+    database: str
+
+
+class MySQLConnection(_ServerConnection):
+
+    type: Literal[DatabaseType.MYSQL] = DatabaseType.MYSQL
+    database: str
+
+
+class MariaDBConnection(_ServerConnection):
+
+    type: Literal[DatabaseType.MARIADB] = DatabaseType.MARIADB
+    database: str
+
+
+class MSSQLConnection(_ServerConnection):
+    """SQL Server takes the default schema from the login, so it has no
+    currentSchema; qualify names as schema.table instead.
+    """
+
+    type: Literal[DatabaseType.MSSQL] = DatabaseType.MSSQL
+    database: str
+
+
+class OracleConnection(_ServerConnection, _CurrentSchema):
+    """Reached by service name or SID, exactly one of them; Oracle has no
+    database name to give.
+    """
+
+    type: Literal[DatabaseType.ORACLE] = DatabaseType.ORACLE
+    serviceName: Optional[str] = None
+    sid: Optional[str] = None
+
+    @model_validator(mode='after')
+    def _requireOneIdentifier(self) -> 'OracleConnection':
+
+        if not (bool(self.serviceName) ^ bool(self.sid)):
+            raise ValueError('oracle connections require exactly one of serviceName or sid')
+
+        return self
+
+    def _name(self) -> str:
+
+        return self.serviceName or self.sid or '?'
+
+
+class _FileConnection(_Connection):
+    """A database in a file this process opens, with no server or login.
+    `path` is the file, or `:memory:`.
+    """
+
+    path: str
+
+    def describeTarget(self) -> str:
+        """The absolute path: a driver's own "unable to open database file"
+        leaves a relative path and the directory it resolved against unsaid,
+        which is the hard part of the failure.
+        """
+
+        if self.path == ':memory:':
+            return '{} :memory:'.format(self.type.value)
+
+        return '{} file {}'.format(self.type.value, os.path.abspath(self.path))
+
+
+class SQLiteConnection(_FileConnection):
+    """SQLite has no schema separate from the file, so no currentSchema."""
+
+    type: Literal[DatabaseType.SQLITE] = DatabaseType.SQLITE
+
+
+class DuckDBConnection(_FileConnection, _CurrentSchema):
+    """DuckDB lets one process at a time open a file, and every job is a
+    process of its own, so one job at a time uses it.
+    """
+
+    type: Literal[DatabaseType.DUCKDB] = DatabaseType.DUCKDB
+
+    @model_validator(mode='after')
+    def _refuseConcurrentJobs(self) -> 'DuckDBConnection':
+
+        if self.maxConcurrentJobs is not None and self.maxConcurrentJobs > 1:
+            raise ValueError('maxConcurrentJobs cannot be above 1 for duckdb: DuckDB lets one process at a time open a file, and every job '
+                             'runs in a process of its own')
+
+        return self
+
+    def jobLimit(self) -> Optional[int]:
+
+        return 1
+
+
+_CONNECTION_MODELS: Dict[DatabaseType, Type[_Connection]] = {
+    DatabaseType.POSTGRESQL: PostgreSQLConnection, DatabaseType.MYSQL: MySQLConnection, DatabaseType.MARIADB: MariaDBConnection,
+    DatabaseType.MSSQL: MSSQLConnection, DatabaseType.ORACLE: OracleConnection, DatabaseType.SQLITE: SQLiteConnection,
+    DatabaseType.DUCKDB: DuckDBConnection,
+    }
+
+# One connection in connections.yaml: the model its `type` names.
+ConnectionConfig = Annotated[Union[PostgreSQLConnection, MySQLConnection, MariaDBConnection, MSSQLConnection, OracleConnection,
+                                   SQLiteConnection, DuckDBConnection], Field(discriminator='type')]
+
+_CONNECTION_ADAPTER: 'TypeAdapter[ConnectionConfig]' = TypeAdapter(ConnectionConfig)
+
+
+def _listed(names: Sequence[str]) -> str:
+
+    return names[0] if len(names) == 1 else '{} and {}'.format(', '.join(names[:-1]), names[-1])
+
+
+def connectionConfig(**settings: Any) -> ConnectionConfig:
+    """One connection from its settings, as connections.yaml would give them,
+    validated into the model its `type` names. Invalid settings raise
+    ConfigurationError, worded as for connections.yaml.
+    """
+
+    return Configuration.validateConnection(settings, '{} connection settings'.format(getattr(settings.get('type'), 'value', settings.get('type'))))
 
 
 class BaseJobConfig(BaseModel):
@@ -290,11 +438,11 @@ def _names(table: str) -> Tuple[str, str]:
 
 
 class DataJobConfig(BaseJobConfig):
-    sourceDatabase: str
+    sourceConnection: str
     sourceQuery: str
     targetColumns: CleanedStringList = Field(default_factory=list)
     sourceQueryColumnTransforms: CleanedListMapping = Field(default_factory=dict)
-    targetDatabase: str
+    targetConnection: str
     targetTableStage: Optional[str] = None
     targetTableFinal: str
     insertStrategy: InsertStrategy
@@ -509,13 +657,13 @@ class DiscoveryRulesFile(BaseModel):
 
 
 class TableLocation(BaseModel):
-    """A table in one of database.yaml's aliases, to keep run state, history or
+    """A table in one of connections.yaml's aliases, to keep run state, history or
     manifests in rather than a file. `table` defaults per use.
     """
 
     model_config = ConfigDict(extra='forbid')
 
-    database: str = Field(min_length=1)
+    connection: str = Field(min_length=1)
     table: Optional[str] = Field(default=None, min_length=1)
 
 
@@ -527,7 +675,7 @@ StorageLocation = Union[Annotated[str, Field(min_length=1)], TableLocation]
 # only: which databases, how rows are written, and the retry and timeout
 # settings. A job that names any of these itself keeps its own value.
 DEFAULTABLE_JOB_FIELDS = frozenset({
-    'active', 'refresh', 'sourceDatabase', 'targetDatabase', 'insertStrategy',
+    'active', 'refresh', 'sourceConnection', 'targetConnection', 'insertStrategy',
     'chunkSize', 'retries', 'retryDelaySeconds', 'timeoutSeconds',
     })
 
@@ -542,7 +690,6 @@ MASKING_KEY = 'masking'
 
 def _checkDefaultsKeys(defaults: Mapping[str, Any]) -> None:
     """Rejects a setting `defaults:` may not supply, naming what it may."""
-
     unknown = sorted(set(defaults) - DEFAULTABLE_JOB_FIELDS - {MASKING_KEY})
     if unknown:
         raise ValueError('{} cannot be set in defaults: {}. defaults may set {}, and masking.key'.format(
@@ -608,7 +755,7 @@ class DataJobsFile(BaseModel):
     # each job starts with the jobs running alongside it. See
     # masking.maskingThreadsFor and runner._runCycle.
     maskingThreads: Union[Literal['auto'], Annotated[int, Field(ge=1)]] = 1
-    # Tables no job copies, on purpose: database alias -> table -> why. What
+    # Tables no job copies, on purpose: connection alias -> table -> why. What
     # `bauta coverage` reads, so a table left out is a decision on the page
     # rather than something nobody noticed.
     acknowledged: Dict[str, Dict[str, Annotated[str, Field(min_length=1)]]] = Field(default_factory=dict)
@@ -692,17 +839,63 @@ class Configuration:
         try:
             return schema.model_validate(rawConfiguration)
         except ValidationError as error:
-            messages = [f'{".".join(str(part) for part in issue["loc"])}: {issue["msg"]}' for issue in error.errors()]
-            raise ConfigurationError(f'Invalid configuration in {sourceDescription}:\n' + '\n'.join(messages)) from error
+            raise Configuration._invalid(error, sourceDescription) from error
 
 
     @staticmethod
-    def validateDatabaseConfiguration(rawConfiguration: Dict[str, Any]) -> Dict[str, DatabaseConnectionConfig]:
+    def _invalid(error: ValidationError, sourceDescription: str, skipLocation: int = 0) -> ConfigurationError:
+        """`skipLocation` leaves out the leading parts of each location, such as
+        the name of the union member a connection was validated as.
+        """
 
-        return {
-            alias: Configuration._validate(DatabaseConnectionConfig, connectionSettings, f'database configuration -> {alias}')
+        messages = []
+        for issue in error.errors():
+            where = '.'.join(str(part) for part in issue['loc'][skipLocation:])
+            message = issue['msg'][len('Value error, '):] if issue['msg'].startswith('Value error, ') else issue['msg']
+            messages.append('{}: {}'.format(where, message) if where else message)
+
+        return ConfigurationError(f'Invalid configuration in {sourceDescription}:\n' + '\n'.join(messages))
+
+
+    @staticmethod
+    def validateConnection(rawConnection: Any, sourceDescription: str) -> ConnectionConfig:
+        """One connection, as the model its `type` names. The union's own
+        location -- the type's name -- is left out of each message, which
+        names the setting alone.
+        """
+
+        if isinstance(rawConnection, Mapping) and rawConnection.get('type') not in {connectionType.value for connectionType in DatabaseType}:
+            raise ConfigurationError('Invalid configuration in {}:\ntype: {!r} is not a connection type; choose from {}'.format(
+                sourceDescription, rawConnection.get('type'), ', '.join(sorted(connectionType.value for connectionType in DatabaseType))))
+
+        try:
+            return _CONNECTION_ADAPTER.validate_python(rawConnection)
+        except ValidationError as error:
+            raise Configuration._invalid(error, sourceDescription, skipLocation=1) from error
+
+
+    @staticmethod
+    def validateConnectionConfiguration(rawConfiguration: Dict[str, Any]) -> Dict[str, ConnectionConfig]:
+        """Two DuckDB aliases for one file are refused: each would count its
+        jobs separately, and two jobs would open the file at once.
+        """
+
+        connections = {
+            alias: Configuration.validateConnection(connectionSettings, f'connections.yaml -> {alias}')
             for alias, connectionSettings in (rawConfiguration or {}).items() if not isAnchorKey(alias)
             }
+
+        files: Dict[str, List[str]] = {}
+        for alias, settings in connections.items():
+            if isinstance(settings, DuckDBConnection) and settings.path != ':memory:':
+                files.setdefault(os.path.realpath(settings.path), []).append(alias)
+
+        shared = ['{} all name {}'.format(', '.join(aliases), path) for path, aliases in sorted(files.items()) if len(aliases) > 1]
+        if shared:
+            raise ConfigurationError('Invalid database configuration: DuckDB lets one process at a time open a file, and one job at a time '
+                                     'runs per connection, so give each file one alias: ' + '; '.join(shared))
+
+        return connections
 
 
     @staticmethod
@@ -719,24 +912,24 @@ class Configuration:
 
 
     @staticmethod
-    def validateJobGraph(jobs: Mapping[str, BaseJobConfig], databaseAliases: Optional[Set[str]] = None,
-                         databases: Optional[Mapping[str, DatabaseConnectionConfig]] = None) -> None:
-        """`databases` gives the aliases and their settings, so a database that
-        requires masking can refuse a job that doesn't mask. `databaseAliases`
+    def validateJobGraph(jobs: Mapping[str, BaseJobConfig], connectionAliases: Optional[Set[str]] = None,
+                         connections: Optional[Mapping[str, ConnectionConfig]] = None) -> None:
+        """`connections` gives the aliases and their settings, so a connection that
+        requires masking can refuse a job that doesn't mask. `connectionAliases`
         is the names alone, for a caller that has nothing more.
         """
 
-        if databases is not None and databaseAliases is None:
-            databaseAliases = set(databases)
+        if connections is not None and connectionAliases is None:
+            connectionAliases = set(connections)
 
         problems: List[str] = []
 
         for jobName, job in jobs.items():
 
-            if databases is not None and isinstance(job, DataJobConfig) and job.masking is None:
-                for setting in ('sourceDatabase', 'targetDatabase'):
+            if connections is not None and isinstance(job, DataJobConfig) and job.masking is None:
+                for setting in ('sourceConnection', 'targetConnection'):
                     alias = getattr(job, setting)
-                    connection = databases.get(alias)
+                    connection = connections.get(alias)
                     if connection is not None and connection.requireMasking:
                         problems.append('{}: {} "{}" is configured with requireMasking, and this job has no masking policy. '
                                         'Add one naming every column sourceQuery returns -- `keep` for the ones that need no '
@@ -746,11 +939,11 @@ class Configuration:
                 if predecessor not in jobs:
                     problems.append(f'{jobName}: predecessor "{predecessor}" is not a known job')
 
-            if databaseAliases is not None and isinstance(job, DataJobConfig):
-                if job.sourceDatabase not in databaseAliases:
-                    problems.append(f'{jobName}: sourceDatabase "{job.sourceDatabase}" is not a known database alias')
-                if job.targetDatabase not in databaseAliases:
-                    problems.append(f'{jobName}: targetDatabase "{job.targetDatabase}" is not a known database alias')
+            if connectionAliases is not None and isinstance(job, DataJobConfig):
+                if job.sourceConnection not in connectionAliases:
+                    problems.append(f'{jobName}: sourceConnection "{job.sourceConnection}" is not a known connection alias')
+                if job.targetConnection not in connectionAliases:
+                    problems.append(f'{jobName}: targetConnection "{job.targetConnection}" is not a known connection alias')
 
         cycle = findCycle({jobName: job.predecessors for jobName, job in jobs.items()})
         if cycle:

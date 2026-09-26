@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import List, Mapping, Optional, Sequence, Tuple
 
-from ..configuration import ConfigurationError, DatabaseConnectionConfig, DataJobConfig, DataJobsFile, InsertStrategy
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, InsertStrategy
 from ..database import Database
 from ..log import LOGGER_NAME
 from ..masking import changesValues, keyFingerprint, maskingImplementation, policyFor, splitMaskingIdentity
@@ -32,7 +32,7 @@ def _maskedPrimaryKeyColumns(jobConfig: DataJobConfig, primaryKeyColumns: Sequen
 
 
 def _refuseAcceptedKeyChangeThatWouldDuplicateRows(changed: Sequence[Tuple[str, DataJobConfig]],
-                                                   databaseConfiguration: Mapping[str, DatabaseConnectionConfig]) -> None:
+                                                   connectionConfiguration: Mapping[str, ConnectionConfig]) -> None:
     """--accept-key-change is safe only where the masked rows still match the
     ones already loaded. Where the policy masks the target's primary key, they
     cannot: the run inserts a second generation of rows beside the first, and
@@ -45,7 +45,7 @@ def _refuseAcceptedKeyChangeThatWouldDuplicateRows(changed: Sequence[Tuple[str, 
     refused = []
 
     for name, jobConfig in changed:
-        settings = databaseConfiguration.get(jobConfig.targetDatabase)
+        settings = connectionConfiguration.get(jobConfig.targetConnection)
         if settings is None:
             continue
         try:
@@ -68,7 +68,7 @@ def _refuseAcceptedKeyChangeThatWouldDuplicateRows(changed: Sequence[Tuple[str, 
 
 
 def _requireUnchangedMaskingKeys(jobsFile: DataJobsFile, memory: MemoryBackend, acceptKeyChange: bool,
-                                 databaseConfiguration: Optional[Mapping[str, DatabaseConnectionConfig]] = None) -> None:
+                                 connectionConfiguration: Optional[Mapping[str, ConnectionConfig]] = None) -> None:
     """Refuses to run an upsert job whose masking key changed since it last
     completed: its target's existing rows would no longer join with new ones.
     A swap job replaces its whole target, so it isn't checked.
@@ -112,8 +112,8 @@ def _requireUnchangedMaskingKeys(jobsFile: DataJobsFile, memory: MemoryBackend, 
         return
 
     if acceptKeyChange:
-        if databaseConfiguration is not None:
-            _refuseAcceptedKeyChangeThatWouldDuplicateRows(changedJobs, databaseConfiguration)
+        if connectionConfiguration is not None:
+            _refuseAcceptedKeyChangeThatWouldDuplicateRows(changedJobs, connectionConfiguration)
         logger.warning('Masking key changed for {}; continuing, as acknowledged'.format(', '.join(changed)))
         return
 

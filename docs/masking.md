@@ -31,9 +31,9 @@ Add a `masking` section to any data job:
 ```yaml
 maskCustomers:
   active: true
-  sourceDatabase: prod
+  sourceConnection: prod
   sourceQuery: select * from customers
-  targetDatabase: staging
+  targetConnection: staging
   targetTableFinal: customers
   insertStrategy: upsert
   chunkSize: 5000
@@ -325,9 +325,9 @@ To mask a table where it stands, make the source and target the same and load th
 
 ```yaml
 maskCustomersInPlace:
-  sourceDatabase: staging
+  sourceConnection: staging
   sourceQuery: select * from customers
-  targetDatabase: staging
+  targetConnection: staging
   targetTableStage: customers_masked_stage   # same shape, created beforehand
   targetTableFinal: customers
   insertStrategy: swap
@@ -357,8 +357,8 @@ Every run then writes a record of what was masked, how, and under which key fing
     {
       "job": "maskCustomers",
       "status": "completed",
-      "sourceDatabase": "prod",
-      "targetDatabase": "staging",
+      "sourceConnection": "prod",
+      "targetConnection": "staging",
       "targetTable": "customers",
       "keyFingerprint": "d5930cf83dea",
       "rowCount": 48210,
@@ -395,11 +395,11 @@ A file is replaced by each run. To keep every run's manifest, or to keep them wi
 
 ```yaml
 manifest:
-  database: warehouse           # an alias in database.yaml
+  connection: warehouse         # an alias in connections.yaml
   table: audit.bauta_manifest   # optional; bauta_manifest by default
 ```
 
-or `--manifest-database ALIAS` for one run. Each manifest is stored exactly as it would be written to a file, in 2000-character pieces so one table definition fits every database, under a new run id that the log line names. The table must exist first: [operations.md](operations.md#tables) has its definition.
+or `--manifest-connection ALIAS` for one run. Each manifest is stored exactly as it would be written to a file, in 2000-character pieces so one table definition fits every database, under a new run id that the log line names. The table must exist first: [operations.md](operations.md#tables) has its definition.
 
 `bauta verify-manifest` with no file reads the latest manifest from there, and `--run RUN_ID` picks an earlier one.
 
@@ -413,7 +413,7 @@ Every manifest carries a SHA-256 digest of its own content, which shows it hasn'
 export BAUTA_MANIFEST_KEY=...      # at least 16 characters; not the masking key
 bauta run
 
-bauta verify-manifest       # the manifest jobs.yaml names; or a FILE, or --manifest-database ALIAS
+bauta verify-manifest       # the manifest jobs.yaml names; or a FILE, or --manifest-connection ALIAS
 ```
 
 `verify-manifest` exits 0 for an intact manifest (saying whether it was signed), and 1 if it was altered or its signature doesn't match. With `BAUTA_MANIFEST_KEY` set, an unsigned manifest exits 1 too: otherwise an edited manifest could pass by dropping its signature and recomputing its digest. A signed manifest records its key's fingerprint; verifying it without that key exits 2 rather than half-answering. `--manifest-key-variable` reads the key from another variable, on both commands.
@@ -465,7 +465,7 @@ The check on `swap` jobs reads only the keys the target declares, since a key on
 
 ```
 bauta coverage
-bauta coverage --database prod --schema sales
+bauta coverage --connection prod --schema sales
 bauta coverage --format json
 ```
 
@@ -500,7 +500,7 @@ For a table nothing covers, `coverage` reads its column names and marks the ones
 ## Proposing a policy: `discover`
 
 ```
-bauta discover --database prod --table customers --table orders --target staging --output proposal.yaml
+bauta discover --connection prod --table customers --table orders --target staging --output proposal.yaml
 ```
 
 For each table, `discover` reads the schema and samples rows (`--sample`, default 1000), then writes a `jobs.yaml` with a proposed policy for every column. Each proposal carries a comment saying what it was based on:
@@ -594,7 +594,7 @@ The same rules, yours included, decide which unmasked columns [`audit`](#reviewi
 ## Copying a subset: `subset`
 
 ```
-bauta subset --database prod --target staging \
+bauta subset --connection prod --target staging \
     --root customers --where "created_at >= '2026-01-01'" --mask --output subset/jobs.yaml
 ```
 
@@ -603,7 +603,7 @@ bauta subset --database prod --target staging \
 - **Down** (skip this with `--no-children`): rows that reference the selected rows. A customer's orders, and those orders' line items.
 - **Up** (always): rows that anything selected references. The products those line items point at, and whatever those products point at in turn.
 
-Each job's `sourceQuery` is plain SQL: a `WITH` clause defining each table's selection once, joined by `EXISTS`. It runs unchanged on all six databases (MySQL from 8.0, MariaDB from 10.2). On PostgreSQL and SQLite the selections are marked `MATERIALIZED`, so each is computed once. Jobs load parents before children, so the target can keep its foreign keys enabled. `--mask` adds a proposed policy for each table, as `discover` does.
+Each job's `sourceQuery` is plain SQL: a `WITH` clause defining each table's selection once, joined by `EXISTS`. It runs unchanged on all seven databases (MySQL from 8.0, MariaDB from 10.2). On PostgreSQL, SQLite and DuckDB the selections are marked `MATERIALIZED`, so each is computed once. Jobs load parents before children, so the target can keep its foreign keys enabled. `--mask` adds a proposed policy for each table, as `discover` does.
 
 **Cycles** can't be followed in SQL that works on every database. This includes a table that references itself, like `employees.manager_id`. `subset` reports the cycle and stops. Break it with `--ignore-foreign-key employees.manager_id`.
 
@@ -621,7 +621,7 @@ The target's tables must already exist. `subset` generates jobs; it doesn't crea
 ### `schema`: creating the target's tables
 
 ```
-bauta schema --database prod --target staging --table customers --related --apply
+bauta schema --connection prod --target staging --table customers --related --apply
 ```
 
 `schema` reads the source's tables and creates matching tables in the target, **in the target's own dialect**: an Oracle `NUMBER(12,2)` becomes `NUMERIC(12,2)` on PostgreSQL, and `NVARCHAR(MAX)` on SQL Server becomes `CLOB` on Oracle.
@@ -643,8 +643,9 @@ A few conversions change what a column can hold, and the generated SQL notes eac
 | any `TIME` | Oracle | `VARCHAR2(32 CHAR)`, since Oracle has no time-of-day type; wide enough for the day-long values MySQL's `TIME` allows |
 | a time-zone-aware timestamp | Oracle | `TIMESTAMP WITH TIME ZONE`, which keeps the offset of the session that loads the row, not the source's, so the instant moves unless that session is UTC |
 | SQLite `INTEGER` | anything else | that target's `INT`, which is narrower: SQLite stores an integer in up to 8 bytes whatever the column is called |
-| MySQL `INT UNSIGNED` | anything | a signed 32-bit integer; values above 2147483647 are refused as they load |
-| MySQL `BIGINT UNSIGNED` | anything | a signed 64-bit integer; values above 9223372036854775807 are refused as they load |
+| MySQL or MariaDB unsigned integers | anything | the next signed type up, which holds the whole range: `SMALLINT UNSIGNED` an `INTEGER`, `INT UNSIGNED` a `BIGINT`. No database has a signed integer for all of `BIGINT UNSIGNED` or DuckDB's `UBIGINT`, so those become `DECIMAL(20,0)` |
+| DuckDB `HUGEINT` | anything | a decimal of 39 digits, which DuckDB, Oracle and SQL Server clamp to 38; a value past that is refused as it loads |
+| DuckDB `LIST`, `STRUCT`, `MAP` | anything else | JSON, loaded as JSON text; into PostgreSQL, `JSONB` |
 | any decimal | sqlite | `TEXT`, which keeps every digit. SQLite has no exact decimal type, and a column declared `DECIMAL(p,s)` holds a float: it would keep about 15 digits and round the rest away as the row is written |
 | a decimal declaring no precision | mysql, mariadb, mssql | `DECIMAL(65,30)` or `DECIMAL(38,10)`, which round anything longer |
 | a decimal wider than the target allows | mysql, mariadb, oracle, mssql | the widest that target has, so whole digits or decimal places are lost |
@@ -653,9 +654,7 @@ A few conversions change what a column can hold, and the generated SQL notes eac
 | a boolean stored as an integer (SQLite, MySQL, Oracle `NUMBER(1)`) | anything | a small integer, since PostgreSQL won't load an integer into `BOOLEAN` |
 | a type it doesn't recognize | anything | text |
 
-Both are noted on the table `schema` creates, since MySQL and MariaDB report `unsigned` as part of the column's type. No target has an unsigned integer, so the values above a signed one's range are refused as they load rather than wrapping.
-
-Every combination of the six databases is tested: tables are created on the target and a copy then loads into them.
+Every combination of the seven databases is tested, twice: tables are created on the target and a copy then loads into them, once for ordinary columns, and once for each source's own UUID, time of day, JSON, binary, time-zone-aware timestamp and unsigned integer, which come back as the same values.
 
 ### `verify-references`: checking the copy's references
 
@@ -702,8 +701,8 @@ Between `clear` and the end of the run, the copy is empty or partly loaded. For 
 Some tables can't be copied at all, even masked, and a new system may have no production data yet. `synthesize` fills existing tables with generated rows, using nothing but the target's own catalog:
 
 ```
-bauta synthesize --database staging --table customers:1000 --table orders:5000 --dry-run
-bauta synthesize --database staging --table customers:1000 --table orders:5000 --yes
+bauta synthesize --connection staging --table customers:1000 --table orders:5000 --dry-run
+bauta synthesize --connection staging --table customers:1000 --table orders:5000 --yes
 ```
 
 ```

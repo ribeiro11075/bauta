@@ -41,7 +41,7 @@ def jobsReading(table: str, alias: str, jobs: Mapping[str, DataJobConfig]) -> Li
     """The jobs that read `table` from `alias`, by naming it in sourceQuery."""
 
     return sorted(name for name, job in jobs.items()
-                  if job.sourceDatabase == alias and _mentions(job.sourceQuery, table))
+                  if job.sourceConnection == alias and _mentions(job.sourceQuery, table))
 
 
 def coverageReport(alias: str, tables: Sequence[str], jobs: Mapping[str, DataJobConfig],

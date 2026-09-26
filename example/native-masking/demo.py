@@ -179,7 +179,7 @@ def maskWith(name: str, table: str, native: bool, overlapped: bool, threads: str
     os.environ['BAUTA_PIPELINE'] = '1' if overlapped else '0'
     os.environ['BAUTA_MASKING_THREADS'] = threads
 
-    databases = Configuration.validateDatabaseConfiguration(loadConfiguration('database.yaml'))
+    databases = Configuration.validateConnectionConfiguration(loadConfiguration('connections.yaml'))
     jobsFile = Configuration.validateJobConfiguration(loadConfiguration(jobsFileName), DataJobsFile)
     memory = FileMemory(memoryFile=workingDirectory / 'memory-{}.yaml'.format(name))
 
@@ -196,7 +196,7 @@ def maskWith(name: str, table: str, native: bool, overlapped: bool, threads: str
     showCommand(command + ['--memory', memory.memoryFile, '--log', workingDirectory / 'demo.log', '--quiet'], environment)
 
     started = time.perf_counter()
-    result = runDataJobs(jobsFile=jobsFile, databaseConfiguration=databases, memory=memory,
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=databases, memory=memory,
                          logFile=workingDirectory / 'demo.log', logLevel=logging.INFO)
     seconds = time.perf_counter() - started
 

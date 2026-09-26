@@ -7,7 +7,7 @@ import argparse
 import json
 from typing import Any, Dict, List, Mapping, Optional
 
-from ..configuration import DatabaseType
+from ..configuration import EMBEDDED_TYPES
 from ..database import Database
 from ..database.dialects import ForeignKey, bareName, unqualifiedName
 from ..log import Log
@@ -28,26 +28,26 @@ def _commandVerifyReferences(arguments: argparse.Namespace, log: Log) -> int:
 
     from ..review.references import referencesReport, renderReferences, summarize, verifyReferences
 
-    jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
     jobs = {name: job for name, job in _selectJobs(jobsFile.jobs, arguments.job, log).items() if arguments.job or job.active}
     keysByAlias: Dict[str, List[ForeignKey]] = {}
 
-    for alias in sorted({job.sourceDatabase for job in jobs.values()}):
+    for alias in sorted({job.sourceConnection for job in jobs.values()}):
         try:
-            with Database(connectionSettings=databaseConfiguration[alias]) as database:
+            with Database(connectionSettings=connectionConfiguration[alias]) as database:
                 keysByAlias[alias] = database.getForeignKeys()
         except Exception as error:
             log.logging.warning('{}: could not read foreign keys, so only the target\'s own are checked -- {}'.format(alias, describeError(error)))
 
     results = []
-    for target in sorted({job.targetDatabase for job in jobs.values()}):
-        targetJobs = [job for job in jobs.values() if job.targetDatabase == target]
+    for target in sorted({job.targetConnection for job in jobs.values()}):
+        targetJobs = [job for job in jobs.values() if job.targetConnection == target]
         # Keyed bare, as the catalogs report names: a job naming a reserved
-        # word writes it quoted, and a quoted key matched nothing.
+        # word writes it quoted, and a quoted key would match nothing.
         loaded = {bareName(unqualifiedName(job.targetTableFinal)).upper(): job.targetTableFinal for job in targetJobs}
-        sourceKeys = [foreignKey for alias in sorted({job.sourceDatabase for job in targetJobs} - {target})
+        sourceKeys = [foreignKey for alias in sorted({job.sourceConnection for job in targetJobs} - {target})
                       for foreignKey in keysByAlias.get(alias, [])]
-        with Database(connectionSettings=databaseConfiguration[target]) as database:
+        with Database(connectionSettings=connectionConfiguration[target]) as database:
             results.extend(verifyReferences(database, target, loaded, sourceKeys))
 
     generatedAt = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
@@ -72,12 +72,12 @@ def _commandCoverage(arguments: argparse.Namespace, log: Log) -> int:
 
     from ..review.coverage import UNCOVERED, coverageReport, jobsReading, renderCoverage
 
-    jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
     jobs = {name: job for name, job in _selectJobs(jobsFile.jobs, arguments.job, log).items() if arguments.job or job.active}
-    alias = arguments.database or _theOnlySourceDatabase(jobs)
-    _requireAlias(databaseConfiguration, alias)
+    alias = arguments.connection or _theOnlySourceConnection(jobs)
+    _requireAlias(connectionConfiguration, alias)
 
-    with Database(connectionSettings=databaseConfiguration[alias]) as database:
+    with Database(connectionSettings=connectionConfiguration[alias]) as database:
         tables = database.listTables(schema=arguments.schema)
         # Only for the tables nothing covers: the rest are already accounted
         # for, and reading every column of a whole schema is not free.
@@ -102,13 +102,13 @@ def _commandCoverage(arguments: argparse.Namespace, log: Log) -> int:
     return EXIT_SUCCESS
 
 
-def _theOnlySourceDatabase(jobs: Mapping[str, Any]) -> str:
-    """The alias every job reads from, when --database isn't given."""
+def _theOnlySourceConnection(jobs: Mapping[str, Any]) -> str:
+    """The alias every job reads from, when --connection isn't given."""
 
-    aliases = sorted({job.sourceDatabase for job in jobs.values()})
+    aliases = sorted({job.sourceConnection for job in jobs.values()})
 
     if len(aliases) != 1:
-        raise UsageError('--database is required: the jobs read from {}'.format(
+        raise UsageError('--connection is required: the jobs read from {}'.format(
             ', '.join(aliases) if aliases else 'no database'))
 
     return aliases[0]
@@ -124,7 +124,7 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
 
     from ..review.audit import auditJobs, renderAudit
 
-    jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
     jobs = _selectJobs(jobsFile.jobs, arguments.job, log)
     returnedColumns: Dict[str, List[str]] = {}
     targetColumns: Dict[str, List[str]] = {}
@@ -138,7 +138,7 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
         # what says whether it is carrying personal data (see audit._auditUnmaskedJob).
         keysByAlias: Dict[str, List[ForeignKey]] = {}
 
-        with _Connections(databaseConfiguration) as connections:
+        with _Connections(connectionConfiguration) as connections:
             for name, job in jobs.items():
                 try:
                     returnedColumns[name] = _sourceQueryColumns(job, connections)
@@ -147,16 +147,16 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
                 except Exception as error:
                     unreachable[name] = describeError(error)
 
-            for alias in sorted({job.sourceDatabase for job in jobs.values()} | {job.targetDatabase for job in jobs.values()}):
-                isSqlite = databaseConfiguration[alias].type == DatabaseType.SQLITE
+            for alias in sorted({job.sourceConnection for job in jobs.values()} | {job.targetConnection for job in jobs.values()}):
+                isLocal = connectionConfiguration[alias].type in EMBEDDED_TYPES
                 try:
                     with connections.use(alias) as database:
-                        if not isSqlite:
+                        if not isLocal:
                             encryption[alias] = database.isEncrypted()
                 except Exception as error:
                     log.logging.warning('{}: could not connect to {} to check encryption and foreign keys -- {}'.format(
-                        alias, databaseConfiguration[alias].describeTarget(), describeError(error)))
-                    if not isSqlite:
+                        alias, connectionConfiguration[alias].describeTarget(), describeError(error)))
+                    if not isLocal:
                         encryption[alias] = None
                     continue
                 try:
@@ -168,8 +168,8 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
         # The keys that apply to a copy are the target's own and those of the
         # sources it is copied from, which a target often doesn't declare.
         # Both are matched to jobs by table name.
-        for target in {job.targetDatabase for job in jobs.values()}:
-            sources = {job.sourceDatabase for job in jobs.values() if job.targetDatabase == target}
+        for target in {job.targetConnection for job in jobs.values()}:
+            sources = {job.sourceConnection for job in jobs.values() if job.targetConnection == target}
             unique: Dict[Any, ForeignKey] = {}
             for alias in [target] + sorted(sources):
                 for foreignKey in keysByAlias.get(alias, []):

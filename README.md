@@ -6,7 +6,7 @@
 - **Discovery, subsets and synthetic data:** propose a masking policy from a live schema, copy a referentially complete slice of production, create the copy's tables in whichever database it goes to, and fill tables that can't be copied with generated rows.
 - **Audit:** report what every job does with data and what a reviewer should question, and seal each run's masking manifest so it can be verified later.
 - **Provable coverage:** list every table in production and what the jobs do with each, so a table nobody wrote a job for fails the build rather than going unnoticed. A database can require that nothing reaches it unmasked.
-- **Six databases:** Oracle, SQL Server, PostgreSQL, MySQL, MariaDB and SQLite, as source or target in any combination.
+- **Seven databases:** Oracle, SQL Server, PostgreSQL, MySQL, MariaDB, SQLite and DuckDB, as source or target in any combination.
 - **Streaming:** memory stays flat however large the table, and PostgreSQL and SQL Server targets load in bulk.
 - **Fast:** a million rows of six masked columns, two of them one-to-one keys, in under 8 seconds on one core with the optional native masker, and 74 without; more cores for wide tables. Either way the masks are the same.
 - **Incremental loads:** extract only what changed since the last successful run.
@@ -30,6 +30,7 @@ pip install "bauta[postgresql,oracle]"
 | `oracle` | oracledb, in thin mode | nothing — no Oracle client |
 | `mssql` | pymssql | nothing |
 | `sqlite` | Python's own `sqlite3` | nothing |
+| `duckdb` | duckdb, with pyarrow for fast loads | nothing; one process at a time per file, see [DuckDB](docs/configuration.md#duckdb) |
 | `fpe` | cryptography, for the `fpe` masking strategy | nothing; `oracle` already brings it |
 | `native` | `bauta-rs`, the native masker (below) | nothing on Linux (x86-64, ARM) or macOS; elsewhere, [Rust](https://rustup.rs) 1.83 or newer |
 | `all` | every driver above | nothing |
@@ -46,7 +47,7 @@ mkdir configuration
 cp example/starter/configuration/*.yaml configuration/
 ```
 
-Edit `configuration/database.yaml` and `configuration/jobs.yaml` for your databases, then supply the credentials they reference:
+Edit `configuration/connections.yaml` and `configuration/jobs.yaml` for your databases, then supply the credentials they reference:
 
 ```
 export SOURCE_DB_PASSWORD=...  TARGET_DB_PASSWORD=...  MASKING_KEY=...
@@ -106,7 +107,7 @@ Every command takes these.
 
 | Flag | Default | Effect |
 | --- | --- | --- |
-| `--config DIR` | `$BAUTA_CONFIG`, else `./configuration` | Read `jobs.yaml` and `database.yaml` from this directory. |
+| `--config DIR` | `$BAUTA_CONFIG`, else `./configuration` | Read `jobs.yaml` and `connections.yaml` from this directory. |
 | `--log FILE` | none | Also write logs to this file. |
 | `--log-format json` | `text` | Write one JSON object per log line, for a collector. |
 | `--quiet` | off | Don't log to stderr. |
@@ -128,9 +129,9 @@ Each is kept in a file or in a database table, set in [`jobs.yaml`](docs/configu
 
 | What | `jobs.yaml` setting | File | Table | Without either |
 | --- | --- | --- | --- | --- |
-| **Run state**: last runs, watermarks and key fingerprints | `memory` | `--memory FILE` | `--memory-database ALIAS`, `--memory-table NAME` | `memory.yaml` beside `jobs.yaml` |
-| **History**: one record per job per cycle, for `bauta history` | `history` | `--history FILE` | `--history-database ALIAS`, `--history-table NAME` | Not recorded. |
-| **Masking manifest**: what was masked and how, sealed, for `bauta verify-manifest` | `manifest` | `--manifest FILE` | `--manifest-database ALIAS`, `--manifest-table NAME` | Not written. |
+| **Run state**: last runs, watermarks and key fingerprints | `memory` | `--memory FILE` | `--memory-connection ALIAS`, `--memory-table NAME` | `memory.yaml` beside `jobs.yaml` |
+| **History**: one record per job per cycle, for `bauta history` | `history` | `--history FILE` | `--history-connection ALIAS`, `--history-table NAME` | Not recorded. |
+| **Masking manifest**: what was masked and how, sealed, for `bauta verify-manifest` | `manifest` | `--manifest FILE` | `--manifest-connection ALIAS`, `--manifest-table NAME` | Not written. |
 
 Tables default to `bauta_memory`, `bauta_history` and `bauta_manifest`, and must exist first; [operations.md](docs/operations.md#tables) has their definitions. A manifest is signed when `$BAUTA_MANIFEST_KEY` is set.
 
@@ -140,8 +141,8 @@ A `defaults:` block in [`jobs.yaml`](docs/configuration.md#defaults) supplies wh
 
 ```yaml
 defaults:
-  sourceDatabase: prod
-  targetDatabase: staging
+  sourceConnection: prod
+  targetConnection: staging
   insertStrategy: upsert
   masking:
     key: ${MASKING_KEY}
@@ -209,7 +210,7 @@ The ones you'd set in a deployment; [operations.md](docs/operations.md#environme
 | Path | What it is |
 | --- | --- |
 | `bauta/configuration/` | reading and validating the YAML: `${NAME}` and `passwordCommand` in `environment.py`, the models in `models.py` |
-| `bauta/database/` | streaming and loading rows in `connection.py`; what differs between the six databases in `dialects/`, one module each |
+| `bauta/database/` | streaming and loading rows in `connection.py`; what differs between the seven databases in `dialects/`, one module each |
 | `bauta/jobs/` | `runner.py` runs a cycle of jobs, each in a process of its own (`workers.py`) moving rows a chunk at a time (`pipeline.py`); run state in `memory.py`, history and manifests in `reporting.py` |
 | `bauta/masking/` | the keyed hash, `Strategy` and masking plans in `core.py`, the built-in strategies in `strategies.py` |
 | `bauta/transform/` | per-column transforms, applied before masking, and the ones that ship in `builtinTransforms.py` |

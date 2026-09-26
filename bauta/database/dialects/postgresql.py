@@ -6,12 +6,12 @@ import decimal
 import hashlib
 import weakref
 import uuid
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set
 
-from ...configuration import DatabaseConnectionConfig, DatabaseType
-from .base import ColumnCategory, _OnConflictDialect, _holdsAny, _holdsOnly, durationText
+from ..driver import Connection, Cursor, native
+from ...configuration import ConnectionConfig, DatabaseType, PostgreSQLConnection
+from .base import ColumnCategory, settingsOf, _OnConflictDialect, _holdsOnly
 from .names import unqualifiedName
-
 
 
 # The types COPY is trusted with: psycopg's text dumpers spell each exactly as
@@ -21,18 +21,16 @@ from .names import unqualifiedName
 _COPYABLE = (type(None), bool, int, float, decimal.Decimal, str, datetime.date, datetime.time, uuid.UUID, bytes, bytearray, memoryview)
 
 
-def _copyIn(cursor: Any, statement: str, rows: Sequence[Sequence[Any]]) -> bool:
-    """COPY `rows` in with psycopg's own encoders, or return False without
-    sending anything if a value isn't of a type COPY is trusted with.
-
-    psycopg encodes in C: twice the speed of the Python text encoder this
-    replaced, measured against a real server, with identical rows stored.
+def _copyIn(cursor: Cursor, statement: str, rows: Sequence[Sequence[Any]]) -> bool:
+    """COPY `rows` in with psycopg's own encoders, which encode in C, or return
+    False without sending anything if a value isn't of a type COPY is trusted
+    with.
     """
 
     if not _holdsOnly(rows, _COPYABLE):
         return False
 
-    with cursor.copy(statement) as copy:
+    with native(cursor).copy(statement) as copy:
         for row in rows:
             copy.write_row(row)
 
@@ -47,7 +45,7 @@ class PostgreSQLDialect(_OnConflictDialect):
     _DATE_OIDS = {1114, 1018}
     _TEXT_OIDS = {1043, 18, 25}
 
-    def openConnection(self, settings: DatabaseConnectionConfig) -> Any:
+    def openConnection(self, settings: ConnectionConfig) -> Any:
 
         import psycopg
 
@@ -57,32 +55,35 @@ class PostgreSQLDialect(_OnConflictDialect):
         return psycopg.connect(**self.connectArguments(settings), cursor_factory=psycopg.ClientCursor)
 
 
-    def prepareSession(self, connection: Any, settings: DatabaseConnectionConfig) -> Any:
+    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Any:
 
         cursor = connection.cursor()
 
         # Only this schema, with no fallback such as `public` that catalog
         # lookups wouldn't see. Committed, or a later rollback would undo it.
-        if settings.currentSchema:
-            cursor.execute('SET search_path TO {}'.format(settings.currentSchema))
+        currentSchema = settingsOf(settings, PostgreSQLConnection).currentSchema
+        if currentSchema:
+            cursor.execute('SET search_path TO {}'.format(currentSchema))
             connection.commit()
 
         return cursor
 
 
-    def _ownConnectArguments(self, settings: DatabaseConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+
+        settings = settingsOf(settings, PostgreSQLConnection)
 
         return {'user': settings.user, 'password': password, 'host': settings.host, 'dbname': settings.database,
                 'port': settings.port}
 
 
-    def streamingCursor(self, connection: Any, chunkSize: int) -> Any:
+    def streamingCursor(self, connection: Connection, chunkSize: int) -> Any:
         """A named, server-side cursor: psycopg buffers everything through an
         unnamed one. A commit on the connection invalidates it, so the extract
         side never commits.
         """
 
-        cursor = connection.cursor(name='bauta_{}'.format(uuid.uuid4().hex))
+        cursor = native(connection).cursor(name='bauta_{}'.format(uuid.uuid4().hex))
         cursor.itersize = chunkSize
 
         return cursor
@@ -95,13 +96,14 @@ class PostgreSQLDialect(_OnConflictDialect):
 
     def supportsMaterializedSelections(self) -> bool:
         """PostgreSQL 12 and later. Without it, PostgreSQL copies a selection
-        used once into its user, and planning a 12-table subset took minutes.
+        used once into each query that uses it, which makes planning a subset
+        of many tables slow.
         """
 
         return True
 
 
-    def isEncrypted(self, cursor: Any) -> Optional[bool]:
+    def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
 
         cursor.execute('SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()')
         row = cursor.fetchone()
@@ -109,7 +111,7 @@ class PostgreSQLDialect(_OnConflictDialect):
         return None if row is None else bool(row[0])
 
 
-    def bulkInsert(self, cursor: Any, table: str, columns: List[str], rows: Sequence[Sequence[Any]]) -> bool:
+    def bulkInsert(self, cursor: Cursor, table: str, columns: List[str], rows: Sequence[Sequence[Any]]) -> bool:
         """COPY FROM STDIN: one round trip per chunk, where executemany sends
         one statement per row.
         """
@@ -124,14 +126,13 @@ class PostgreSQLDialect(_OnConflictDialect):
         self._stagingTables: 'weakref.WeakKeyDictionary[Any, Set[str]]' = weakref.WeakKeyDictionary()
 
 
-    def bulkUpsert(self, cursor: Any, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str],
+    def bulkUpsert(self, cursor: Cursor, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str],
                    rows: Sequence[Sequence[Any]]) -> bool:
         """COPY into a temporary table, then one INSERT ... ON CONFLICT from it.
 
         The table lives as long as the connection and empties at every commit,
-        so it is created by the first chunk and reused by the rest: creating
-        it every chunk cost a round trip each, about a twentieth of a chunk's
-        time on a local socket and more across a network.
+        so the first chunk creates it and the rest reuse it, sparing a round
+        trip per chunk.
         """
 
         if not _holdsOnly(rows, _COPYABLE):
@@ -139,7 +140,7 @@ class PostgreSQLDialect(_OnConflictDialect):
 
         columns = ', '.join(allColumns)
         staging = 'bauta_upsert_{}'.format(hashlib.sha1('{}|{}'.format(table, columns).encode('utf-8')).hexdigest()[:12])
-        created = self._stagingTables.setdefault(cursor.connection, set())
+        created = self._stagingTables.setdefault(native(cursor).connection, set())
         creating = staging not in created
 
         try:
@@ -229,35 +230,6 @@ class PostgreSQLDialect(_OnConflictDialect):
                 "WHERE table_schema = COALESCE({}::text, current_schema()) AND table_type = 'BASE TABLE' ORDER BY table_name")
 
 
-    def prepareValues(self, rows: List[Tuple[Any, ...]]) -> List[Tuple[Any, ...]]:
-        """Dictionaries as JSON, which is what they came from.
-
-        psycopg reads a `json` or `jsonb` column as a dict and then refuses to
-        write one back ("cannot adapt type 'dict'"), so copying a table with a
-        JSON column failed at the first chunk. A list is left alone: psycopg
-        writes one as an array, which is what a `text[]` column needs, and it
-        can't be told apart from a JSON array here. A `jsonb` column holding
-        one has to be selected as text.
-
-        Dictionaries and durations are looked for in one pass rather than the
-        base's and then this one's, for the reason given on MSSQLDialect's.
-        """
-
-        if not _holdsAny(rows, (dict, datetime.timedelta)):
-            return rows
-
-        from psycopg.types.json import Jsonb
-
-        def prepared(value: Any) -> Any:
-            if isinstance(value, dict):
-                return Jsonb(value)
-            if isinstance(value, datetime.timedelta):
-                return durationText(value)
-            return value
-
-        return [tuple(prepared(value) for value in row) for row in rows]
-
-
     def swapQueries(self, targetTable: str, stageTable: str, tempTable: str) -> List[str]:
         """Three renames in one transaction: PostgreSQL DDL is transactional, so
         a failure part-way leaves both tables as they were.
@@ -277,7 +249,7 @@ class PostgreSQLDialect(_OnConflictDialect):
         "WHERE dependency.classid = 'pg_rewrite'::regclass AND dependency.refobjid = %s::regclass "
         "AND view.oid <> dependency.refobjid AND view.relkind = 'v'")
 
-    def swap(self, cursor: Any, targetTable: str, stageTable: str, tempTable: str) -> None:
+    def swap(self, cursor: Cursor, targetTable: str, stageTable: str, tempTable: str) -> None:
         """Renames, then recreates each view on the target from its definition
         captured beforehand, since a PostgreSQL view follows the table, not the
         name. CREATE OR REPLACE keeps grants and views built on it. See "How a

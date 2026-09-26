@@ -10,7 +10,7 @@ from tests.jobConfigs import dataJob
 KEY = 'a-coverage-test-masking-key'
 
 
-_job = functools.partial(dataJob, sourceDatabase='prod', sourceQuery='select id from customers', targetDatabase='staging')
+_job = functools.partial(dataJob, sourceConnection='prod', sourceQuery='select id from customers', targetConnection='staging')
 
 
 def _states(report):
@@ -35,7 +35,7 @@ def test_a_masked_job_and_an_unmasked_one_are_told_apart():
 
 def test_a_job_reading_another_database_does_not_cover_the_table():
     """The alias matters: a table of the same name elsewhere is not this one."""
-    report = coverageReport('prod', ['customers'], {'fromWarehouse': _job(sourceDatabase='warehouse')})
+    report = coverageReport('prod', ['customers'], {'fromWarehouse': _job(sourceConnection='warehouse')})
 
     assert _states(report) == {'customers': UNCOVERED}
 

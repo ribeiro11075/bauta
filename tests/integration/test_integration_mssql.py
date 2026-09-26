@@ -37,13 +37,13 @@ def test_a_rowversion_watermark_survives_database_backed_memory(connectionSettin
     try:
         liveDatabase.alter("INSERT INTO {} (id, name) VALUES (1, 'a'), (2, 'b')".format(source))
         jobsFile = Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'job1': {
-            'active': True, 'sourceDatabase': 'db', 'targetDatabase': 'db', 'insertStrategy': 'upsert', 'chunkSize': 10,
+            'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'insertStrategy': 'upsert', 'chunkSize': 10,
             'sourceQuery': 'SELECT id, name, rv FROM {} WHERE rv > {{{{ watermark }}}}'.format(source), 'watermarkColumn': 'rv',
             'watermarkInitial': 0, 'targetTableFinal': target,
             }}}, DataJobsFile)
         with DatabaseMemory(connectionSettings=connectionSettings, table=memoryTable) as memory:
             def run():
-                result = runDataJobs(jobsFile=jobsFile, databaseConfiguration={'db': connectionSettings}, logFile=tmp_path / 'runner.log',
+                result = runDataJobs(jobsFile=jobsFile, connectionConfiguration={'db': connectionSettings}, logFile=tmp_path / 'runner.log',
                                      memory=memory, runForever=False)
                 (outcome,) = result.outcomes
                 assert outcome.error is None

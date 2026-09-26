@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from bauta.configuration import DatabaseConnectionConfig
+from bauta.configuration import connectionConfig
 from bauta.jobs.dependencyGraph import JobOutcome, JobStatus
 from bauta.jobs.reporting import (DATABASE_HISTORY_SCHEMA, DATABASE_MANIFEST_SCHEMA, DatabaseHistory, DatabaseManifests, FileHistory, historyRecords,
                              notificationPayload, notify, renderHistory)
@@ -53,7 +53,7 @@ def test_database_history_round_trips(tmp_path):
     connection = sqlite3.connect(path)
     connection.execute(DATABASE_HISTORY_SCHEMA)
     connection.close()
-    history = DatabaseHistory(DatabaseConnectionConfig(type='sqlite', database=str(path)))
+    history = DatabaseHistory(connectionConfig(type='sqlite', path=str(path)))
 
     history.append(_result(FAILED), 'run-1')
     history.append(_result(COMPLETED, SKIPPED), 'run-2')
@@ -78,7 +78,7 @@ def manifestTable(tmp_path):
     connection.execute(DATABASE_MANIFEST_SCHEMA)
     connection.close()
 
-    return DatabaseManifests(DatabaseConnectionConfig(type='sqlite', database=str(path))), path
+    return DatabaseManifests(connectionConfig(type='sqlite', path=str(path))), path
 
 
 def test_a_manifest_longer_than_a_part_is_stored_in_order_and_read_back_whole(manifestTable):

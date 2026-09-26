@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 import yaml
 
-from ..configuration import (Configuration, ConfigurationError, DatabaseConnectionConfig, DataJobConfig, DataJobsFile, StorageLocation, TableLocation,
+from ..configuration import (Configuration, ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, StorageLocation, TableLocation,
                              expandEnvironmentVariables)
 from ..database import Database
 from ..log import Log
@@ -58,6 +58,9 @@ def _loadYaml(path: Path) -> Any:
         raise UsageError('{} is not valid YAML: {}'.format(path, error)) from error
 
 
+CONNECTIONS_FILE = 'connections.yaml'
+
+
 def _configDirectory(arguments: argparse.Namespace) -> Path:
     """--config, else $BAUTA_CONFIG, else ./configuration -- so the
     common case is a bare `bauta run`.
@@ -67,13 +70,13 @@ def _configDirectory(arguments: argparse.Namespace) -> Path:
 
 
 def _resolveConfigurationPaths(arguments: argparse.Namespace) -> Tuple[Path, Path]:
-    """Explicit --jobs/--databases win; otherwise both come from the config directory."""
+    """Explicit --jobs/--connections win; otherwise both come from the config directory."""
 
     configDirectory = _configDirectory(arguments)
     jobsPath = Path(arguments.jobs) if arguments.jobs else configDirectory / 'jobs.yaml'
-    databasesPath = Path(arguments.databases) if arguments.databases else configDirectory / 'database.yaml'
+    connectionsPath = Path(arguments.connections) if arguments.connections else configDirectory / CONNECTIONS_FILE
 
-    return jobsPath, databasesPath
+    return jobsPath, connectionsPath
 
 
 Location = Union[Path, TableLocation]
@@ -84,22 +87,22 @@ DEFAULT_TABLES = {'memory': 'bauta_memory', 'history': 'bauta_history', 'manifes
 
 def _resolveLocation(arguments: argparse.Namespace, setting: str, configured: Optional[StorageLocation] = None) -> Optional[Location]:
     """Where run state, history or the manifest goes: the setting's file flag
-    (--memory, say), else its database flag (--memory-database), else what the
+    (--memory, say), else its database flag (--memory-connection), else what the
     jobs file says, else None. A file the jobs file names is relative to it,
     not the working directory, so cron, a shell and CI find the same one
     wherever they start. --<setting>-table renames the table either way.
     """
 
     fileFlag = getattr(arguments, setting, None)
-    databaseFlag = getattr(arguments, setting + '_database', None)
+    databaseFlag = getattr(arguments, setting + '_connection', None)
     table = getattr(arguments, setting + '_table', None)
 
     if fileFlag:
         return Path(fileFlag)
     if databaseFlag:
-        return TableLocation(database=databaseFlag, table=table or DEFAULT_TABLES[setting])
+        return TableLocation(connection=databaseFlag, table=table or DEFAULT_TABLES[setting])
     if isinstance(configured, TableLocation):
-        return TableLocation(database=configured.database, table=table or configured.table or DEFAULT_TABLES[setting])
+        return TableLocation(connection=configured.connection, table=table or configured.table or DEFAULT_TABLES[setting])
     if configured:
         jobsPath, _ = _resolveConfigurationPaths(arguments)
         return Path(os.path.normpath(jobsPath.parent / configured))
@@ -109,14 +112,14 @@ def _resolveLocation(arguments: argparse.Namespace, setting: str, configured: Op
 
 def _describeLocation(location: Location) -> str:
 
-    return str(location) if isinstance(location, Path) else 'table {} in {}'.format(location.table, location.database)
+    return str(location) if isinstance(location, Path) else 'table {} in {}'.format(location.table, location.connection)
 
 
-def _settingsFor(location: TableLocation, databaseConfiguration: Dict[str, DatabaseConnectionConfig]) -> DatabaseConnectionConfig:
+def _settingsFor(location: TableLocation, connectionConfiguration: Dict[str, ConnectionConfig]) -> ConnectionConfig:
 
-    _requireAlias(databaseConfiguration, location.database)
+    _requireAlias(connectionConfiguration, location.connection)
 
-    return databaseConfiguration[location.database]
+    return connectionConfiguration[location.connection]
 
 
 def _memoryLocation(arguments: argparse.Namespace, jobsFile: DataJobsFile) -> Location:
@@ -128,7 +131,7 @@ def _memoryLocation(arguments: argparse.Namespace, jobsFile: DataJobsFile) -> Lo
 
 
 def _memoryBackend(arguments: argparse.Namespace, jobsFile: DataJobsFile,
-                   databaseConfiguration: Dict[str, DatabaseConnectionConfig]) -> Tuple[MemoryBackend, Path]:
+                   connectionConfiguration: Dict[str, ConnectionConfig]) -> Tuple[MemoryBackend, Path]:
     """The run memory to use, and the file a run holds as its lock, beside it.
 
     Run state in a table still needs a file for the lock, so it goes where a
@@ -142,20 +145,20 @@ def _memoryBackend(arguments: argparse.Namespace, jobsFile: DataJobsFile,
     if isinstance(location, TableLocation):
         jobsPath, _ = _resolveConfigurationPaths(arguments)
         wouldBe = jobsFile.memory if isinstance(jobsFile.memory, str) else 'memory.yaml'
-        memory = DatabaseMemory(connectionSettings=_settingsFor(location, databaseConfiguration), table=location.table or DEFAULT_TABLES['memory'])
+        memory = DatabaseMemory(connectionSettings=_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['memory'])
         return memory, Path(os.path.normpath(jobsPath.parent / wouldBe)).with_name('memory.run.lock')
 
     return FileMemory(memoryFile=location), location.with_name(location.name + '.run.lock')
 
 
-def _history(location: Location, databaseConfiguration: Dict[str, DatabaseConnectionConfig]) -> Any:
+def _history(location: Location, connectionConfiguration: Dict[str, ConnectionConfig]) -> Any:
 
     from ..jobs.reporting import DatabaseHistory, FileHistory
 
     if isinstance(location, Path):
         return FileHistory(location)
 
-    return DatabaseHistory(connectionSettings=_settingsFor(location, databaseConfiguration), table=location.table or DEFAULT_TABLES['history'])
+    return DatabaseHistory(connectionSettings=_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['history'])
 
 
 def _configureLogging(arguments: argparse.Namespace) -> Log:
@@ -170,26 +173,26 @@ def _configureLogging(arguments: argparse.Namespace) -> Log:
     return log
 
 
-def _loadDatabases(arguments: argparse.Namespace) -> Dict[str, DatabaseConnectionConfig]:
+def _loadConnections(arguments: argparse.Namespace) -> Dict[str, ConnectionConfig]:
 
-    _, databasesPath = _resolveConfigurationPaths(arguments)
+    _, connectionsPath = _resolveConfigurationPaths(arguments)
 
-    return Configuration.validateDatabaseConfiguration(_loadYaml(databasesPath))
+    return Configuration.validateConnectionConfiguration(_loadYaml(connectionsPath))
 
 
-def _loadDataJobs(arguments: argparse.Namespace) -> Tuple[DataJobsFile, Dict[str, DatabaseConnectionConfig]]:
+def _loadDataJobs(arguments: argparse.Namespace) -> Tuple[DataJobsFile, Dict[str, ConnectionConfig]]:
 
-    jobsPath, databasesPath = _resolveConfigurationPaths(arguments)
-    databaseConfiguration = Configuration.validateDatabaseConfiguration(_loadYaml(databasesPath))
+    jobsPath, connectionsPath = _resolveConfigurationPaths(arguments)
+    connectionConfiguration = Configuration.validateConnectionConfiguration(_loadYaml(connectionsPath))
     jobsFile = Configuration.validateJobConfiguration(_loadYaml(jobsPath), DataJobsFile)
-    Configuration.validateJobGraph(jobsFile.jobs, databases=databaseConfiguration)
+    Configuration.validateJobGraph(jobsFile.jobs, connections=connectionConfiguration)
 
-    unknown = ['{}: database "{}" is not a known database alias'.format(setting, location.database)
-               for setting, location in jobsFile.tableLocations().items() if location.database not in databaseConfiguration]
+    unknown = ['{}: connection "{}" is not a known connection alias'.format(setting, location.connection)
+               for setting, location in jobsFile.tableLocations().items() if location.connection not in connectionConfiguration]
     if unknown:
         raise ConfigurationError('Invalid configuration in {}:\n'.format(jobsPath) + '\n'.join(unknown))
 
-    return jobsFile, databaseConfiguration
+    return jobsFile, connectionConfiguration
 
 
 def _selectJobs(jobs: Dict[str, DataJobConfig], requested: Optional[List[str]], log: Log) -> Dict[str, DataJobConfig]:
@@ -224,17 +227,17 @@ def _toolVersion() -> str:
 
 
 class _Connections:
-    """One open connection per alias, for a command that asks many things of
-    the same few databases. A dry run or `audit --connect` used to open one
-    per question -- three or four a job, each running passwordCommand again.
+    """One open connection per alias, for a command that asks many things of the
+    same few databases -- a dry run, `audit --connect` -- rather than one per
+    question, each running passwordCommand again.
 
     A connection whose statement failed is closed and forgotten, since
     PostgreSQL refuses anything more on it until rolled back; the next use
     opens a fresh one.
     """
 
-    def __init__(self, databaseConfiguration: Mapping[str, DatabaseConnectionConfig]) -> None:
-        self._settings = databaseConfiguration
+    def __init__(self, connectionConfiguration: Mapping[str, ConnectionConfig]) -> None:
+        self._settings = connectionConfiguration
         self._open: Dict[str, Database] = {}
 
 
@@ -272,7 +275,7 @@ def _sourceQueryColumns(job: DataJobConfig, connections: _Connections) -> List[s
     row, since rewriting arbitrary SQL isn't portable.
     """
 
-    with connections.use(job.sourceDatabase) as database:
+    with connections.use(job.sourceConnection) as database:
         query = job.sourceQuery
         parameters = None
         if job.watermarkColumn:
@@ -287,7 +290,7 @@ def _sourceQueryColumns(job: DataJobConfig, connections: _Connections) -> List[s
 def _targetColumns(job: DataJobConfig, connections: _Connections) -> List[str]:
     """The target's columns, in the order a load fills them."""
 
-    with connections.use(job.targetDatabase) as database:
+    with connections.use(job.targetConnection) as database:
         return database.getAllColumnNames(table=job.targetTableFinal)
 
 
@@ -366,7 +369,7 @@ def _discoveryRules(arguments: argparse.Namespace) -> Any:
     return discoveryRules(_discoveryRulesFile(arguments)[1])
 
 
-def _requireAlias(databaseConfiguration: Dict[str, DatabaseConnectionConfig], alias: str) -> None:
+def _requireAlias(connectionConfiguration: Dict[str, ConnectionConfig], alias: str) -> None:
 
-    if alias not in databaseConfiguration:
-        raise UsageError('no database alias {!r}. Known aliases: {}'.format(alias, ', '.join(sorted(databaseConfiguration))))
+    if alias not in connectionConfiguration:
+        raise UsageError('no connection alias {!r}. Known aliases: {}'.format(alias, ', '.join(sorted(connectionConfiguration))))

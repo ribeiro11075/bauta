@@ -26,8 +26,8 @@ def test_connecting_with_a_missing_driver_fails_at_connect_not_at_import():
         'import sys\n'
         'sys.modules["psycopg"] = None\n'
         'import bauta\n'
-        'from bauta.configuration import DatabaseConnectionConfig, DatabaseType\n'
-        'settings = DatabaseConnectionConfig(type=DatabaseType.POSTGRESQL, user="u", password="p", database="d", host="h")\n'
+        'from bauta.configuration import ConnectionConfig, connectionConfig, DatabaseType\n'
+        'settings = connectionConfig(type=DatabaseType.POSTGRESQL, user="u", password="p", database="d", host="h")\n'
         'try:\n'
         '    bauta.Database(connectionSettings=settings)\n'
         'except ModuleNotFoundError:\n'
@@ -37,3 +37,15 @@ def test_connecting_with_a_missing_driver_fails_at_connect_not_at_import():
 
     assert result.returncode == 0, result.stderr
     assert 'OK' in result.stdout
+
+
+def test_importing_bauta_does_not_import_duckdb_or_pyarrow():
+    """Both are optional, and pyarrow alone takes a noticeable part of a second
+    to import, which every command would pay for a DuckDB connection it may
+    never open.
+    """
+    script = 'import sys, bauta, bauta.cli\nprint(sorted({"duckdb", "pyarrow"} & set(sys.modules)))\n'
+    result = subprocess.run([sys.executable, '-c', script], cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=30)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '[]'

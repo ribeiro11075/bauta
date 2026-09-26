@@ -399,7 +399,7 @@ class JobDraft(NamedTuple):
     proposal: Optional[TableProposal]
 
 
-def renderJobs(drafts: Sequence[JobDraft], sourceDatabase: str, targetDatabase: str, heading: Sequence[str],
+def renderJobs(drafts: Sequence[JobDraft], sourceConnection: str, targetConnection: str, heading: Sequence[str],
                keyVariable: str = 'MASKING_KEY', chunkSize: int = 5000, targetType: Optional[DatabaseType] = None) -> str:
     """A jobs.yaml document, with each suggestion's reason as a comment, which
     yaml.dump can't emit. Masking in place swaps, since upserting a masked key
@@ -414,8 +414,11 @@ def renderJobs(drafts: Sequence[JobDraft], sourceDatabase: str, targetDatabase: 
     def target(table: str) -> str:
         return table if targetType is None else quoteFoldedTable(targetType, table)
 
-    inPlace = sourceDatabase == targetDatabase
+    inPlace = sourceConnection == targetConnection
     lines = ['# ' + line if line else '#' for line in heading]
+    if inPlace and targetType == DatabaseType.DUCKDB:
+        lines += ['# DuckDB cannot swap a table in a foreign key, so a job below masking such a table fails before renaming',
+                  '# anything. Mask those tables into another database instead.']
     lines += ['workers: 2', 'jobs:']
     taken: Set[str] = set()
     names = {draft.table: jobName(draft.table, taken) for draft in drafts}
@@ -426,7 +429,7 @@ def renderJobs(drafts: Sequence[JobDraft], sourceDatabase: str, targetDatabase: 
         if draft.predecessors:
             lines.append('    predecessors:')
             lines += ['    - {}'.format(_scalar(names[predecessor])) for predecessor in draft.predecessors]
-        lines.append('    sourceDatabase: {}'.format(_scalar(sourceDatabase)))
+        lines.append('    sourceConnection: {}'.format(_scalar(sourceConnection)))
 
         if '\n' in draft.sourceQuery:
             lines.append('    sourceQuery: |-')
@@ -434,7 +437,7 @@ def renderJobs(drafts: Sequence[JobDraft], sourceDatabase: str, targetDatabase: 
         else:
             lines.append('    sourceQuery: {}'.format(_scalar(draft.sourceQuery)))
 
-        lines.append('    targetDatabase: {}'.format(_scalar(targetDatabase)))
+        lines.append('    targetConnection: {}'.format(_scalar(targetConnection)))
         if inPlace:
             lines.append('    # Masking in place: rows load into the stage table, which is then swapped')
             lines.append('    # with the original. Create it first, with the same shape.')

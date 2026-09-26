@@ -427,7 +427,7 @@ def _auditUnmaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence
         findings.append(Finding('warning' if job.unmasked else 'error', name,
                                 'copies from {} without masking, and {} it returns {} like personal data: {}. '
                                 'Add a masking policy naming every column -- `keep` for the ones that need no masking'.format(
-                                    job.sourceDatabase, 'a column' if len(personal) == 1 else 'columns',
+                                    job.sourceConnection, 'a column' if len(personal) == 1 else 'columns',
                                     'looks' if len(personal) == 1 else 'look',
                                     ', '.join('{} ({})'.format(column, hint) for column, hint in personal))))
         return
@@ -435,14 +435,14 @@ def _auditUnmaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence
     if job.unmasked:
         return
 
-    if job.sourceDatabase in maskedSources and job.sourceDatabase != job.targetDatabase:
+    if job.sourceConnection in maskedSources and job.sourceConnection != job.targetConnection:
         findings.append(Finding('warning', name, 'copies from {} without masking, though other jobs mask what they read from it'.format(
-            job.sourceDatabase)))
+            job.sourceConnection)))
         return
 
     findings.append(Finding('warning', name, 'copies from {} to {} without masking, so every column it returns is written as it stands. '
                             'Add a masking policy, or declare the choice with `unmasked: true`'.format(
-                                job.sourceDatabase, job.targetDatabase)))
+                                job.sourceConnection, job.targetConnection)))
 
 
 def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mapping[str, Sequence[str]]] = None,
@@ -454,13 +454,13 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
 
     `returnedColumns` maps a masked job to the columns its query returns, so
     each column's actual policy can be shown -- defaultStrategy included --
-    rather than only the declared ones. `encryption` maps a database alias to
+    rather than only the declared ones. `encryption` maps a connection alias to
     whether its connection is encrypted (None: couldn't tell). `unreachable`
     maps a job to why its query couldn't be checked. `targetColumns` maps a
     masked job to its target's columns in load order, and `foreignKeys` maps a
-    target database alias to the foreign keys that apply to its tables, for
+    target connection alias to the foreign keys that apply to its tables, for
     checking that references still match once masked. `declaredForeignKeys`
-    maps a target database alias to the foreign keys it declares itself, for
+    maps a target connection alias to the foreign keys it declares itself, for
     checking what a swap does to them. All of these come from connecting, and
     all are optional.
     """
@@ -470,11 +470,11 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
     unreachable = unreachable or {}
     findings: List[Finding] = []
     usages: Dict[str, List[_Usage]] = {}
-    maskedSources = {job.sourceDatabase for job in jobs.values() if job.masking is not None}
+    maskedSources = {job.sourceConnection for job in jobs.values() if job.masking is not None}
     report = []
 
     for name, job in sorted(jobs.items()):
-        entry: Dict[str, Any] = {'job': name, 'active': job.active, 'sourceDatabase': job.sourceDatabase, 'targetDatabase': job.targetDatabase,
+        entry: Dict[str, Any] = {'job': name, 'active': job.active, 'sourceConnection': job.sourceConnection, 'targetConnection': job.targetConnection,
                                  'targetTable': job.targetTableFinal, 'masked': job.masking is not None,
                                  'unmasked': job.unmasked}
 
@@ -483,15 +483,15 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
 
         if job.masking is not None:
             entry.update(_auditMaskedJob(name, job, returnedColumns.get(name), findings, usages, rules))
-            if encryption.get(job.sourceDatabase) is False:
-                findings.append(Finding('warning', name, 'reads unmasked data from {} over a connection that is not encrypted'.format(job.sourceDatabase)))
+            if encryption.get(job.sourceConnection) is False:
+                findings.append(Finding('warning', name, 'reads unmasked data from {} over a connection that is not encrypted'.format(job.sourceConnection)))
         else:
             _auditUnmaskedJob(name, job, returnedColumns.get(name), maskedSources, findings, rules)
 
         report.append(entry)
 
-    for target in sorted({job.targetDatabase for job in jobs.values()}):
-        targetJobs = {name: job for name, job in jobs.items() if job.targetDatabase == target}
+    for target in sorted({job.targetConnection for job in jobs.values()}):
+        targetJobs = {name: job for name, job in jobs.items() if job.targetConnection == target}
         _auditDomains(target, [usage for name in sorted(targetJobs) for usage in usages.get(name, [])], findings)
         if foreignKeys and foreignKeys.get(target):
             _auditForeignKeys(target, targetJobs, usages, targetColumns or {}, foreignKeys[target], findings)
@@ -522,7 +522,7 @@ def renderAudit(report: Mapping[str, Any]) -> str:
 
     for job in report['jobs']:
         state = '' if job['active'] else ' (inactive)'
-        lines.append('{}{}: {} -> {}.{}'.format(job['job'], state, job['sourceDatabase'], job['targetDatabase'], job['targetTable']))
+        lines.append('{}{}: {} -> {}.{}'.format(job['job'], state, job['sourceConnection'], job['targetConnection'], job['targetTable']))
 
         if not job['masked']:
             lines.append('  not masked, declared with `unmasked`' if job.get('unmasked') else '  not masked')

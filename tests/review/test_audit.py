@@ -9,7 +9,7 @@ from tests.jobConfigs import dataJob
 KEY = 'an-audit-test-masking-key'
 
 
-_job = functools.partial(dataJob, sourceDatabase='prod', targetDatabase='staging')
+_job = functools.partial(dataJob, sourceConnection='prod', targetConnection='staging')
 
 
 def _masked(columns, **overrides: Any) -> DataJobConfig:
@@ -67,7 +67,7 @@ def test_an_unmasked_copy_from_a_source_other_jobs_mask_is_flagged():
     report = auditJobs({
         'maskCustomers': _masked({'email': 'email'}),
         'copyOrders': _job(sourceQuery='select * from orders', targetTableFinal='orders'),
-        'rollUp': _job(sourceDatabase='staging', targetDatabase='staging', targetTableFinal='summary'),
+        'rollUp': _job(sourceConnection='staging', targetConnection='staging', targetTableFinal='summary'),
         })
 
     assert _messages(report, 'warning') == [
@@ -122,7 +122,7 @@ def test_fpe_without_strict_is_noted():
 def _customersAndOrders(customerId, orderCustomerId, orderKey=KEY, orderTarget='staging'):
     return {
         'maskCustomers': _masked({'id': customerId, 'email': 'email'}, sourceQuery='select id, email from customers'),
-        'maskOrders': _job(sourceQuery='select id, customer_id from orders', targetTableFinal='orders', targetDatabase=orderTarget,
+        'maskOrders': _job(sourceQuery='select id, customer_id from orders', targetTableFinal='orders', targetConnection=orderTarget,
                            predecessors=['maskCustomers'],
                            masking={'key': orderKey, 'columns': {'id': 'keep', 'customer_id': orderCustomerId}}),
         }

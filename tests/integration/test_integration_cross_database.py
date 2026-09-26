@@ -1,7 +1,7 @@
 """Proves the actual headline feature works: extracting from one database dialect
 and loading into a *different* one within a single job. Every other integration
 test uses the same database for both source and target, for simplicity -- this is
-the one test that genuinely exercises sourceDatabase and targetDatabase pointing
+the one test that genuinely exercises sourceConnection and targetConnection pointing
 at different servers of different types in the same _executeDataJob call, with a
 real sourceQueryColumnTransforms entry applied in between.
 
@@ -17,17 +17,17 @@ import pytest
 pytest.importorskip('mysql.connector', reason='mysql-connector-python is not installed (pip install -e ".[mysql]")')
 pytest.importorskip('psycopg', reason='psycopg is not installed (pip install -e ".[postgresql]")')
 
-from bauta.configuration import Configuration, DatabaseConnectionConfig, DatabaseType, DataJobsFile
+from bauta.configuration import Configuration, connectionConfig, DatabaseType, DataJobsFile
 from bauta.database import Database
 from bauta.jobs.memory import FileMemory
 from bauta.jobs.runner import runDataJobs
 
 pytestmark = pytest.mark.integration
 
-MYSQL_SETTINGS = DatabaseConnectionConfig(
+MYSQL_SETTINGS = connectionConfig(
     type=DatabaseType.MYSQL, user='root', password='root', database='bauta_test', host='127.0.0.1', port=3307,
     )
-POSTGRESQL_SETTINGS = DatabaseConnectionConfig(
+POSTGRESQL_SETTINGS = connectionConfig(
     type=DatabaseType.POSTGRESQL, user='postgres', password='postgres', database='bauta_test', host='127.0.0.1', port=5433,
     )
 
@@ -86,7 +86,7 @@ def test_data_moves_from_mysql_to_postgresql_with_a_transform_applied(postgresql
         'workers': 1,
         'jobs': {
             'job1': {
-                'active': True, 'sourceDatabase': 'mysql', 'targetDatabase': 'postgresql', 'insertStrategy': 'upsert',
+                'active': True, 'sourceConnection': 'mysql', 'targetConnection': 'postgresql', 'insertStrategy': 'upsert',
                 'chunkSize': 100, 'targetTableFinal': targetTable,
                 'sourceQueryColumnTransforms': {'amount': ['bauta.transform.builtinTransforms:currency']},
                 'sourceQuery': 'select id, name, amount from {} order by id'.format(sourceTable),
@@ -94,9 +94,9 @@ def test_data_moves_from_mysql_to_postgresql_with_a_transform_applied(postgresql
             },
         }
     jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
-    databaseConfiguration = {'mysql': MYSQL_SETTINGS, 'postgresql': POSTGRESQL_SETTINGS}
+    connectionConfiguration = {'mysql': MYSQL_SETTINGS, 'postgresql': POSTGRESQL_SETTINGS}
 
-    runDataJobs(jobsFile=jobsFile, databaseConfiguration=databaseConfiguration, logFile=tmp_path / 'runner.log',
+    runDataJobs(jobsFile=jobsFile, connectionConfiguration=connectionConfiguration, logFile=tmp_path / 'runner.log',
                 memory=FileMemory(memoryFile=tmp_path / 'memory.yaml'), runForever=False)
 
     rows = postgresqlDatabase.query('SELECT id, name, amount FROM {} ORDER BY id'.format(targetTable))

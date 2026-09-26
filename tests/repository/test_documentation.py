@@ -8,10 +8,12 @@ they're checked.
 import re
 from pathlib import Path
 
+import typing
+
 import pytest
 
 from bauta.cli import _buildParser
-from bauta.configuration import (Configuration, DatabaseConnectionConfig, DataJobConfig, DataJobsFile, DiscoveryRulesFile, MaskingConfig, NameRuleConfig,
+from bauta.configuration import (Configuration, ConnectionConfig, DataJobConfig, DataJobsFile, DiscoveryRulesFile, MaskingConfig, NameRuleConfig,
                                  ValueRuleConfig, expandEnvironmentVariables)
 from bauta.masking import STRATEGIES
 
@@ -52,7 +54,8 @@ def test_every_internal_link_resolves(document, target, anchor):
 MASKING_DOC = ROOT / 'docs' / 'masking.md'
 
 
-@pytest.mark.parametrize('model,document', [(DatabaseConnectionConfig, CONFIGURATION_DOC), (DataJobConfig, CONFIGURATION_DOC),
+@pytest.mark.parametrize('model,document', [(connection, CONFIGURATION_DOC) for connection in typing.get_args(typing.get_args(ConnectionConfig)[0])] + [
+                                            (DataJobConfig, CONFIGURATION_DOC),
                                             (DataJobsFile, CONFIGURATION_DOC), (MaskingConfig, MASKING_DOC),
                                             (DiscoveryRulesFile, MASKING_DOC), (NameRuleConfig, MASKING_DOC), (ValueRuleConfig, MASKING_DOC)],
                          ids=lambda value: getattr(value, '__name__', None) or value.name)

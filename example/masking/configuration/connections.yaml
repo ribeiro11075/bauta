@@ -5,7 +5,7 @@
 # at run time. A default is fine for a path -- never for a secret.
 prod:
   type: sqlite
-  database: ${MASKING_DEMO_PROD_PATH:-prod.db}
+  path: ${MASKING_DEMO_PROD_PATH:-prod.db}
 staging:
   type: sqlite
-  database: ${MASKING_DEMO_STAGING_PATH:-staging.db}
+  path: ${MASKING_DEMO_STAGING_PATH:-staging.db}

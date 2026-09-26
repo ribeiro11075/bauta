@@ -11,7 +11,7 @@ from ..database import Database
 from ..database.dialects import catalogTable, quoteIdentifier, quoteTableName
 from ..log import Log
 from ..log.scrubbing import describeError
-from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadDatabases, _loadDataJobs, _memoryBackend,
+from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadConnections, _loadDataJobs, _memoryBackend,
                      _requireAlias, _selectJobs, _writeOutput)
 
 
@@ -35,13 +35,13 @@ def _nextSteps(source: str, target: str, tables: Sequence[str], related: bool = 
     if source == target:
         return [
             'Masking in place loads through <table>_masked_stage. Create the stage tables with:',
-            '  bauta schema --database {0} --target {0} {1} --stage-suffix _masked_stage --apply'.format(source, tableArguments),
+            '  bauta schema --connection {0} --target {0} {1} --stage-suffix _masked_stage --apply'.format(source, tableArguments),
             '',
             ]
 
     return [
         'Create any target tables that do not exist yet with:',
-        '  bauta schema --database {} --target {} {}{} --apply'.format(source, target, tableArguments, ' --related' if related else ''),
+        '  bauta schema --connection {} --target {} {}{} --apply'.format(source, target, tableArguments, ' --related' if related else ''),
         'To refresh the copy later, empty it first, then run every job:',
         '  bauta clear --config <this directory> --yes && bauta run --config <this directory> --force',
         '',
@@ -65,14 +65,14 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
     from ..generate.discovery import JobDraft, proposeTable, renderJobs
 
     _requireTableSelection(arguments)
-    databaseConfiguration = _loadDatabases(arguments)
+    connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
-    target = arguments.target or arguments.database
-    _requireAlias(databaseConfiguration, arguments.database)
-    _requireAlias(databaseConfiguration, target)
+    target = arguments.target or arguments.connection
+    _requireAlias(connectionConfiguration, arguments.connection)
+    _requireAlias(connectionConfiguration, target)
 
     drafts = []
-    with Database(connectionSettings=databaseConfiguration[arguments.database]) as database:
+    with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
         try:
             foreignKeys = database.getForeignKeys()
         except NotImplementedError:
@@ -83,7 +83,7 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
         requestedTables = database.listTables(schema=arguments.schema) if arguments.all_tables else arguments.table
         if not requestedTables:
             raise UsageError('{} holds no tables{}'.format(
-                arguments.database, ' in schema {}'.format(arguments.schema) if arguments.schema else ''))
+                arguments.connection, ' in schema {}'.format(arguments.schema) if arguments.schema else ''))
         tables = [catalogTable(database.type, table) for table in requestedTables]
         requested = {table.upper(): table for table in tables}
         for table in tables:
@@ -97,9 +97,9 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
             drafts.append(JobDraft(table=table, sourceQuery='SELECT * FROM {}'.format(database.statementName(table)),
                                    predecessors=parents, proposal=proposal))
 
-    heading = _generatedHeading('discover', arguments.database, target) + _nextSteps(arguments.database, target, requestedTables)
-    _writeOutput(renderJobs(drafts, arguments.database, target, heading, keyVariable=arguments.key_variable,
-                            chunkSize=arguments.chunk_size, targetType=databaseConfiguration[target].type), arguments.output)
+    heading = _generatedHeading('discover', arguments.connection, target) + _nextSteps(arguments.connection, target, requestedTables)
+    _writeOutput(renderJobs(drafts, arguments.connection, target, heading, keyVariable=arguments.key_variable,
+                            chunkSize=arguments.chunk_size, targetType=connectionConfiguration[target].type), arguments.output)
 
     return EXIT_SUCCESS
 
@@ -112,15 +112,15 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
     from ..generate.discovery import JobDraft, proposeTable, renderJobs
     from ..generate.subset import SubsetError, planSubset
 
-    databaseConfiguration = _loadDatabases(arguments)
+    connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
-    _requireAlias(databaseConfiguration, arguments.database)
-    _requireAlias(databaseConfiguration, arguments.target)
+    _requireAlias(connectionConfiguration, arguments.connection)
+    _requireAlias(connectionConfiguration, arguments.target)
 
-    if arguments.target == arguments.database:
+    if arguments.target == arguments.connection:
         raise UsageError('--target must differ from --database: a subset is loaded into another database, not over its source')
 
-    with Database(connectionSettings=databaseConfiguration[arguments.database]) as database:
+    with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
         foreignKeys = database.getForeignKeys()
 
         try:
@@ -142,13 +142,13 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
                                     maskKeys=arguments.mask_keys) if arguments.mask else None
             drafts.append(JobDraft(table=table, sourceQuery=plan.queries[table], predecessors=plan.parents[table], proposal=proposal))
 
-    heading = _generatedHeading('subset', arguments.database, arguments.target) + [
+    heading = _generatedHeading('subset', arguments.connection, arguments.target) + [
         'Rooted at {} where {}.'.format(arguments.root, arguments.where),
         'Jobs load parents before children, so the target can keep its foreign keys.',
         '',
-        ] + _nextSteps(arguments.database, arguments.target, [arguments.root], related=True)
-    _writeOutput(renderJobs(drafts, arguments.database, arguments.target, heading, keyVariable=arguments.key_variable,
-                            chunkSize=arguments.chunk_size, targetType=databaseConfiguration[arguments.target].type), arguments.output)
+        ] + _nextSteps(arguments.connection, arguments.target, [arguments.root], related=True)
+    _writeOutput(renderJobs(drafts, arguments.connection, arguments.target, heading, keyVariable=arguments.key_variable,
+                            chunkSize=arguments.chunk_size, targetType=connectionConfiguration[arguments.target].type), arguments.output)
 
     return EXIT_SUCCESS
 
@@ -163,13 +163,13 @@ def _commandSchema(arguments: argparse.Namespace, log: Log) -> int:
     from ..generate.schema import SchemaError, createStatements, readTable, renderScript
     from ..generate.subset import relatedTables
 
-    databaseConfiguration = _loadDatabases(arguments)
-    _requireAlias(databaseConfiguration, arguments.database)
-    _requireAlias(databaseConfiguration, arguments.target)
+    connectionConfiguration = _loadConnections(arguments)
+    _requireAlias(connectionConfiguration, arguments.connection)
+    _requireAlias(connectionConfiguration, arguments.target)
 
-    sourceSettings = databaseConfiguration[arguments.database]
-    targetSettings = databaseConfiguration[arguments.target]
-    stagesOnly = arguments.database == arguments.target
+    sourceSettings = connectionConfiguration[arguments.connection]
+    targetSettings = connectionConfiguration[arguments.target]
+    stagesOnly = arguments.connection == arguments.target
 
     if stagesOnly and not arguments.stage_suffix:
         raise UsageError('--target is the source database, so its tables already exist; pass --stage-suffix to create stage tables for them')
@@ -187,7 +187,7 @@ def _commandSchema(arguments: argparse.Namespace, log: Log) -> int:
     if not arguments.apply:
         heading = [
             'Generated by `bauta schema` on {} from {} ({}), for {} ({}).'.format(
-                datetime.date.today().isoformat(), arguments.database, sourceSettings.type.value, arguments.target, targetSettings.type.value),
+                datetime.date.today().isoformat(), arguments.connection, sourceSettings.type.value, arguments.target, targetSettings.type.value),
             'Columns, nullability, primary keys and foreign keys only: no indexes, defaults or constraints beyond those.',
             'Review the commented type choices before applying.',
             ]
@@ -242,16 +242,16 @@ def _commandSynthesize(arguments: argparse.Namespace, log: Log) -> int:
     from ..generate.schema import SchemaError, orderParentsFirst
     from ..generate.synthesize import SynthesisError, planTable, synthesizeTable
 
-    databaseConfiguration = _loadDatabases(arguments)
+    connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
-    _requireAlias(databaseConfiguration, arguments.database)
+    _requireAlias(connectionConfiguration, arguments.connection)
     requested = dict(_parseTableRows(arguments.table, arguments.rows))
 
     if not arguments.dry_run and not arguments.yes:
         raise UsageError('synthesize inserts generated rows into {}; pass --yes to do it, or --dry-run to see the plan'.format(
             ', '.join(requested)))
 
-    with Database(connectionSettings=databaseConfiguration[arguments.database]) as database:
+    with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
         foreignKeys = database.getForeignKeys()
         try:
             order = orderParentsFirst(requested, foreignKeys)
@@ -291,7 +291,7 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
 
     from ..generate.schema import SchemaError, clearOrder, clearTables
 
-    jobsFile, databaseConfiguration = _loadDataJobs(arguments)
+    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
     jobs = {name: job for name, job in _selectJobs(jobsFile.jobs, arguments.job, log).items() if job.active}
 
     incremental = sorted(name for name, job in jobs.items() if job.watermarkColumn)
@@ -301,7 +301,7 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
 
     tablesByDatabase: Dict[str, List[str]] = {}
     for job in jobs.values():
-        tables = tablesByDatabase.setdefault(job.targetDatabase, [])
+        tables = tablesByDatabase.setdefault(job.targetConnection, [])
         if job.targetTableFinal.upper() not in {table.upper() for table in tables}:
             tables.append(job.targetTableFinal)
 
@@ -310,7 +310,7 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
             sum(len(tables) for tables in tablesByDatabase.values())))
 
     for alias, tables in sorted(tablesByDatabase.items()):
-        with Database(connectionSettings=databaseConfiguration[alias]) as database:
+        with Database(connectionSettings=connectionConfiguration[alias]) as database:
             # Checked before the plan is printed, or it lists tables that
             # aren't there and the run it describes fails.
             missing = [table for table in tables if not database.tableExists(table)]
@@ -335,7 +335,7 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
     if not arguments.dry_run:
         # Emptied targets hold nothing masked under the old key any more, so
         # a key change is no longer a reason to refuse these jobs.
-        memory, _ = _memoryBackend(arguments, jobsFile, databaseConfiguration)
+        memory, _ = _memoryBackend(arguments, jobsFile, connectionConfiguration)
         with memory:
             for name, job in jobs.items():
                 if job.masking is not None:

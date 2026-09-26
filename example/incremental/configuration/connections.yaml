@@ -6,4 +6,4 @@
 # secret. Never default a password.
 demo:
   type: sqlite
-  database: ${DEMO_DB_PATH:-demo.db}
+  path: ${DEMO_DB_PATH:-demo.db}

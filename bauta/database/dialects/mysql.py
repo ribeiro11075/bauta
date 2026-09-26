@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from ...configuration import DatabaseConnectionConfig, DatabaseType
+from ..driver import Connection, Cursor, native
+from ...configuration import ConnectionConfig, DatabaseType, MariaDBConnection, MySQLConnection
 from .base import ColumnCategory, DatabaseDialect
 
 
@@ -16,39 +17,42 @@ class MySQLDialect(DatabaseDialect):
     _DATE_TYPES = {'DATETIME', 'TIMESTAMP', 'DATE'}
     _TEXT_TYPES = {'TEXT', 'VARCHAR', 'CHAR'}
 
-    def _ownConnectArguments(self, settings: DatabaseConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+
+        if not isinstance(settings, (MySQLConnection, MariaDBConnection)):
+            raise TypeError("{} settings reached the dialect for MySQL and MariaDB".format(settings.type.value))
 
         return {'user': settings.user, 'password': password, 'host': settings.host, 'database': settings.database,
                 'port': settings.port}
 
 
-    def openConnection(self, settings: DatabaseConnectionConfig) -> Any:
+    def openConnection(self, settings: ConnectionConfig) -> Any:
 
         import mysql.connector
 
         return mysql.connector.connect(**self.connectArguments(settings))
 
 
-    def prepareSession(self, connection: Any, settings: DatabaseConnectionConfig) -> Any:
+    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Any:
 
-        return connection.cursor(buffered=True)
+        return native(connection).cursor(buffered=True)
 
 
-    def streamingCursor(self, connection: Any, chunkSize: int) -> Any:
+    def streamingCursor(self, connection: Connection, chunkSize: int) -> Any:
         """Unbuffered, unlike connect()'s cursor. It holds the connection until
         drained: no other statement may run on it while a stream is open.
         """
 
-        return connection.cursor(buffered=False)
+        return native(connection).cursor(buffered=False)
 
 
-    def discardRemaining(self, connection: Any, cursor: Any) -> None:
+    def discardRemaining(self, connection: Connection, cursor: Cursor) -> None:
         """mysql.connector queues unread rows on the connection, where they fail
         the next statement ("Unread result found"). consume_results() reads and
         discards them -- bounded in memory, but it transfers every unread row.
         """
 
-        connection.consume_results()
+        native(connection).consume_results()
 
 
     def placeholders(self, count: int) -> List[str]:
@@ -74,7 +78,7 @@ class MySQLDialect(DatabaseDialect):
         return None
 
 
-    def isEncrypted(self, cursor: Any) -> Optional[bool]:
+    def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
 
         cursor.execute("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
         row = cursor.fetchone()
@@ -96,8 +100,8 @@ class MySQLDialect(DatabaseDialect):
     def columnsQuery(self) -> str:
         """column_type rather than data_type, since only the first says
         `unsigned` -- an `INT UNSIGNED` column holds values no target's `INT`
-        can, and looked exactly like an `INT` here. It carries the declared
-        size too (`varchar(20)`, `enum('x','y')`), which portableType drops.
+        can. It carries the declared size too (`varchar(20)`,
+        `enum('x','y')`), which portableType drops.
         """
 
         return ("SELECT column_name, column_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable "

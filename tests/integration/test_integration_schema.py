@@ -15,15 +15,16 @@ Servers that aren't reachable are skipped. Run with `pytest -m integration`.
 import datetime
 import decimal
 import importlib
+import json
 import uuid
 
 import pytest
 
-from bauta.configuration import Configuration, DatabaseConnectionConfig, DatabaseType, DataJobsFile
+from bauta.configuration import Configuration, connectionConfig, DatabaseType, DataJobsFile
 from bauta.database import Database
 from bauta.jobs.pipeline import _executeDataJob
 from bauta.generate.schema import clearTables, createStatements, readTable
-from tests.integration.servers import SERVERS
+from tests.integration.servers import EMBEDDED, SERVERS
 
 pytestmark = pytest.mark.integration
 
@@ -37,6 +38,7 @@ SOURCE_TYPES = {
     DatabaseType.ORACLE: ('NUMBER(10)', 'NUMBER(19)', 'NUMBER(12,2)', 'BINARY_DOUBLE', 'VARCHAR2(40)', 'CHAR(3)', 'CLOB', 'DATE', 'TIMESTAMP',
                           'NUMBER(1)'),
     DatabaseType.MSSQL: ('INT', 'BIGINT', 'DECIMAL(12,2)', 'FLOAT', 'NVARCHAR(40)', 'CHAR(3)', 'NVARCHAR(MAX)', 'DATE', 'DATETIME2', 'BIT'),
+    DatabaseType.DUCKDB: ('INTEGER', 'BIGINT', 'DECIMAL(12,2)', 'DOUBLE', 'VARCHAR(40)', 'CHAR(3)', 'VARCHAR', 'DATE', 'TIMESTAMP', 'BOOLEAN'),
     }
 
 COLUMNS = ('id', 'big', 'amount', 'ratio', 'name', 'code', 'body', 'born', 'seen', 'flag')
@@ -75,7 +77,10 @@ def normalized(row):
 
 def connect(name, tmp_path_factory):
     if name == 'sqlite':
-        return DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(tmp_path_factory.mktemp('sqlite') / 'schema.db'))
+        return connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path_factory.mktemp('sqlite') / 'schema.db'))
+    if name == 'duckdb':
+        pytest.importorskip('duckdb')
+        return connectionConfig(type=DatabaseType.DUCKDB, path=str(tmp_path_factory.mktemp('duckdb') / 'schema.duckdb'))
 
     driver, settings = SERVERS[name]
     try:
@@ -87,7 +92,7 @@ def connect(name, tmp_path_factory):
     return settings
 
 
-NAMES = ['sqlite'] + sorted(SERVERS)
+NAMES = EMBEDDED + sorted(SERVERS)
 
 
 @pytest.mark.parametrize('targetName', NAMES)
@@ -138,7 +143,7 @@ def test_schema_creates_target_tables_that_a_copy_loads_into(sourceName, targetN
         databases = {'source': source, 'target': target}
         for table, copy in ((parent, parentCopy), (child, childCopy)):
             job = Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'copy': {
-                'active': True, 'sourceDatabase': 'source', 'targetDatabase': 'target', 'sourceQuery': 'SELECT * FROM {}'.format(table),
+                'active': True, 'sourceConnection': 'source', 'targetConnection': 'target', 'sourceQuery': 'SELECT * FROM {}'.format(table),
                 'targetTableFinal': copy, 'insertStrategy': 'upsert', 'chunkSize': 10}}}, DataJobsFile).jobs['copy']
             _executeDataJob('copy', job, databases)
 
@@ -160,7 +165,8 @@ def test_schema_creates_target_tables_that_a_copy_loads_into(sourceName, targetN
 @pytest.mark.parametrize('name', NAMES)
 def test_clear_rolls_back_when_a_table_outside_the_set_still_references_it(name, tmp_path_factory):
     """One transaction: a referencing table that isn't being cleared blocks the
-    parent's DELETE, and the child's DELETE before it is undone too.
+    parent's DELETE, and the child's DELETE before it is undone too -- except
+    on DuckDB, which can't clear a parent and child in one.
     """
     settings = connect(name, tmp_path_factory)
     suffix = uuid.uuid4().hex[:6]
@@ -179,7 +185,9 @@ def test_clear_rolls_back_when_a_table_outside_the_set_still_references_it(name,
             with pytest.raises(Exception):
                 clearTables(database, [parent, child])
 
-            assert database.query('SELECT count(*) FROM {}'.format(child))[0][0] == 1
+            # DuckDB clears a table per transaction (see clearTables), so the
+            # child it reached first stays empty.
+            assert database.query('SELECT count(*) FROM {}'.format(child))[0][0] == (0 if settings.type == DatabaseType.DUCKDB else 1)
             assert database.query('SELECT count(*) FROM {}'.format(parent))[0][0] == 1
         finally:
             for table in (child, other, parent):
@@ -236,7 +244,7 @@ def test_schema_applies_a_key_to_a_unique_column_and_constraint_names_that_repea
 
 
 def _copyJob(sourceQuery, final, **fields):
-    job = {'active': True, 'sourceDatabase': 'db', 'targetDatabase': 'db', 'sourceQuery': sourceQuery, 'targetTableFinal': final,
+    job = {'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'sourceQuery': sourceQuery, 'targetTableFinal': final,
            'insertStrategy': 'upsert', 'chunkSize': 10}
     job.update(fields)
     return Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'copy': job}}, DataJobsFile).jobs['copy']
@@ -250,6 +258,8 @@ def test_a_swap_through_schema_stage_tables_loads_and_drops_the_targets_keys(nam
     them would fail as soon as its parent was swapped too.
     """
     settings = connect(name, tmp_path_factory)
+    if settings.type == DatabaseType.DUCKDB:
+        pytest.skip('DuckDB refuses to swap a table in a foreign key; see test_integration_duckdb.py')
     suffix = uuid.uuid4().hex[:6]
     parent, child = 'stg_parent_{}'.format(suffix), 'stg_child_{}'.format(suffix)
     parentCopy, childCopy, childStage = parent + '_c', child + '_c', child + '_c_s'
@@ -343,3 +353,132 @@ def test_schema_keeps_text_keys_that_differ_only_in_case_apart(name, tmp_path_fa
         with Database(connectionSettings=settings) as database:
             for table in [copies[child.upper()], copies[parent.upper()], child, parent]:
                 database.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
+@pytest.mark.parametrize('targetName', NAMES)
+def test_duckdbs_own_types_copy_into_every_database(targetName, tmp_path_factory):
+    """DuckDB's LIST, STRUCT and MAP, which `schema` maps to JSON, reached the
+    other drivers as Python lists and dicts, which none of them could bind:
+    the copy failed at its first chunk on all six. A UUID failed MySQL and
+    MariaDB, a TIME Oracle, and an integer past 64 bits SQLite -- as they did
+    from PostgreSQL. Each now arrives as whatever the target's column holds.
+    """
+    source = connect('duckdb', tmp_path_factory)
+    target = connect(targetName, tmp_path_factory)
+    suffix = uuid.uuid4().hex[:6]
+    table, copy = 'zoo_{}'.format(suffix), 'zoo_{}_c'.format(suffix)
+
+    with Database(connectionSettings=source) as database:
+        database.alter('CREATE TABLE {} (id INTEGER PRIMARY KEY, tags VARCHAR[], props STRUCT(a INTEGER, b VARCHAR), counts MAP(VARCHAR, INTEGER), '
+                       'big HUGEINT, key UUID, clock TIME, moment TIMESTAMPTZ)'.format(table))
+        database.alter("INSERT INTO {} VALUES (1, ['a', 'b'], {{'a': 1, 'b': 'q'}}, MAP {{'k': 1}}, '1000000000000000000000000000000', "
+                       "'00000000-0000-0000-0000-000000000001', '01:02:03', '2026-01-02 03:04:05+00'), "
+                       "(2, NULL, NULL, NULL, NULL, NULL, NULL, NULL)".format(table))
+        definition = readTable(database, table, database.getForeignKeys())
+
+    try:
+        with Database(connectionSettings=target) as database:
+            for statement in createStatements(source.type, target.type, [definition._replace(name=copy)]):
+                database.alter(statement.sql)
+
+        job = Configuration.validateJobConfiguration({'jobs': {'copy': {
+            'sourceConnection': 'source', 'targetConnection': 'target', 'sourceQuery': 'SELECT * FROM {}'.format(table),
+            'targetTableFinal': copy, 'insertStrategy': 'upsert', 'unmasked': True}}}, DataJobsFile).jobs['copy']
+        _executeDataJob('copy', job, {'source': source, 'target': target})
+
+        with Database(connectionSettings=target) as database:
+            rows = database.query('SELECT * FROM {} ORDER BY 1'.format(copy))
+    finally:
+        with Database(connectionSettings=target) as database:
+            database.alter('DROP TABLE IF EXISTS {}'.format(copy))
+
+    identifier, tags, props, counts, big, key, clock, moment = rows[0]
+    asJson = lambda value: value if isinstance(value, (list, dict)) else json.loads(value)  # noqa: E731
+    assert (asJson(tags), asJson(props), asJson(counts)) == (['a', 'b'], {'a': 1, 'b': 'q'}, {'k': 1})
+    assert int(big) == 10 ** 30
+    assert str(key) == '00000000-0000-0000-0000-000000000001'
+    assert str(clock).startswith('01:02:03') or clock == datetime.timedelta(hours=1, minutes=2, seconds=3)
+    assert str(moment)[:19].replace('T', ' ') == '2026-01-02 03:04:05'
+    assert rows[1][1:] == (None,) * 7
+
+
+# The types the first matrix leaves out, which is where copies between
+# databases broke: each source's own UUID, time of day, JSON, binary, instant
+# and unsigned 64-bit integer, where it has one. (column, DDL per source,
+# value per source, how to compare what a target returns).
+_KEY = uuid.UUID('00000000-0000-0000-0000-00000000abcd')
+_INSTANT = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+_DOCUMENT = {'a': [1, 2], 'b': 'text'}
+
+AWKWARD = [
+    ('ref_key', {DatabaseType.POSTGRESQL: 'UUID', DatabaseType.MSSQL: 'UNIQUEIDENTIFIER', DatabaseType.DUCKDB: 'UUID',
+             DatabaseType.MYSQL: 'CHAR(36)', DatabaseType.MARIADB: 'UUID', DatabaseType.ORACLE: 'VARCHAR2(36)', DatabaseType.SQLITE: 'TEXT'},
+     lambda databaseType: _KEY if databaseType in (DatabaseType.POSTGRESQL, DatabaseType.MSSQL, DatabaseType.DUCKDB, DatabaseType.MARIADB) else str(_KEY),
+     lambda value: str(value).lower()),
+    ('clock_value', {DatabaseType.POSTGRESQL: 'TIME', DatabaseType.MSSQL: 'TIME', DatabaseType.DUCKDB: 'TIME', DatabaseType.MYSQL: 'TIME',
+               DatabaseType.MARIADB: 'TIME'},
+     lambda databaseType: datetime.time(1, 2, 3),
+     lambda value: str(value)[:8].zfill(8)),
+    ('doc_value', {DatabaseType.POSTGRESQL: 'JSONB', DatabaseType.MYSQL: 'JSON', DatabaseType.MARIADB: 'JSON', DatabaseType.DUCKDB: 'JSON',
+             DatabaseType.MSSQL: 'NVARCHAR(MAX)', DatabaseType.ORACLE: 'CLOB', DatabaseType.SQLITE: 'TEXT'},
+     lambda databaseType: _DOCUMENT if databaseType == DatabaseType.POSTGRESQL else json.dumps(_DOCUMENT),
+     lambda value: value if isinstance(value, dict) else json.loads(value)),
+    ('bin_value', {DatabaseType.POSTGRESQL: 'BYTEA', DatabaseType.MYSQL: 'BLOB', DatabaseType.MARIADB: 'BLOB', DatabaseType.DUCKDB: 'BLOB',
+              DatabaseType.MSSQL: 'VARBINARY(MAX)', DatabaseType.ORACLE: 'BLOB', DatabaseType.SQLITE: 'BLOB'},
+     lambda databaseType: b'\x00\x01\xfe\xff',
+     lambda value: bytes(value)),
+    ('instant_value', {DatabaseType.POSTGRESQL: 'TIMESTAMPTZ', DatabaseType.MSSQL: 'DATETIMEOFFSET', DatabaseType.DUCKDB: 'TIMESTAMPTZ',
+                 DatabaseType.ORACLE: 'TIMESTAMP WITH TIME ZONE'},
+     lambda databaseType: _INSTANT,
+     lambda value: (value.astimezone(datetime.timezone.utc).replace(tzinfo=None) if getattr(value, 'tzinfo', None)
+                    else datetime.datetime.fromisoformat(str(value)).astimezone(datetime.timezone.utc).replace(tzinfo=None)
+                    if isinstance(value, str) and ('+' in value or value.endswith('Z')) else
+                    datetime.datetime.fromisoformat(str(value)))),
+    ('big_unsigned', {DatabaseType.MYSQL: 'BIGINT UNSIGNED', DatabaseType.MARIADB: 'BIGINT UNSIGNED', DatabaseType.DUCKDB: 'UBIGINT'},
+     lambda databaseType: 2 ** 64 - 1,
+     lambda value: int(value)),
+    ]
+
+
+@pytest.mark.parametrize('targetName', NAMES)
+@pytest.mark.parametrize('sourceName', NAMES)
+def test_awkward_types_copy_between_every_pair(sourceName, targetName, tmp_path_factory):
+    """Each pair's `schema` creates the target, and a copy loads the source's
+    own UUID, time of day, JSON, binary, instant and unsigned 64-bit integer
+    into it, to come back as the same values. The first matrix's tamer types
+    left four breaks unseen: a UUID into MySQL, a time into Oracle, an
+    unsigned BIGINT into SQLite, and JSON arrays into anything but PostgreSQL.
+    """
+    source = connect(sourceName, tmp_path_factory)
+    target = connect(targetName, tmp_path_factory) if targetName != sourceName or sourceName not in EMBEDDED else source
+    columns = [(name, ddl[source.type], valueFor(source.type), compare) for name, ddl, valueFor, compare in AWKWARD if source.type in ddl]
+    suffix = uuid.uuid4().hex[:6]
+    table, copy = 'awk_{}'.format(suffix), 'awk_{}_c'.format(suffix)
+
+    try:
+        with Database(connectionSettings=source) as database:
+            database.alter('CREATE TABLE {} (id INTEGER NOT NULL PRIMARY KEY, {})'.format(
+                table, ', '.join('{} {}'.format(name, ddl) for name, ddl, _, _ in columns)))
+            database.insert(table=table, data=[tuple([1] + [value for _, _, value, _ in columns]), tuple([2] + [None] * len(columns))])
+            definition = readTable(database, table, [])
+
+        with Database(connectionSettings=target) as database:
+            for statement in createStatements(source.type, target.type, [definition._replace(name=copy)]):
+                database.alter(statement.sql)
+
+        job = Configuration.validateJobConfiguration({'jobs': {'copy': {
+            'sourceConnection': 'source', 'targetConnection': 'target', 'sourceQuery': 'SELECT * FROM {} ORDER BY id'.format(table),
+            'targetTableFinal': copy, 'insertStrategy': 'upsert', 'unmasked': True}}}, DataJobsFile).jobs['copy']
+        _executeDataJob('copy', job, {'source': source, 'target': target})
+
+        with Database(connectionSettings=target) as database:
+            first, second = database.query('SELECT * FROM {} ORDER BY 1'.format(copy))
+    finally:
+        for settings, name in ((target, copy), (source, table)):
+            with Database(connectionSettings=settings) as database:
+                database.alter('DROP TABLE IF EXISTS {}'.format(name) if settings.type != DatabaseType.ORACLE else
+                               "BEGIN EXECUTE IMMEDIATE 'DROP TABLE {}'; EXCEPTION WHEN OTHERS THEN NULL; END;".format(name))
+
+    for (name, _, value, compare), copied in zip(columns, first[1:]):
+        assert compare(copied) == compare(value), '{} came back as {!r}'.format(name, copied)
+    assert list(second[1:]) == [None] * len(columns)

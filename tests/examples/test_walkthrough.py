@@ -77,7 +77,7 @@ def test_the_session_is_written_down_with_its_limitation(session):
     _, workingDirectory = session
     report = (workingDirectory / 'walkthrough.md').read_text()
 
-    assert '$ bauta subset --databases ' in report
+    assert '$ bauta subset --connections ' in report
     assert 'intact, and signed with key' in report
     assert 'the name is still there' in report
     assert str(workingDirectory) not in report.split('This session was written to')[0]

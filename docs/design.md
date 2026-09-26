@@ -25,14 +25,15 @@ Streaming is per-driver, because `fetchmany()` bounds nothing if the driver has 
 | mysql, mariadb | unbuffered |
 | postgresql | server-side (named) |
 | oracle | `arraysize` tuned to the chunk |
-| mssql, sqlite | plain — both already stream |
+| mssql, sqlite, duckdb | plain — all three already stream |
 
-Loads are written a chunk at a time too, each chunk in its own transaction. The MySQL, MariaDB and Oracle drivers already send a chunk in a few round trips; psycopg and pymssql send one statement per row, so those two get a bulk path:
+Loads are written a chunk at a time too, each chunk in its own transaction. The MySQL, MariaDB and Oracle drivers already send a chunk in a few round trips; psycopg, pymssql and DuckDB send one statement per row, so those three get a bulk path:
 
 - **PostgreSQL uses `COPY`**, about 100 times faster on 50,000 rows. An upsert copies into a temporary table and merges it with one `INSERT ... ON CONFLICT`. A chunk holding a value `COPY` can't spell safely (an array, a JSON object, an interval) goes row by row instead.
 - **SQL Server uses multi-row statements** of up to a thousand rows: about 6 times faster for inserts and 28 for upserts.
+- **DuckDB loads each chunk as an Arrow table**, with one `INSERT ... SELECT`, or `INSERT ... ON CONFLICT` for an upsert: 50,000 rows took 13 seconds row by row, and a tenth of a second this way. A column Arrow can't give one type -- SQLite hands back numbers and text together -- goes as text, which DuckDB casts to the column's type; only a column holding something else besides, such as bytes beside text, sends its chunk row by row.
 
-One statement can't update a row twice, so for both, rows repeating a key within a chunk are first reduced to the last of them — what applying them in turn would leave.
+One statement can't update a row twice, so for all three, rows repeating a key within a chunk are first reduced to the last of them — what applying them in turn would leave.
 
 **A `sourceQuery` that repeats a key** is a question the two upsert paths answer differently, so it is worth not writing one. A stage-less `upsert` keeps the last row of each key, as above. An `upsert` with a `targetTableStage` loads every row into the stage first, and the stage carries the target's primary key, so the database refuses the repeat there — loudly, and before anything reaches the target. Deduplicate in the query instead.
 
@@ -55,12 +56,14 @@ Masking is a stage of this same pipeline (transform, then mask, then load), so a
 | Dialect | Atomic |
 | --- | --- |
 | mysql, mariadb | yes: one `RENAME TABLE` statement |
-| postgresql, mssql, sqlite | yes: the renames run in one transaction |
+| postgresql, mssql, sqlite, duckdb | yes: the renames run in one transaction |
 | oracle | **no**: Oracle commits each DDL statement on its own |
 
 On Oracle, a rename that fails — another session holding the table, which is `ORA-00054` — undoes the renames that already went through, so both tables end where they started and the next run swaps normally. The job still fails, and says which statement failed. A process killed between two of the renames can't undo anything, and leaves a table under the temporary name for someone to rename back.
 
 **Views.** PostgreSQL ties a view to the table itself, not to its name, so after the renames a view over the target would read what is now the stage table. The swap takes care of it: each view built directly on the target is recreated from its own definition in the same transaction, so it reads the new target, and keeps its grants and the views built on it. SQLite has the opposite habit — it rewrites the views that *name* a renamed table, to follow it — so the swap renames with `legacy_alter_table` on, which leaves them naming the target. The remaining dialects resolve views by name and need nothing.
+
+**DuckDB can't swap a table in a foreign key, or one with an index.** It refuses to rename a table with an index or one another references, and renaming one that references another leaves the other naming it by its old name, after which it can't be dropped. A swap job whose target or stage is either fails before renaming anything, saying to use `upsert`. A primary key is no obstacle.
 
 **What isn't rebound on PostgreSQL:** materialized views, which keep reading the old table until recreated.
 
@@ -86,9 +89,9 @@ loadOrders:
   # ...
 ```
 
-- **`{{ watermark }}`** is a bound parameter, not text substitution. It can go anywhere a value can, including a join or subquery, and is rewritten to each dialect's own placeholder, so one query works on all six.
+- **`{{ watermark }}`** is a bound parameter, not text substitution. It can go anywhere a value can, including a join or subquery, and is rewritten to each dialect's own placeholder, so one query works on all seven.
 - **`watermarkColumn`** is read from the *raw* rows, before transforms run. A transform may reformat the column, and the next run's predicate needs a value the source can still compare against.
-- **`watermarkInitial` is bound as whatever YAML made of it.** Written without quotes, `1970-01-01 00:00:00` is a timestamp, which is what a timestamp column and the lookback arithmetic below both want. In quotes it is text, and PostgreSQL and Oracle refuse to subtract an interval from text — on the first run, every run, so the job never advances. Quote it only where the column really is text.
+- **`watermarkInitial` is bound as whatever YAML made of it.** Written without quotes, `1970-01-01 00:00:00` is a timestamp, which is what a timestamp column and the lookback arithmetic below both want. In quotes it is text, and PostgreSQL, Oracle and DuckDB refuse to subtract an interval from text — on the first run, every run, so the job never advances. Quote it only where the column really is text.
 - **`insertStrategy: upsert`** is required. `swap` would replace the target with only the rows that changed, deleting everything else.
 
 ### Why the lookback window
@@ -108,6 +111,7 @@ The library never does arithmetic on a watermark, so write the lookback in your 
 | oracle | `{{ watermark }} - numtodsinterval(5, 'minute')` |
 | mssql | `dateadd(minute, -5, {{ watermark }})` |
 | sqlite | `datetime({{ watermark }}, '-5 minutes')` |
+| duckdb | `{{ watermark }} - interval '5 minutes'` |
 | numeric id | `{{ watermark }} - 5` |
 
 Take watermarks from the **database's** clock, not the ETL host's, or clock skew becomes data loss.
@@ -179,7 +183,7 @@ A skipped job exits non-zero just as a failed one does: it didn't run, so its da
 
 ## Workers
 
-Each job runs in a process of its own, as soon as its predecessors have completed and one of the `workers` slots is free. Starting a process costs a fraction of a second, which is noise next to a database load, and it lets each job be ended on its own:
+Each job runs in a process of its own, as soon as its predecessors have completed, one of the `workers` slots is free, and each connection it uses is below its [`maxConcurrentJobs`](configuration.md#connectionsyaml) -- always 1 for DuckDB, which one process at a time may open. A job held back by a connection doesn't hold back the jobs behind it that use others. Starting a process costs a fraction of a second, which is noise next to a database load, and it lets each job be ended on its own:
 
 - **A job that dies** — killed for memory, crashed in a driver — fails, and only that job. Its dependents are skipped, and the run still ends; it doesn't wait for an outcome that will never come.
 - **A job past its `timeoutSeconds`** is sent `SIGTERM`, then `SIGKILL` five seconds later if it hasn't exited. It fails with a `Timeout` error and its dependents are skipped. Its database connections close with it, so each server rolls back whatever the job hadn't committed; what it had committed stays, as for any failure part-way (see [how a data job moves rows](#how-a-data-job-moves-rows)). The timeout covers the whole job, retries included.
@@ -201,7 +205,7 @@ A data job with `retries: 3` gets up to four attempts. The delay starts at `retr
 
 Retrying a whole job is safe because both strategies converge on a re-run: `swap` restages and re-swaps, and `upsert` reapplies existing rows as a no-op.
 
-**What isn't retried:** configuration errors (including a target without a primary key), transform errors, unresolvable transformer references and masking errors. All of them come from this package and fail the same way every time; retrying would only delay the failure and bury the message under repeats. Everything a database driver raises *is* retried — transient and permanent database errors can't be told apart reliably across six drivers, and a needless retry costs far less than losing a load to one dropped connection.
+**What isn't retried:** configuration errors (including a target without a primary key), transform errors, unresolvable transformer references and masking errors. All of them come from this package and fail the same way every time; retrying would only delay the failure and bury the message under repeats. Everything a database driver raises *is* retried — transient and permanent database errors can't be told apart reliably across seven drivers, and a needless retry costs far less than losing a load to one dropped connection.
 
 Masked data jobs retry like any other data job. The watermark is read again on each attempt, so a `DatabaseMemory` that fails once is retried too.
 
@@ -239,9 +243,11 @@ A policy must list **every column the query returns**, or the job fails before w
 Copying between different databases means one driver's values have to be accepted by another. Two connection settings make that work, and both apply to every job:
 
 - **Oracle.** CLOB and BLOB columns are fetched as plain text and bytes rather than as LOB handles, which no other driver can load. The session's date formats are set to ISO 8601, so text such as `'2026-01-02 03:04:05'` loads into a `DATE` or `TIMESTAMP` column; that includes SQLite's dates and a `watermarkInitial` compared against a date column. This changes Oracle's implicit conversions between dates and text in both directions, so a `sourceQuery` that relied on the default `DD-MON-RR` format, or that calls `TO_CHAR` on a date without a format, now sees ISO text. Dates that arrive as datetime objects are unaffected.
+- **DuckDB.** Each session's time zone is UTC. DuckDB's default is the machine's own, which it converts through when a time-zone-aware value meets a column without one, so the same job stored different times on machines in different zones.
+- **Lists, dictionaries, UUIDs and times.** A PostgreSQL array, a JSON document or DuckDB's LIST, STRUCT and MAP arrive as lists and dictionaries, which SQLite's, MySQL's, Oracle's and SQL Server's drivers can't bind; they are written as JSON text, which is what `schema` maps them to. PostgreSQL writes a list as JSON into a `json` or `jsonb` column and as an array elsewhere. A UUID and a time of day are written as text for the drivers that refuse them.
 - **SQLite.** `Decimal` values, which other drivers return for `NUMERIC` columns, are written as their exact text — and kept that way only by a column SQLite gives text affinity, which is what `schema` creates for a decimal. A column declared `DECIMAL(38,10)` has *numeric* affinity, and SQLite converts the text to an integer or a float as it stores it: `123456789012345678.1234567890` comes back as `123456789012345680`. Dates, timestamps and UUIDs are stored as ISO text, replacing Python's built-in converters, which are deprecated since 3.12.
 
-`tests/integration/test_integration_schema.py` copies the same rows between every pair of the six databases to keep this true.
+`tests/integration/test_integration_schema.py` copies the same rows between every pair of the seven databases to keep this true.
 
 
 ## How names are written
@@ -250,8 +256,8 @@ A table name lives in two places, and they want opposite things. A statement nee
 
 So a name given to bauta is read before it is used. It is split on the dot that separates schema from table, ignoring dots inside quotes; each part is then unquoted, or, if it was written plainly, folded the way that database folds an unquoted name — upper case on Oracle, lower case on PostgreSQL, unchanged elsewhere. That spelling is what a lookup binds. To build a statement, it is quoted again in that database's own style. A name no database would accept unquoted, such as one with a space, is taken as it is written, since it has no unquoted spelling to fold.
 
-Two things follow. Writing `orders` means whatever the database means by `orders`, on all six. Writing `"Orders"` means that exact table, and is the only way to name one whose case the database would otherwise fold.
+Two things follow. Writing `orders` means whatever the database means by `orders`, on all seven. Writing `"Orders"` means that exact table, and is the only way to name one whose case the database would otherwise fold.
 
-A name longer than the target keeps is refused rather than used. Every database but SQLite cuts one to its limit — 63 bytes on PostgreSQL, 64 characters on MySQL and MariaDB, 128 on Oracle and SQL Server — and none of them says so, so two names alike up to the limit are one table: two jobs would load over each other, and the second swap would rename over the first's rows.
+A name longer than the target keeps is refused rather than used. Every database but SQLite and DuckDB, which have none, cuts one to its limit — 63 bytes on PostgreSQL, 64 characters on MySQL and MariaDB, 128 on Oracle and SQL Server — and none of them says so, so two names alike up to the limit are one table: two jobs would load over each other, and the second swap would rename over the first's rows.
 
 The same reading builds the temporary name a swap renames through, so the suffix goes inside the quotes — `[group_tmp]`, never `[group]_tmp`, which SQL Server's parser refuses. `bauta schema` quotes the tables it creates as it already quoted their columns, and `subset` and `discover` quote the names they write into the jobs and queries they generate.

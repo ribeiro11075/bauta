@@ -1,7 +1,11 @@
+import datetime
+import decimal
+import uuid
+
 import pytest
 
 from bauta.configuration import DatabaseType
-from bauta.database.dialects import ColumnCategory, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, SQLiteDialect, \
+from bauta.database.dialects import ColumnCategory, DuckDBDialect, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, SQLiteDialect, \
     catalogName, quoteFoldedTable, quoteTableName, splitTableName, suffixedName
 
 ALL_COLUMNS = ['id', 'name', 'amount']
@@ -9,11 +13,7 @@ PRIMARY_KEY_COLUMNS = ['id']
 NON_PRIMARY_KEY_COLUMNS = ['name', 'amount']
 
 
-def test_mysql_placeholders():
-    assert MySQLDialect().placeholders(3) == ['%s', '%s', '%s']
-
-
-@pytest.mark.parametrize('dialect', [MySQLDialect(), PostgreSQLDialect(), OracleDialect(), MSSQLDialect()])
+@pytest.mark.parametrize('dialect', [MySQLDialect(), PostgreSQLDialect(), OracleDialect(), MSSQLDialect(), DuckDBDialect()])
 @pytest.mark.parametrize('query', ['primaryKeyQuery', 'columnsQuery', 'tableExistsQuery'])
 def test_catalog_queries_bind_the_schema_and_table_rather_than_interpolating_them(dialect, query):
     """A lookup that ignored the schema used to pick up a same-named table
@@ -26,7 +26,7 @@ def test_catalog_queries_bind_the_schema_and_table_rather_than_interpolating_the
     assert 'COALESCE(' in text
 
 
-@pytest.mark.parametrize('dialect', [MySQLDialect(), PostgreSQLDialect(), OracleDialect(), MSSQLDialect()])
+@pytest.mark.parametrize('dialect', [MySQLDialect(), PostgreSQLDialect(), OracleDialect(), MSSQLDialect(), DuckDBDialect()])
 def test_the_primary_key_query_ignores_unique_constraints(dialect):
     """Treating UNIQUE columns as key columns made an upsert match on (id,
     email): a changed email became an insert that violated the real key, and
@@ -58,12 +58,6 @@ def test_the_primary_key_lookup_splits_a_qualified_table_name(table, expected):
     assert '%s' in cursor.executed[0][0]
 
 
-def test_mysql_upsert_query():
-    query = MySQLDialect().upsertQuery('people', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS)
-    assert query == ('INSERT INTO people (id, name, amount) VALUES (%s, %s, %s) '
-                      'ON DUPLICATE KEY UPDATE name=VALUES(name), amount=VALUES(amount)')
-
-
 def test_mysql_upsert_of_a_key_only_table_does_not_use_insert_ignore():
     """INSERT IGNORE also turns truncation, NOT NULL and foreign-key errors into
     warnings, silently dropping or mangling rows.
@@ -74,34 +68,7 @@ def test_mysql_upsert_of_a_key_only_table_does_not_use_insert_ignore():
     assert query.endswith('ON DUPLICATE KEY UPDATE links.a=links.a')
 
 
-def test_mysql_upsert_from_stage_query():
-    query = MySQLDialect().upsertFromStageQuery('people', 'people_stage', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS)
-    assert query == ('INSERT INTO people (id, name, amount) SELECT id, name, amount FROM people_stage '
-                      'ON DUPLICATE KEY UPDATE name=VALUES(name), amount=VALUES(amount)')
-
-
-def test_mysql_swap_is_one_statement():
-    queries = MySQLDialect().swapQueries('people', 'people_stage', 'people_tmp')
-    assert queries == ['RENAME TABLE people_stage TO people_tmp, people TO people_stage, people_tmp TO people']
-
-
-def test_postgresql_placeholders():
-    assert PostgreSQLDialect().placeholders(2) == ['%s', '%s']
-
-
-def test_postgresql_upsert_query():
-    query = PostgreSQLDialect().upsertQuery('people', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS)
-    assert query == ('INSERT INTO people (id, name, amount) VALUES (%s, %s, %s) '
-                      'ON CONFLICT(id) DO UPDATE SET name=excluded.name, amount=excluded.amount')
-
-
-def test_postgresql_swap_is_one_chained_statement():
-    queries = PostgreSQLDialect().swapQueries('people', 'people_stage', 'people_tmp')
-    assert len(queries) == 1
-    assert queries[0].count(';') == 2
-
-
-@pytest.mark.parametrize('dialect', [PostgreSQLDialect(), OracleDialect(), SQLiteDialect()])
+@pytest.mark.parametrize('dialect', [PostgreSQLDialect(), OracleDialect(), SQLiteDialect(), DuckDBDialect()])
 def test_a_rename_takes_the_new_name_unqualified(dialect):
     """`ALTER TABLE sales.orders RENAME TO sales.orders_tmp` is a syntax error;
     the renamed table stays in its schema anyway.
@@ -120,10 +87,6 @@ def test_mssql_sp_rename_takes_the_new_name_unqualified():
 
     assert query == ("EXEC sp_rename 'sales.orders_stage', 'orders_tmp'; EXEC sp_rename 'sales.orders', 'orders_stage'; "
                      "EXEC sp_rename 'sales.orders_tmp', 'orders';")
-
-
-def test_oracle_placeholders_are_positional_binds():
-    assert OracleDialect().placeholders(3) == [':1', ':2', ':3']
 
 
 def test_oracle_catalog_queries_look_in_the_current_schema_not_every_schema():
@@ -146,14 +109,6 @@ def test_postgresql_catalog_queries_bind_the_name_rather_than_lower_casing_it():
         assert 'lower(' not in query
 
 
-def test_oracle_upsert_query_is_a_merge_with_matched_and_not_matched():
-    query = OracleDialect().upsertQuery('people', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS)
-    assert query.startswith('MERGE INTO people target USING (SELECT :1 id, :2 name, :3 amount FROM dual) source')
-    assert 'ON (target.id = source.id)' in query
-    assert 'WHEN MATCHED THEN UPDATE SET target.name = source.name, target.amount = source.amount' in query
-    assert 'WHEN NOT MATCHED THEN INSERT (id, name, amount) VALUES (source.id, source.name, source.amount)' in query
-
-
 def test_oracle_upsert_query_omits_when_matched_with_no_non_primary_columns():
     """An empty UPDATE SET is invalid Oracle syntax -- a table of only primary-key
     columns has nothing to update, so WHEN MATCHED must be dropped entirely.
@@ -167,29 +122,6 @@ def test_oracle_upsert_from_stage_query_sources_the_stage_table_not_dual():
     query = OracleDialect().upsertFromStageQuery('people', 'people_stage', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS)
     assert query.startswith('MERGE INTO people target USING people_stage source')
     assert 'FROM dual' not in query
-
-
-def test_oracle_swap_is_three_separate_statements():
-    """Oracle's cursor.execute() can only run one statement at a time."""
-    queries = OracleDialect().swapQueries('people', 'people_stage', 'people_tmp')
-    assert queries == [
-        'ALTER TABLE people_stage RENAME TO people_tmp',
-        'ALTER TABLE people RENAME TO people_stage',
-        'ALTER TABLE people_tmp RENAME TO people',
-        ]
-
-
-def test_mssql_placeholders():
-    assert MSSQLDialect().placeholders(3) == ['%s', '%s', '%s']
-
-
-def test_mssql_upsert_query_is_a_merge_with_matched_and_not_matched():
-    query = MSSQLDialect().upsertQuery('people', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS)
-    assert query.startswith('MERGE INTO people AS target USING (VALUES (%s, %s, %s)) AS source (id, name, amount)')
-    assert 'ON (target.id = source.id)' in query
-    assert 'WHEN MATCHED THEN UPDATE SET target.name = source.name, target.amount = source.amount' in query
-    assert 'WHEN NOT MATCHED THEN INSERT (id, name, amount) VALUES (source.id, source.name, source.amount)' in query
-    assert query.endswith(';')  # MERGE requires a terminating semicolon in T-SQL
 
 
 def test_mssql_upsert_query_omits_when_matched_with_no_non_primary_columns():
@@ -207,41 +139,6 @@ def test_mssql_upsert_from_stage_query_sources_the_stage_table_not_values():
     assert 'VALUES' not in query.split('ON')[0]
 
 
-def test_mssql_swap_is_one_statement_of_chained_sp_rename_calls():
-    """sp_rename is a stored procedure, not DDL -- chaining three EXEC calls in one
-    execute() works, unlike Oracle's ALTER TABLE RENAME which needs three separate
-    execute() calls.
-    """
-    queries = MSSQLDialect().swapQueries('people', 'people_stage', 'people_tmp')
-    assert queries == ["EXEC sp_rename 'people_stage', 'people_tmp'; EXEC sp_rename 'people', 'people_stage'; EXEC sp_rename 'people_tmp', 'people';"]
-
-
-def test_mariadb_reuses_mysql_dialect_wholesale():
-    """MariaDBDialect adds nothing of its own -- proves it inherits every query/
-    placeholder method from MySQLDialect unchanged.
-    """
-    assert MariaDBDialect().placeholders(2) == MySQLDialect().placeholders(2)
-    assert MariaDBDialect().primaryKeyQuery() == MySQLDialect().primaryKeyQuery()
-    assert MariaDBDialect().upsertQuery('people', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS) == \
-        MySQLDialect().upsertQuery('people', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS)
-    assert MariaDBDialect().swapQueries('people', 'people_stage', 'people_tmp') == MySQLDialect().swapQueries('people', 'people_stage', 'people_tmp')
-
-
-def test_sqlite_placeholders():
-    assert SQLiteDialect().placeholders(3) == ['?', '?', '?']
-
-
-def test_sqlite_truncate_query_is_a_delete_since_sqlite_has_no_truncate():
-    assert SQLiteDialect().truncateQuery('people') == 'DELETE FROM people'
-
-
-def test_other_dialects_default_truncate_query_is_ansi_truncate():
-    assert MySQLDialect().truncateQuery('people') == 'TRUNCATE TABLE people'
-    assert PostgreSQLDialect().truncateQuery('people') == 'TRUNCATE TABLE people'
-    assert OracleDialect().truncateQuery('people') == 'TRUNCATE TABLE people'
-    assert MSSQLDialect().truncateQuery('people') == 'TRUNCATE TABLE people'
-
-
 @pytest.mark.parametrize('table,expected', [('people', ('people', 'main')), ('other.people', ('people', 'other'))])
 def test_sqlite_primary_key_lookup_binds_the_table_and_attached_database(table, expected):
     cursor = _RecordingCursor([('id',)])
@@ -249,23 +146,6 @@ def test_sqlite_primary_key_lookup_binds_the_table_and_attached_database(table, 
     assert SQLiteDialect().primaryKey(cursor, table) == ['id']
     assert 'pragma_table_info(?, ?)' in cursor.executed[0][0]
     assert cursor.executed[0][1] == expected
-
-
-def test_sqlite_upsert_query():
-    query = SQLiteDialect().upsertQuery('people', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS)
-    assert query == ('INSERT INTO people (id, name, amount) VALUES (?, ?, ?) '
-                      'ON CONFLICT(id) DO UPDATE SET name=excluded.name, amount=excluded.amount')
-
-
-def test_sqlite_upsert_from_stage_query():
-    """The "WHERE true" is required -- SQLite rejects INSERT ... SELECT ... ON
-    CONFLICT outright as a grammar ambiguity without some clause disambiguating
-    the SELECT first; test_integration_sqlite.py's test_upsert_from_stage is what
-    actually caught this against a real SQLite engine.
-    """
-    query = SQLiteDialect().upsertFromStageQuery('people', 'people_stage', ALL_COLUMNS, PRIMARY_KEY_COLUMNS, NON_PRIMARY_KEY_COLUMNS)
-    assert query == ('INSERT INTO people (id, name, amount) SELECT id, name, amount FROM people_stage WHERE true '
-                      'ON CONFLICT(id) DO UPDATE SET name=excluded.name, amount=excluded.amount')
 
 
 def test_mysql_column_category_maps_known_type_names():
@@ -299,16 +179,6 @@ def test_oracle_column_category_matches_on_db_type_name():
     assert OracleDialect().columnCategory('not a db type object') is None
 
 
-def test_mssql_and_sqlite_column_category_is_unimplemented():
-    """Neither dialect overrides columnCategory -- MSSQL because pymssql's type
-    codes aren't reliably introspectable without importing the driver, SQLite
-    because sqlite3 never reports a real type at all. Both fall back to the base
-    class's None, same as any dialect handed a type it doesn't recognize.
-    """
-    assert MSSQLDialect().columnCategory('anything') is None
-    assert SQLiteDialect().columnCategory(None) is None
-
-
 def test_sqlite_swap_is_three_separate_statements_in_one_transaction():
     """sqlite3's cursor.execute() runs one statement at a time, and doesn't open a
     transaction before DDL -- without the BEGIN, each rename would commit alone.
@@ -323,7 +193,7 @@ def test_sqlite_swap_is_three_separate_statements_in_one_transaction():
 
 
 @pytest.mark.parametrize('dialect', [
-    MySQLDialect(), MariaDBDialect(), PostgreSQLDialect(), SQLiteDialect(), OracleDialect(), MSSQLDialect(),
+    MySQLDialect(), MariaDBDialect(), PostgreSQLDialect(), SQLiteDialect(), OracleDialect(), MSSQLDialect(), DuckDBDialect(),
     ])
 def test_upsert_of_a_key_only_table_is_valid_sql(dialect):
     """Every column is part of the primary key, so there is nothing to update on
@@ -343,7 +213,7 @@ def test_upsert_of_a_key_only_table_is_valid_sql(dialect):
 
 
 @pytest.mark.parametrize('dialect', [
-    MySQLDialect(), MariaDBDialect(), PostgreSQLDialect(), SQLiteDialect(), OracleDialect(), MSSQLDialect(),
+    MySQLDialect(), MariaDBDialect(), PostgreSQLDialect(), SQLiteDialect(), OracleDialect(), MSSQLDialect(), DuckDBDialect(),
     ])
 def test_upsert_from_stage_of_a_key_only_table_is_valid_sql(dialect):
     query = dialect.upsertFromStageQuery(targetTable='t', stageTable='s', allColumns=['id'], primaryKeyColumns=['id'], nonPrimaryKeyColumns=[])
@@ -399,18 +269,22 @@ def test_mssql_bulk_upsert_merges_many_rows_per_statement():
     assert parameters == (1, 'a', 2, 'b')
 
 
-def test_only_postgresql_and_mssql_have_a_bulk_path():
+def test_only_postgresql_mssql_and_duckdb_have_a_bulk_path():
     for dialect in (MySQLDialect(), MariaDBDialect(), OracleDialect(), SQLiteDialect()):
         assert dialect.bulkInsert(None, 't', ['id'], [(1,)]) is False
         assert dialect.bulkUpsert(None, 't', ['id'], ['id'], [], [(1,)]) is False
 
 
 def _settings(**overrides):
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
 
     fields = dict(type='postgresql', user='u', password='secret', database='d', host='h', port=5432)
     fields.update(overrides)
-    return DatabaseConnectionConfig(**fields)
+    if fields['type'] in ('sqlite', 'duckdb'):
+        fields = {name: value for name, value in fields.items() if name in ('type', 'path', 'options')}
+    elif fields['type'] == 'oracle':
+        del fields['database']
+    return connectionConfig(**fields)
 
 
 def test_connect_arguments_add_the_options_to_the_fields():
@@ -430,7 +304,7 @@ def test_an_option_that_duplicates_a_field_is_refused():
 def test_each_dialect_maps_the_fields_to_its_drivers_own_argument_names():
     oracle = OracleDialect().connectArguments(_settings(type='oracle', serviceName='svc', options={'protocol': 'tcps'}))
     mssql = MSSQLDialect().connectArguments(_settings(type='mssql', port=None))
-    sqlite = SQLiteDialect().connectArguments(_settings(type='sqlite', database='/tmp/x.db', options={'uri': True}))
+    sqlite = SQLiteDialect().connectArguments(_settings(type='sqlite', path='/tmp/x.db', options={'uri': True}))
     mysql = MySQLDialect().connectArguments(_settings(type='mysql', port=3306))
     postgresql = PostgreSQLDialect().connectArguments(_settings())
 
@@ -487,6 +361,7 @@ def test_a_table_name_splits_on_the_dot_that_separates_its_parts(table, expected
     (DatabaseType.MYSQL, '`group`', 'group'),
     (DatabaseType.MYSQL, 'Orders', 'Orders'),
     (DatabaseType.SQLITE, '"a""b"', 'a"b'),
+    (DatabaseType.DUCKDB, 'Orders', 'Orders'),  # compares names ignoring case, and keeps them as written
     ])
 def test_a_name_is_unquoted_and_folded_the_way_its_database_stores_it(databaseType, name, expected):
     """What a catalog lookup binds: quoting a name used to be enough to make
@@ -543,9 +418,6 @@ def test_mssql_swap_doubles_a_quote_in_a_table_name():
 # COPY: which chunks it is trusted with -------------------------------------------
 
 def _copyableValues():
-    import datetime
-    import decimal
-    import uuid
 
     class Text(str):
         pass
@@ -575,7 +447,6 @@ def test_a_value_copy_is_not_trusted_with_sends_the_chunk_the_other_way_and_send
     """A list may be an array or JSON, and a Jsonb or a duration has no text
     form COPY is trusted to agree on; the driver's adapters decide those.
     """
-    import datetime
     from unittest.mock import MagicMock
 
     from bauta.database.dialects import PostgreSQLDialect
@@ -596,15 +467,30 @@ def test_a_connection_whose_session_setup_fails_is_closed():
     """
     from unittest.mock import MagicMock
 
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
 
     connection = MagicMock()
     connection.cursor.return_value.execute.side_effect = RuntimeError('schema "nope" does not exist')
     dialect = PostgreSQLDialect()
     dialect.openConnection = lambda settings: connection
 
-    settings = DatabaseConnectionConfig(type='postgresql', host='h', user='u', password='p', database='d', currentSchema='nope')
+    settings = connectionConfig(type='postgresql', host='h', user='u', password='p', database='d', currentSchema='nope')
     with pytest.raises(RuntimeError, match='does not exist'):
         dialect.connect(settings)
 
     connection.close.assert_called_once()
+
+
+def test_duckdb_options_are_duckdbs_own_settings():
+    from bauta.configuration import connectionConfig
+
+    settings = connectionConfig(type='duckdb', path=':memory:', options={'threads': 2})
+
+    assert DuckDBDialect().connectArguments(settings) == {'database': ':memory:', 'config': {'threads': 2}}
+
+
+@pytest.mark.parametrize('dataType, expected', [('INTEGER', ColumnCategory.NUMBER), ('DECIMAL(10,2)', ColumnCategory.NUMBER),
+                                                ('TIMESTAMP WITH TIME ZONE', ColumnCategory.DATE), ('VARCHAR', ColumnCategory.TEXT),
+                                                ('BLOB', None)])
+def test_duckdb_column_category_reads_its_type_text(dataType, expected):
+    assert DuckDBDialect().columnCategory(dataType) == expected

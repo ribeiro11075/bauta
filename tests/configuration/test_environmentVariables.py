@@ -89,7 +89,7 @@ def test_a_whole_database_configuration_can_be_kept_out_of_the_file(monkeypatch)
     raw = {'prod': {'type': 'postgresql', 'database': 'app', 'host': 'db.internal',
                      'user': 'etl', 'password': '${PROD_PASSWORD}', 'port': '${PROD_PORT:-5432}'}}
 
-    configuration = Configuration.validateDatabaseConfiguration(expandEnvironmentVariables(raw))
+    configuration = Configuration.validateConnectionConfiguration(expandEnvironmentVariables(raw))
 
     assert configuration['prod'].plainPassword() == 'hunter2'
     assert configuration['prod'].port == 5432
@@ -119,11 +119,11 @@ def test_a_file_reference_can_be_escaped(tmp_path):
 
 
 def _connection(**overrides):
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
 
     fields = dict(type='postgresql', user='u', database='d', host='h')
     fields.update(overrides)
-    return DatabaseConnectionConfig(**fields)
+    return connectionConfig(**fields)
 
 
 def test_a_password_command_supplies_the_password_at_connect_time(tmp_path):
@@ -164,12 +164,12 @@ def test_a_missing_password_command_raises_a_retryable_error():
 
 
 def test_password_and_password_command_are_exclusive():
-    with pytest.raises(ValueError, match='not both'):
+    with pytest.raises(ConfigurationError, match='not both'):
         _connection(password='p', passwordCommand=['true'])
 
 
 def test_a_network_database_needs_a_password_or_a_command():
-    with pytest.raises(ValueError, match='a password or passwordCommand'):
+    with pytest.raises(ConfigurationError, match='a password or a passwordCommand'):
         _connection()
 
 

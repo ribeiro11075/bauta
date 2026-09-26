@@ -15,11 +15,11 @@ import pytest
 from bauta.configuration import ConfigurationError, DatabaseType
 from bauta.database import Database
 from bauta.database.dialects import IDENTIFIER_LIMITS, quoteFoldedTable, quoteIdentifier
-from tests.integration.servers import SERVERS, serverSettings
+from tests.integration.servers import EMBEDDED, SERVERS, serverSettings
 
 pytestmark = pytest.mark.integration
 
-NAMES = ['sqlite'] + sorted(SERVERS)
+NAMES = EMBEDDED + sorted(SERVERS)
 
 # A reserved word and a space: neither can be written without quotes on any of
 # the six. The space keeps one test's table apart from another's.

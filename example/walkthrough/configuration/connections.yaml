@@ -3,7 +3,7 @@
 # it too. Only this file is written by hand; `subset` generates the jobs.
 production:
   type: sqlite
-  database: production.db
+  path: production.db
 staging:
   type: sqlite
-  database: staging.db
+  path: staging.db

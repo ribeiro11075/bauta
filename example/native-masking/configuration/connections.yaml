@@ -5,7 +5,7 @@
 # default is fine for a path -- never for a secret.
 production:
   type: sqlite
-  database: ${NATIVE_DEMO_PRODUCTION_PATH:-production.db}
+  path: ${NATIVE_DEMO_PRODUCTION_PATH:-production.db}
 staging:
   type: sqlite
-  database: ${NATIVE_DEMO_STAGING_PATH:-staging.db}
+  path: ${NATIVE_DEMO_STAGING_PATH:-staging.db}

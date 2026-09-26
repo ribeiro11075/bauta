@@ -5,6 +5,30 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## Unreleased
+
+DuckDB joins the six databases as a source or target, and the connections file and a job's connection settings are renamed, since a connection will not always be a database. No mask changes.
+
+### Breaking
+- **`database.yaml` is now `connections.yaml`**, and a job's `sourceDatabase` and `targetDatabase` are now `sourceConnection` and `targetConnection`, in `defaults:` too. The old names are not read: `validate` refuses them as unknown settings. Rename the file, then search and replace the two settings.
+- **The flags follow:** `--databases` is `--connections`, and `--memory-database`, `--history-database` and `--manifest-database` are `--memory-connection`, `--history-connection` and `--manifest-connection`. A `memory`, `history` or `manifest` table names its alias with `connection:` rather than `database:`.
+- **Each connection type takes only its own settings.** SQLite and DuckDB name their file with `path` rather than `database`, and Oracle, which is reached by `serviceName` or `sid`, no longer takes the `database` it never used. A setting of another type -- a `serviceName` on a PostgreSQL connection, a `host` on a SQLite one -- is refused naming the types it belongs to; it used to be accepted and ignored. From Python, `DatabaseConnectionConfig` is replaced by one class per type (`PostgreSQLConnection`, `SQLiteConnection`, ...), `ConnectionConfig` is their union, and `connectionConfig(type=..., ...)` builds one from settings as the file would give them.
+- **`discover`, `subset`, `schema`, `synthesize` and `coverage` take `--connection ALIAS`** where they took `--database ALIAS`. From Python, `Configuration.validateDatabaseConfiguration` is `validateConnectionConfiguration`, and `validateJobGraph` takes `connections=` rather than `databases=`.
+
+### Added
+- **DuckDB** (`type: duckdb`, `pip install "bauta[duckdb]"`), as source or target of any job, and for `schema`, `subset`, `discover`, `coverage`, `audit`, `clear` and `verify-references`. `database` is a file path or `:memory:`, `currentSchema` is supported, and `options` are DuckDB's own settings. A chunk loads as an Arrow table in one statement: 50,000 rows row by row took 13 seconds, and take a tenth of a second. It runs in every suite that runs across all the databases, by default, since it needs no server. See [DuckDB](docs/configuration.md#duckdb).
+- **`maxConcurrentJobs` on a connection** caps how many jobs use it at once, however many `workers` the run has; a job held back waits while jobs on other connections start. DuckDB is always 1: it lets one process at a time open a file, and every job is a process of its own. Two aliases for one DuckDB file are refused, and a job finding the file held by something outside the run waits up to a minute, then fails saying why. Run state can't be kept in DuckDB, since the run holds it open throughout; history and manifests can.
+- DuckDB can't swap a table in a foreign key or one with an index -- it refuses to rename either, and renaming a referencing one corrupts its catalog -- so such a swap fails before renaming anything, saying to use `upsert`. Each DuckDB session runs in UTC, since DuckDB otherwise converts through the machine's own zone when a time-zone-aware value meets a column without one. `clear` empties DuckDB tables one transaction per table, since DuckDB checks a foreign key against what is committed.
+- `discover` warns, when masking DuckDB in place, that a table in a foreign key can't be swapped.
+
+### Fixed
+- **Lists and dictionaries load into SQLite, MySQL, MariaDB, Oracle and SQL Server as JSON text**, which is what `schema` maps them to. A PostgreSQL array or JSON document, and DuckDB's LIST, STRUCT and MAP, failed the copy at its first chunk: none of those drivers can bind one. PostgreSQL writes a list into a `json` or `jsonb` column as JSON rather than as an array, which that column refused.
+- **A UUID loads into MySQL and MariaDB, and a time of day into Oracle,** as text; their drivers refused both, failing a PostgreSQL UUID or TIME column copied there.
+- **What each Python type is sent as, for each database, is one table** (`bauta/database/values.py`), tested directly, rather than spread over each dialect. Two things change with it. bauta no longer registers adapters with `sqlite3` for the whole process, which changed how any other code in it wrote dates and Decimals to SQLite. And a watermark is bound as a loaded value is, so a `datetime` watermark keeps its microseconds on SQL Server, where pymssql rounded it to the millisecond.
+- **`schema` maps each of MySQL's and MariaDB's unsigned integers to a type holding its whole range**: SMALLINT UNSIGNED to INTEGER, INT UNSIGNED to BIGINT, BIGINT UNSIGNED to a 20-digit decimal. Mapped to the signed type of the same size, the upper half of each was refused as it loaded, and a BIGINT UNSIGNED past 2\*\*63 copied into SQLite silently became a float. Found by a new copy test between every pair of databases over each one's UUID, time, JSON, binary, instant and unsigned types.
+- **An integer past 64 bits loads into SQLite** as its exact text. A MySQL unsigned BIGINT above 2\*\*63 raised OverflowError.
+
+
 ## 0.1.8 — 2026-09-21
 
 The native masker covers `number`, masks `fpe` two and a half times as fast and `key` a quarter faster on a whole job, and scales integer columns across threads as well as text ones. `synthesize` no longer holds every generated key in memory, and the docs' throughput figures come from a benchmark in the repository. No mask changes.

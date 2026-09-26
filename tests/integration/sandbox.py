@@ -1,12 +1,12 @@
 """A disposable copy of a realistic, awkward schema on all six databases, for
 exploratory testing -- by hand, or by agents looking for ways to break bauta.
 
-    python tests/integration/sandbox.py create NAME DIR    # build it, write DIR/configuration/database.yaml
+    python tests/integration/sandbox.py create NAME DIR    # build it, write DIR/configuration/connections.yaml
     python tests/integration/sandbox.py drop NAME DIR      # remove it again
 
 Each sandbox has its own namespace on every server (a database on MySQL,
 MariaDB and SQL Server, a schema on PostgreSQL and Oracle), so several can run
-at once. database.yaml gets two aliases per database: `<db>` holds the schema
+at once. connections.yaml gets two aliases per database: `<db>` holds the schema
 and its rows, `<db>_copy` is an empty namespace to copy into. SQLite's are
 files in DIR.
 
@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from bauta.configuration import DatabaseConnectionConfig, DatabaseType  # noqa: E402
+from bauta.configuration import connectionConfig, DatabaseType  # noqa: E402
 from bauta.database import Database  # noqa: E402
 from bauta.database.dialects import quoteIdentifier  # noqa: E402
 from servers import SERVERS  # noqa: E402
@@ -285,7 +285,10 @@ def _settings(server, namespace):
 
 
 def _yaml(alias, settings):
-    lines = ['{}:'.format(alias), '  type: {}'.format(settings.type.value), '  database: {}'.format(settings.database)]
+    lines = ['{}:'.format(alias), '  type: {}'.format(settings.type.value)]
+    for field in ('database', 'path'):
+        if getattr(settings, field, None):
+            lines.append('  {}: {}'.format(field, getattr(settings, field)))
     if settings.type != DatabaseType.SQLITE:
         lines += ['  host: {}'.format(settings.host), '  port: {}'.format(settings.port), '  user: {}'.format(settings.user),
                   "  password: '{}'".format(settings.password.get_secret_value())]
@@ -317,7 +320,7 @@ def create(name, directory):
         path = directory / 'sqlite{}.db'.format(suffix)
         for leftover in (path, Path(str(path) + '-wal'), Path(str(path) + '-shm')):
             leftover.unlink(missing_ok=True)
-        sqlite = DatabaseConnectionConfig(type=DatabaseType.SQLITE, database=str(path))
+        sqlite = connectionConfig(type=DatabaseType.SQLITE, path=str(path))
         if not suffix:
             _populate(sqlite)
         aliases.append(_yaml('sqlite' + suffix, sqlite))
@@ -333,8 +336,8 @@ def create(name, directory):
             aliases.append(_yaml(server + suffix, settings))
         print('  {}: ready'.format(server))
 
-    (directory / 'configuration' / 'database.yaml').write_text('\n\n'.join(aliases) + '\n')
-    print('sandbox {} ready: {}'.format(name, directory / 'configuration' / 'database.yaml'))
+    (directory / 'configuration' / 'connections.yaml').write_text('\n\n'.join(aliases) + '\n')
+    print('sandbox {} ready: {}'.format(name, directory / 'configuration' / 'connections.yaml'))
 
 
 def drop(name, directory):

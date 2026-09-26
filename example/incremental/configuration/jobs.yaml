@@ -4,8 +4,8 @@ memory: ../transaction/memory.yaml
 jobs:
   loadOrders:
     active: true
-    sourceDatabase: demo
-    targetDatabase: demo
+    sourceConnection: demo
+    targetConnection: demo
     # {{ watermark }} is bound as a parameter, not pasted in as text. A real
     # deployment would subtract a lookback window here -- see "Why the lookback
     # window" in docs/design.md.

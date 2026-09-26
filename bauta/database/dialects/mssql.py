@@ -1,37 +1,13 @@
 """SQL Server, through pymssql."""
 from __future__ import annotations
 
-import datetime
 import decimal
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
-from ...configuration import DatabaseConnectionConfig, DatabaseType
-from .base import DatabaseDialect, _holdsAny, _mergeUpdateInsertClause, durationText
+from ..driver import Cursor
+from ...configuration import ConnectionConfig, DatabaseType, MSSQLConnection
+from .base import DatabaseDialect, settingsOf, _mergeUpdateInsertClause
 from .names import bareName, unqualifiedName
-
-
-
-# Everything MSSQLDialect sends as text, looked for in one pass. A plain date
-# is not among them: only a datetime carries the time pymssql rounds off.
-_MSSQL_AS_TEXT = (datetime.timedelta, datetime.datetime, datetime.time)
-
-
-def _mssqlText(value: Any) -> Any:
-    """A duration or a time as text for SQL Server, anything else as it is.
-
-    A free function, and bound to a local before the loop that calls it once
-    per value: an attribute lookup per value cost more than the pass it saved.
-    timedelta is checked first, being none of the others.
-    """
-
-    if isinstance(value, datetime.timedelta):
-        return durationText(value)
-    if isinstance(value, datetime.datetime):
-        return value.isoformat(sep=' ')
-    if isinstance(value, datetime.time):
-        return value.isoformat()
-
-    return value
 
 
 def _mssqlKind(kind: type) -> str:
@@ -53,18 +29,19 @@ class MSSQLDialect(DatabaseDialect):
 
     databaseType = DatabaseType.MSSQL
 
-    def openConnection(self, settings: DatabaseConnectionConfig) -> Any:
+    def openConnection(self, settings: ConnectionConfig) -> Any:
 
         import pymssql
 
         return pymssql.connect(**self.connectArguments(settings))
 
 
-    def _ownConnectArguments(self, settings: DatabaseConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
         """pymssql takes the port as a str, and fails on None, so it's left out
         when unset.
         """
 
+        settings = settingsOf(settings, MSSQLConnection)
         arguments: Dict[str, Any] = {'server': settings.host, 'user': settings.user, 'password': password, 'database': settings.database}
         if settings.port is not None:
             arguments['port'] = str(settings.port)
@@ -99,7 +76,7 @@ class MSSQLDialect(DatabaseDialect):
                 "FROM information_schema.columns WHERE table_schema = COALESCE({}, SCHEMA_NAME()) AND table_name = {} ORDER BY ordinal_position")
 
 
-    def isEncrypted(self, cursor: Any) -> Optional[bool]:
+    def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
         """Needs VIEW SERVER STATE; without it the query fails, and the answer
         is None.
         """
@@ -150,34 +127,6 @@ class MSSQLDialect(DatabaseDialect):
     # 2100-parameter limit doesn't apply.
     VALUES_ROW_LIMIT = 1000
 
-    def prepareValues(self, rows: List[Tuple[Any, ...]]) -> List[Tuple[Any, ...]]:
-        """Times as ISO text, which SQL Server converts exactly: pymssql renders
-        a bound datetime with milliseconds only, so the microseconds a
-        DATETIME2 column holds were silently lost.
-
-        One pass rather than the base's and then this one's: a chunk holds a
-        value for every row of every column, and walking it twice to find
-        nothing cost more than masking it did.
-        """
-
-        if not _holdsAny(rows, _MSSQL_AS_TEXT):
-            return rows
-
-        # Only the columns that hold one are converted: a chunk's other values
-        # are carried through as they are, rather than each passed to a call
-        # that returns it unchanged.
-        converted = [index for index, column in enumerate(zip(*rows)) if _holdsAny((column,), _MSSQL_AS_TEXT)]
-        text = _mssqlText
-        prepared = []
-
-        for row in rows:
-            values = list(row)
-            for index in converted:
-                values[index] = text(values[index])
-            prepared.append(tuple(values))
-
-        return prepared
-
 
     @staticmethod
     def _multiRowSafe(rows: Sequence[Sequence[Any]]) -> bool:
@@ -192,8 +141,7 @@ class MSSQLDialect(DatabaseDialect):
         """
 
         # Column by column, over each column's distinct types rather than its
-        # values: this runs on every chunk, and per value it cost more than
-        # the load it decides on.
+        # values, since this runs on every chunk.
         for column in zip(*rows):
             types = set(map(type, column))
             types.discard(type(None))
@@ -205,7 +153,7 @@ class MSSQLDialect(DatabaseDialect):
 
         return True
 
-    def bulkInsert(self, cursor: Any, table: str, columns: List[str], rows: Sequence[Sequence[Any]]) -> bool:
+    def bulkInsert(self, cursor: Cursor, table: str, columns: List[str], rows: Sequence[Sequence[Any]]) -> bool:
         """Multi-row INSERT ... VALUES: pymssql's executemany sends a statement per row."""
 
         if not self._multiRowSafe(rows):
@@ -221,7 +169,7 @@ class MSSQLDialect(DatabaseDialect):
         return True
 
 
-    def bulkUpsert(self, cursor: Any, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str],
+    def bulkUpsert(self, cursor: Cursor, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str],
                    rows: Sequence[Sequence[Any]]) -> bool:
         """One MERGE per thousand rows. `rows` hold one row per key, which MERGE
         requires: it refuses to update a target row twice.

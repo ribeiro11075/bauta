@@ -211,14 +211,14 @@ def test_file_memory_records_and_forgets_key_fingerprints(tmp_path):
 def test_database_memory_keeps_key_fingerprints_out_of_watermarks_and_runs(tmp_path):
     import sqlite3
 
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
     from bauta.jobs.memory import DATABASE_MEMORY_SCHEMA, DatabaseMemory
 
     path = tmp_path / 'memory.db'
     connection = sqlite3.connect(path)
     connection.execute(DATABASE_MEMORY_SCHEMA)
     connection.close()
-    with DatabaseMemory(DatabaseConnectionConfig(type='sqlite', database=str(path))) as memory:
+    with DatabaseMemory(connectionConfig(type='sqlite', path=str(path))) as memory:
         memory.recordWatermark('maskCustomers', 7)
         memory.recordKeyFingerprint('maskCustomers', 'abc123')
 
@@ -256,14 +256,14 @@ def test_database_memory_gives_a_watermark_back_as_the_type_it_was(tmp_path, val
     """
     import sqlite3
 
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
     from bauta.jobs.memory import DATABASE_MEMORY_SCHEMA, DatabaseMemory
 
     path = tmp_path / 'memory.db'
     connection = sqlite3.connect(path)
     connection.execute(DATABASE_MEMORY_SCHEMA)
     connection.close()
-    with DatabaseMemory(DatabaseConnectionConfig(type='sqlite', database=str(path))) as memory:
+    with DatabaseMemory(connectionConfig(type='sqlite', path=str(path))) as memory:
         memory.recordWatermark('job1', value)
         read = memory.readWatermarks()['job1']
 
@@ -298,7 +298,7 @@ def test_a_watermark_written_as_a_float_by_an_older_version_still_reads(tmp_path
 def _databaseMemory(tmp_path, name='memory.db'):
     import sqlite3
 
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
     from bauta.jobs.memory import DATABASE_MEMORY_SCHEMA, DatabaseMemory
 
     path = tmp_path / name
@@ -306,7 +306,7 @@ def _databaseMemory(tmp_path, name='memory.db'):
     connection.execute(DATABASE_MEMORY_SCHEMA)
     connection.close()
 
-    return DatabaseMemory(DatabaseConnectionConfig(type='sqlite', database=str(path)))
+    return DatabaseMemory(connectionConfig(type='sqlite', path=str(path)))
 
 
 def test_database_memory_opens_one_connection_and_keeps_it(tmp_path):
@@ -364,12 +364,12 @@ def test_database_memory_does_not_retry_a_statement_that_was_simply_wrong(tmp_pa
     """
     import sqlite3
 
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
     from bauta.jobs.memory import DatabaseMemory
 
     path = tmp_path / 'no-such-table.db'
     sqlite3.connect(path).close()
-    with DatabaseMemory(DatabaseConnectionConfig(type='sqlite', database=str(path))) as memory:
+    with DatabaseMemory(connectionConfig(type='sqlite', path=str(path))) as memory:
         with pytest.raises(Exception):
             memory.read()
 
@@ -391,14 +391,14 @@ def test_database_memory_reads_a_table_whose_name_needs_quoting(tmp_path):
     """
     import sqlite3
 
-    from bauta.configuration import DatabaseConnectionConfig
+    from bauta.configuration import connectionConfig
     from bauta.jobs.memory import DATABASE_MEMORY_SCHEMA, DatabaseMemory
 
     path = tmp_path / 'reserved.db'
     connection = sqlite3.connect(path)
     connection.execute(DATABASE_MEMORY_SCHEMA.replace('bauta_memory', '"order"'))
     connection.close()
-    with DatabaseMemory(DatabaseConnectionConfig(type='sqlite', database=str(path)), table='order') as memory:
+    with DatabaseMemory(connectionConfig(type='sqlite', path=str(path)), table='order') as memory:
         memory.recordWatermark('loadOrders', 7)
         memory.recordKeyFingerprint('maskCustomers', 'abc123')
         memory.recordRun('loadOrders')

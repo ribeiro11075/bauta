@@ -35,23 +35,23 @@ def _load(name: str):
 
 
 @pytest.fixture
-def databaseAliases():
-    return set(Configuration.validateDatabaseConfiguration(_load('database.yaml')))
+def connectionAliases():
+    return set(Configuration.validateConnectionConfiguration(_load('connections.yaml')))
 
 
-def test_the_shipped_database_configuration_validates(databaseAliases):
-    assert databaseAliases
+def test_the_shipped_database_configuration_validates(connectionAliases):
+    assert connectionAliases
 
 
-def test_the_shipped_jobs_configuration_validates(databaseAliases):
+def test_the_shipped_jobs_configuration_validates(connectionAliases):
     jobsFile = Configuration.validateJobConfiguration(_load('jobs.yaml'), DataJobsFile)
-    Configuration.validateJobGraph(jobsFile.jobs, databaseAliases=databaseAliases)
+    Configuration.validateJobGraph(jobsFile.jobs, connectionAliases=connectionAliases)
 
     assert jobsFile.jobs
     assert jobsFile.memory == '../transaction/memory.yaml', 'the starter keeps run state out of its configuration'
 
 
-def test_the_sample_masked_jobs_share_a_domain_and_read_their_key_from_the_environment(databaseAliases):
+def test_the_sample_masked_jobs_share_a_domain_and_read_their_key_from_the_environment(connectionAliases):
     jobsFile = Configuration.validateJobConfiguration(_load('jobs.yaml'), DataJobsFile)
     customers = jobsFile.jobs['loadCustomersMasked'].masking
     orders = jobsFile.jobs['loadOrdersMasked'].masking
@@ -86,7 +86,7 @@ def test_the_sample_reads_every_password_from_the_environment():
     a literal password here quietly undoes the feature. This fails if anyone
     "simplifies" the sample back to plaintext.
     """
-    raw = yaml.load((CONFIGURATION_DIRECTORY / 'database.yaml').read_text(), Loader=yaml.FullLoader)
+    raw = yaml.load((CONFIGURATION_DIRECTORY / 'connections.yaml').read_text(), Loader=yaml.FullLoader)
 
     passwords = [alias['password'] for alias in raw.values() if alias.get('password') is not None]
 
@@ -105,7 +105,7 @@ def test_the_sample_refuses_to_load_when_its_secrets_are_absent(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
     with pytest.raises(ConfigurationError, match='SOURCE_DB_PASSWORD'):
-        _load('database.yaml')
+        _load('connections.yaml')
 
 
 def test_every_demo_has_its_configuration():
@@ -115,10 +115,10 @@ def test_every_demo_has_its_configuration():
 @pytest.mark.parametrize('demoDirectory', DEMO_CONFIGURATION_DIRECTORIES, ids=lambda path: path.parent.name)
 def test_each_demo_configuration_validates(demoDirectory):
     """Each demo's configuration/ is laid out as `--config DIR` expects. The
-    walkthrough ships only database.yaml, since `subset` generates its jobs.
+    walkthrough ships only connections.yaml, since `subset` generates its jobs.
     """
-    with open(demoDirectory / 'database.yaml') as file:
-        databases = Configuration.validateDatabaseConfiguration(expandEnvironmentVariables(yaml.load(file, Loader=yaml.FullLoader)))
+    with open(demoDirectory / 'connections.yaml') as file:
+        databases = Configuration.validateConnectionConfiguration(expandEnvironmentVariables(yaml.load(file, Loader=yaml.FullLoader)))
 
     if demoDirectory.parent.name == 'walkthrough':
         assert not (demoDirectory / 'jobs.yaml').exists()
@@ -129,7 +129,7 @@ def test_each_demo_configuration_validates(demoDirectory):
         with open(jobsPath) as file:
             jobsFile = Configuration.validateJobConfiguration(expandEnvironmentVariables(yaml.load(file, Loader=yaml.FullLoader)), DataJobsFile)
 
-        Configuration.validateJobGraph(jobsFile.jobs, databaseAliases=set(databases))
+        Configuration.validateJobGraph(jobsFile.jobs, connectionAliases=set(databases))
 
         assert jobsFile.jobs, jobsPath.name
         if 'masking' in demoDirectory.parent.name:

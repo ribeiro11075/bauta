@@ -22,8 +22,8 @@ Running `bauta` unattended: where its state lives, and how to know what it did. 
 | Where | Set with | Use when |
 | --- | --- | --- |
 | A file named by `jobs.yaml`'s `memory`, relative to it; `memory.yaml` beside it without one | (default) | The filesystem persists between runs. |
-| A table | `memory: {database: ALIAS}` in `jobs.yaml` | Nothing persists: containers without a volume, several machines. |
-| Another file, or a table, for one run | `--memory FILE`, `--memory-database ALIAS` | It should live somewhere else this time, such as a mounted volume. |
+| A table | `memory: {connection: ALIAS}` in `jobs.yaml` | Nothing persists: containers without a volume, several machines. |
+| Another file, or a table, for one run | `--memory FILE`, `--memory-connection ALIAS` | It should live somewhere else this time, such as a mounted volume. |
 
 Watermarks in a table are stored as text with a type beside them, and read back as the same type: dates, timestamps, times, integers, floats, decimals, and bytes such as SQL Server's `rowversion`. See [tables](#tables) for its definition.
 
@@ -37,7 +37,7 @@ With `history` set in `jobs.yaml`, `run` records one entry per job after each cy
 ```yaml
 history: ../transaction/history.jsonl    # a file, relative to jobs.yaml
 history:
-  database: warehouse                    # or a table
+  connection: warehouse                  # or a table
 ```
 
 ```
@@ -53,7 +53,7 @@ FINISHED             JOB                          STATUS           ROWS   SECOND
 2026-09-16 02:00:12  loadOrders                   completed        4200      12.5
 ```
 
-`--history FILE` or `--history-database ALIAS` overrides the setting, on `run` and on `history`.
+`--history FILE` or `--history-connection ALIAS` overrides the setting, on `run` and on `history`.
 
 Each record has `runId` (shared by the jobs of one cycle), `job`, `status`, `rowCount`, `attempts`, `startedAt`, `finishedAt`, `durationSeconds` and `error`, cut to 2000 characters. A file grows by one line per job per run, so rotate it with `logrotate` or similar.
 
@@ -91,25 +91,25 @@ Without `refresh` set, a plain `run` re-runs every job, which is correct but doe
 
 The same `jobs.yaml` can fill dev, staging and UAT from one production database. Two ways, which combine:
 
-**A database file per environment.** `--databases` names it, so the jobs never change:
+**A database file per environment.** `--connections` names it, so the jobs never change:
 
 ```
-bauta run --databases environments/staging.yaml
-bauta run --databases environments/uat.yaml
+bauta run --connections environments/staging.yaml
+bauta run --connections environments/uat.yaml
 ```
 
-**An alias from the environment.** `${NAME}` expands anywhere in `jobs.yaml`, including in `targetDatabase`, and the alias is checked offline:
+**An alias from the environment.** `${NAME}` expands anywhere in `jobs.yaml`, including in `targetConnection`, and the alias is checked offline:
 
 ```yaml
 defaults:
-  sourceDatabase: prod
-  targetDatabase: ${TARGET_ALIAS:-staging}
+  sourceConnection: prod
+  targetConnection: ${TARGET_ALIAS:-staging}
 ```
 
 ```
 $ TARGET_ALIAS=nosuchalias bauta validate
 Invalid job graph:
-maskCountries: targetDatabase "nosuchalias" is not a known database alias
+maskCountries: targetConnection "nosuchalias" is not a known connection alias
 ```
 
 Give each environment its own masking key, and its copies cannot be joined to each other's — which is usually what you want, since a UAT copy and a staging copy of the same customer should not be recognisably the same person. Give them the same key where a tester needs to follow a record across environments. Either way, [`requireMasking`](configuration.md#requiring-masking) on each target says that none of them can ever receive unmasked rows.
@@ -148,7 +148,7 @@ With `manifest` set in `jobs.yaml`, each run writes a sealed record of what was 
 ```yaml
 manifest: ../transaction/manifest.json   # a file, relative to jobs.yaml
 manifest:
-  database: warehouse                    # or a table
+  connection: warehouse                  # or a table
 ```
 
 ```
@@ -156,12 +156,12 @@ bauta verify-manifest                    # the latest; exit 0 intact, 1 altered
 bauta verify-manifest --run RUN_ID       # an earlier one, from a table
 ```
 
-`--manifest FILE` or `--manifest-database ALIAS` overrides the setting, on `run` and on `verify-manifest`. Set `BAUTA_MANIFEST_KEY` to sign manifests; only a signature shows who wrote one. [The manifest](masking.md#the-manifest) describes its content and how verification works.
+`--manifest FILE` or `--manifest-connection ALIAS` overrides the setting, on `run` and on `verify-manifest`. Set `BAUTA_MANIFEST_KEY` to sign manifests; only a signature shows who wrote one. [The manifest](masking.md#the-manifest) describes its content and how verification works.
 
 
 ## Tables
 
-Run state, history and manifests each need their table to exist before a run uses it. These definitions are `DATABASE_MEMORY_SCHEMA`, `DATABASE_HISTORY_SCHEMA` and `DATABASE_MANIFEST_SCHEMA` in the package, and their types work on all six databases. Times are seconds since 1970.
+Run state, history and manifests each need their table to exist before a run uses it. These definitions are `DATABASE_MEMORY_SCHEMA`, `DATABASE_HISTORY_SCHEMA` and `DATABASE_MANIFEST_SCHEMA` in the package, and their types work on all seven databases. Run state can't be kept in DuckDB, which lets one process at a time open a file; history and manifests can. See [DuckDB](configuration.md#duckdb). Times are seconds since 1970.
 
 ```sql
 CREATE TABLE bauta_memory (
@@ -254,9 +254,9 @@ In `/etc/etl/jobs.yaml`, beside the jobs:
 ```yaml
 memory: /var/lib/etl/memory.yaml
 history:
-  database: warehouse
+  connection: warehouse
 manifest:
-  database: warehouse
+  connection: warehouse
 ```
 
 ```cron

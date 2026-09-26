@@ -7,7 +7,7 @@ Each demo has the same shape:
 | File or folder | What it is |
 | --- | --- |
 | `demo.py` | the script: `python example/<demo>/demo.py` from the repository root |
-| `configuration/` | what it reads: `database.yaml`, and `jobs.yaml` where the demo doesn't generate its own |
+| `configuration/` | what it reads: `connections.yaml`, and `jobs.yaml` where the demo doesn't generate its own |
 | `transaction/` | what it writes: databases, run state, logs, manifests. Emptied at the start of each run, and ignored by git |
 
 The walkthrough runs the `bauta` command itself. The other demos call the Python API, and before each step print the `bauta` command that does the same, with the environment variables its `configuration/` reads — paste it into a shell from the repository root to run that step yourself.
@@ -38,7 +38,7 @@ Builds a small shop's "production" database -- customers with national ids and p
 7. **`synthesize`** fills staging's payment cards with generated rows.
 8. **`history`** shows what ran.
 
-Its `configuration/` holds only `database.yaml`, since `subset` generates the jobs. Every command runs from `transaction/` and is pointed at that file with `--databases`, so the generated jobs, run state and manifest land in `transaction/` beside the databases. It ends by showing customers and a support ticket before and after, including what `redact` leaves behind, and writes the session to `transaction/walkthrough.md`.
+Its `configuration/` holds only `connections.yaml`, since `subset` generates the jobs. Every command runs from `transaction/` and is pointed at that file with `--connections`, so the generated jobs, run state and manifest land in `transaction/` beside the databases. It ends by showing customers and a support ticket before and after, including what `redact` leaves behind, and writes the session to `transaction/walkthrough.md`.
 
 Tested by `tests/examples/test_walkthrough.py`, which also checks that no production email, phone number or card number reaches staging.
 
@@ -123,7 +123,7 @@ cp example/starter/configuration/*.yaml configuration/
 
 | File | What it holds |
 | --- | --- |
-| `database.yaml` | two database aliases, with credentials read from the environment |
+| `connections.yaml` | two database aliases, with credentials read from the environment |
 | `jobs.yaml` | a `defaults:` block, data jobs including an incremental one and two masked ones, and run state, history and the manifest kept in `transaction/` |
 
 Set the variables it reads -- `SOURCE_DB_PASSWORD`, `TARGET_DB_PASSWORD` and `MASKING_KEY` -- then edit it for your databases. The CLI reads `./configuration` by default; `--config DIR` points it anywhere else.
