@@ -10,7 +10,7 @@ import signal
 import time
 from multiprocessing.connection import wait as waitForAny
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Mapping, NamedTuple, Optional, Union
+from typing import Any, Callable, Dict, Generator, List, Mapping, NamedTuple, Optional, Union
 
 from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile
 from ..log import LOGGER_NAME, Log
@@ -31,7 +31,7 @@ SIGNAL_POLL_SECONDS = 1.0
 
 
 @contextlib.contextmanager
-def _terminationHandling() -> Iterator[Dict[str, bool]]:
+def _terminationHandling() -> Generator[Dict[str, bool], None, None]:
     """Turns SIGINT/SIGTERM into a flag the run loop acts on, restoring the
     previous handlers on the way out. See "Stopping" in docs/design.md.
 

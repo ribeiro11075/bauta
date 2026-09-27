@@ -8,7 +8,7 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Generator, Optional, Tuple, TypeVar, Union
 
 import yaml
 
@@ -39,7 +39,7 @@ else:
 
 
 @contextlib.contextmanager
-def exclusiveLock(path: Path, blocking: bool = True) -> Iterator[None]:
+def exclusiveLock(path: Path, blocking: bool = True) -> Generator[None, None, None]:
     """Holds an exclusive lock on `path`, creating it if needed. Raises
     OSError at once if `blocking` is False and someone else holds it.
     """
@@ -57,7 +57,7 @@ class RunInProgressError(Exception):
 
 
 @contextlib.contextmanager
-def exclusiveRun(lockFile: Union[str, Path]) -> Iterator[None]:
+def exclusiveRun(lockFile: Union[str, Path]) -> Generator[None, None, None]:
     """Holds `lockFile` for the life of a run, or raises RunInProgressError, so
     two runs sharing run state can't run the same jobs at once. The operating
     system releases it if the process dies.

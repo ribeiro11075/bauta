@@ -8,7 +8,7 @@ import signal
 import sqlite3
 import threading
 import time
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 import pytest
 
@@ -1373,7 +1373,7 @@ def test_a_changed_key_is_refused_even_when_acknowledged_if_it_masks_the_primary
 
 
 @contextlib.contextmanager
-def _warningsFromThePackage() -> Iterator[List[str]]:
+def _warningsFromThePackage() -> Generator[List[str], None, None]:
     """The package's own warnings. Its logger doesn't propagate -- log.py keeps
     its records out of a host application's handlers -- so caplog, which listens
     at the root, never sees them.
@@ -1667,7 +1667,7 @@ def test_masking_threads_reach_each_job_and_change_no_row(tmp_path, monkeypatch)
 
 
 @contextlib.contextmanager
-def _infoFromThePackage() -> Iterator[List[str]]:
+def _infoFromThePackage() -> Generator[List[str], None, None]:
 
     messages: List[str] = []
 

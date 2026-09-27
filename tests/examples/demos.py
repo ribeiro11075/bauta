@@ -7,13 +7,13 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Generator, Iterable
 
 EXAMPLES = Path(__file__).resolve().parents[2] / 'example'
 
 
 @contextlib.contextmanager
-def loadedDemo(folder: str, name: str, environment: Iterable[str] = ()) -> Iterator[object]:
+def loadedDemo(folder: str, name: str, environment: Iterable[str] = ()) -> Generator[object, None, None]:
     """example/<folder>/demo.py as module `name`. The variables in
     `environment` -- the ones the demo sets -- are put back as they were
     afterwards, so a temporary path or a demo key never leaks into a later test.
