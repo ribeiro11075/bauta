@@ -101,7 +101,7 @@ class Database:
     def __init__(self, connectionSettings: ConnectionConfig) -> None:
 
         if isinstance(connectionSettings, (FilesConnection, IcebergConnection)):
-            # A job writes files through bauta.files; anything else that asks
+            # A job writes files through bauta.lake; anything else that asks
             # for a connection -- discover, coverage, run state -- asks for a
             # database.
             raise ConfigurationError('{} is a {} connection, not a database: jobs can write to it, but nothing reads from it'.format(

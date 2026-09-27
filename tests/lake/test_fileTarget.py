@@ -17,7 +17,7 @@ import pyarrow.parquet  # noqa: E402
 
 from bauta.configuration import ConfigurationError, connectionConfig  # noqa: E402
 from bauta.database import Database  # noqa: E402
-from bauta.files import FileTarget, FileTypeError  # noqa: E402
+from bauta.lake import FileTarget, FileTypeError  # noqa: E402
 from bauta.jobs.pipeline import _executeDataJob  # noqa: E402
 from tests.jobConfigs import dataJob  # noqa: E402
 

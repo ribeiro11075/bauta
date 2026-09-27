@@ -19,13 +19,21 @@ from __future__ import annotations
 
 import logging
 import posixpath
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 from ..configuration import ColumnType, ConfigurationError, DataJobConfig, FileFormat, FileStore, IcebergCatalog, IcebergConnection, InsertStrategy
 from ..log import LOGGER_NAME
 from .columnar import Column, ColumnarTarget, newRunId
 from .columns import FileTypeError
 from .formats import Parts, PartSettings
+
+try:
+    from pyiceberg.io.pyarrow import PyArrowFileIO
+except ImportError:
+    # The extra isn't installed: requirePyiceberg() says so, with how to
+    # install it, when a job first needs a catalog.
+    PyArrowFileIO = object  # type: ignore[misc,assignment]
 
 logger = logging.getLogger(LOGGER_NAME)
 
@@ -50,11 +58,6 @@ def requirePyiceberg() -> Any:
     return pyiceberg.catalog
 
 
-def _secret(value: Any) -> Optional[str]:
-
-    return None if value is None else value.get_secret_value()
-
-
 def catalogProperties(settings: IcebergConnection) -> Dict[str, str]:
     """What pyiceberg's load_catalog takes: the catalog's own settings, the
     cloud's credentials under pyiceberg's names, and `properties` over both.
@@ -65,37 +68,34 @@ def catalogProperties(settings: IcebergConnection) -> Dict[str, str]:
     properties: Dict[str, Optional[str]] = {'type': settings.catalog.value, 'uri': settings.uri, 'warehouse': settings.warehouseLocation(),
                                             # pyarrow's filesystems, as a files connection writes with: pyiceberg
                                             # would reach for fsspec's first for Azure, which needs adlfs. See
-                                            # icebergio for the one location it spells for pyarrow.
-                                            'py-io-impl': 'bauta.files.icebergio.FileIO'}
+                                            # FileIO for the one location it spells for pyarrow.
+                                            'py-io-impl': 'bauta.lake.iceberg.FileIO'}
 
-    if settings.credential is not None:
-        properties['credential'] = settings.credential.get_secret_value()
-    if settings.token is not None:
-        properties['token'] = settings.token.get_secret_value()
+    properties.update(credential=settings.plain('credential'), token=settings.plain('token'))
 
     store = settings.store()
 
     if store in (FileStore.S3, None) or settings.catalog == IcebergCatalog.GLUE:
         s3 = {'region': settings.region, 'endpoint': settings.endpoint, 'access-key-id': settings.accessKeyId,
-              'secret-access-key': _secret(settings.secretAccessKey), 'session-token': _secret(settings.sessionToken), 'role-arn': settings.roleArn}
+              'secret-access-key': settings.plain('secretAccessKey'), 'session-token': settings.plain('sessionToken'), 'role-arn': settings.roleArn}
         properties.update({'s3.' + name: value for name, value in s3.items()})
         if settings.roleArn is not None:
             properties['s3.role-session-name'] = 'bauta'
         if settings.catalog == IcebergCatalog.GLUE:
             # Glue is reached with the same AWS credentials as the bucket.
-            glue = {'region': settings.region, 'access-key-id': settings.accessKeyId, 'secret-access-key': _secret(settings.secretAccessKey),
-                    'session-token': _secret(settings.sessionToken)}
+            glue = {'region': settings.region, 'access-key-id': settings.accessKeyId, 'secret-access-key': settings.plain('secretAccessKey'),
+                    'session-token': settings.plain('sessionToken')}
             properties.update({'glue.' + name: value for name, value in glue.items()})
 
     if store == FileStore.GCS and settings.endpoint is not None:
         properties['gcs.service.host'] = settings.endpoint
 
     if store in (FileStore.AZURE, None):
-        adls = {'account-name': settings.azureAccount(), 'account-key': _secret(settings.accountKey), 'sas-token': _secret(settings.sasToken),
-                'tenant-id': settings.tenantId, 'client-id': settings.clientId, 'client-secret': _secret(settings.clientSecret)}
+        adls = {'account-name': settings.azureAccount(), 'account-key': settings.plain('accountKey'), 'sas-token': settings.plain('sasToken'),
+                'tenant-id': settings.tenantId, 'client-id': settings.clientId, 'client-secret': settings.plain('clientSecret')}
         properties.update({'adls.' + name: value for name, value in adls.items()})
-        if store == FileStore.AZURE and settings.endpoint is not None:
-            scheme, authority = settings.endpoint.split('://', 1) if '://' in settings.endpoint else ('https', settings.endpoint)
+        scheme, authority = settings.endpointParts()
+        if store == FileStore.AZURE and authority is not None:
             properties.update({'adls.blob-storage-authority': authority, 'adls.dfs-storage-authority': authority,
                                'adls.blob-storage-scheme': scheme, 'adls.dfs-storage-scheme': scheme})
 
@@ -469,3 +469,30 @@ def checkIcebergWritable(settings: IcebergConnection) -> None:
         with io.new_output(probe).create() as stream:
             stream.write(b'bauta')
         io.delete(probe)
+
+
+# What pyiceberg calls an Azure location.
+_AZURE_SCHEMES = frozenset({'abfs', 'abfss', 'wasb', 'wasbs'})
+
+
+class FileIO(PyArrowFileIO):
+    """The FileIO an Iceberg connection's tables are written through:
+    pyiceberg's own, over pyarrow's filesystems, with one location spelled as
+    pyarrow reads it. pyiceberg 0.12 hands pyarrow an Azure file as
+    `container@account.dfs.core.windows.net/path`, and pyarrow reads all
+    before the first slash as the container's name, which Azure refuses as
+    invalid; here it is `container/path`, as pyarrow names an Azure file
+    everywhere else. pyiceberg loads it by name, through the catalog's
+    `py-io-impl` property.
+    """
+
+    @staticmethod
+    def parse_location(location: str, properties: Optional[Dict[str, str]] = None) -> Tuple[str, str, str]:
+
+        scheme, netloc, path = PyArrowFileIO.parse_location(location, properties or {})
+
+        if scheme in _AZURE_SCHEMES and '@' in netloc:
+            container = netloc.split('@', 1)[0]
+            path = container + urlparse(location).path
+
+        return scheme, netloc, path

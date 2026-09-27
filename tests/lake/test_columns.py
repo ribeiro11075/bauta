@@ -7,7 +7,7 @@ import decimal
 import pytest
 
 from bauta.configuration import ColumnType, parseColumnType
-from bauta.files.columns import FileTypeError, inferType, reportedDecimal, toArrow
+from bauta.lake.columns import FileTypeError, inferType, reportedDecimal, toArrow
 
 UTC = datetime.timezone.utc
 

@@ -476,6 +476,28 @@ class _Lake(_BaseConnection):
 
         raise NotImplementedError
 
+    def plain(self, setting: str) -> Optional[str]:
+        """A secret setting's value, or None where it isn't set: for a driver
+        that takes the text, when about to hand it over.
+        """
+
+        value = getattr(self, setting)
+
+        return None if value is None else value.get_secret_value()
+
+    def endpointParts(self) -> Tuple[Optional[str], Optional[str]]:
+        """`endpoint` as its scheme and host[:port] -- https unless it says
+        http -- or (None, None) without one.
+        """
+
+        if self.endpoint is None:
+            return None, None
+        if '://' in self.endpoint:
+            scheme, authority = self.endpoint.split('://', 1)
+            return scheme, authority.rstrip('/')
+
+        return 'https', self.endpoint.rstrip('/')
+
 
 def _checkLocation(location: str, setting: str) -> str:
     """A directory, or a bucket or container, with a prefix or without. Any

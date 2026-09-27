@@ -25,6 +25,7 @@ pytest -m integration
 | --- | --- |
 | `bauta/configuration/` | reading and validating the YAML |
 | `bauta/database/` | streaming and loading rows; everything that differs between databases in `dialects/`, one module each |
+| `bauta/lake/` | writing files and Iceberg tables: column types in `columns.py` and `columnar.py`, each format's writer in `formats.py`, each cloud in `stores.py`, and the two targets in `target.py` and `iceberg.py` |
 | `bauta/jobs/` | running jobs: the cycle in `runner.py`, one job's chunk pipeline in `pipeline.py`, its process in `workers.py`, the key-change checks in `keys.py`; run state, history and manifests |
 | `bauta/masking/` | the keyed hash and `Strategy` in `core.py`, the built-in strategies in `strategies.py` |
 | `bauta/transform/` | per-column transforms, and the built-in ones |

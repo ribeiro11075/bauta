@@ -14,8 +14,8 @@ pytest.importorskip('pyiceberg', reason='an Iceberg connection writes with pyice
 import pyarrow.fs  # noqa: E402
 
 from bauta.configuration import connectionConfig  # noqa: E402
-from bauta.files import FileTypeError, checkWritable  # noqa: E402
-from bauta.files.iceberg import loadCatalog  # noqa: E402
+from bauta.lake import FileTypeError, checkWritable  # noqa: E402
+from bauta.lake.iceberg import loadCatalog  # noqa: E402
 from bauta.jobs.pipeline import _executeDataJob  # noqa: E402
 from tests.jobConfigs import dataJob  # noqa: E402
 

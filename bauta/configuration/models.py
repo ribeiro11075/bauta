@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import re
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple, Type, TypeVar, Union
+from typing import Annotated, Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple, Type, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 
@@ -15,7 +15,7 @@ from ..masking import changesValues, policyFor, validateColumnPolicy, validateKe
 from .connections import (_CONNECTION_ADAPTER, CONNECTION_TYPES, CleanedListMapping, CleanedMapping, CleanedStringList, ConnectionConfig,
                           DuckDBConnection, FilesConnection, IcebergConnection, _listed)
 from .environment import ConfigurationError
-from .fileTypes import parseColumnType
+from .columnTypes import parseColumnType
 
 # A job's rows per batch when it names none. What `discover` and `subset`
 # generate, so a hand-written job behaves like a generated one.
@@ -85,6 +85,31 @@ class BaseJobConfig(BaseModel):
     predecessors: CleanedStringList = Field(default_factory=list)
 
 
+def _eachColumn(columns: Mapping[str, Any], validate: Callable[[Any], Any]) -> Dict[str, Any]:
+    """A column -> setting mapping with each setting validated, every problem
+    said at once, and no two names differing only in case: column names
+    match case-insensitively, so two such would be one column.
+    """
+
+    validated = {}
+    problems = []
+    folded: Dict[str, str] = {}
+
+    for column, value in columns.items():
+        try:
+            validated[column] = validate(value)
+        except ValueError as error:
+            problems.append('{}: {}'.format(column, error))
+        if column.upper() in folded:
+            problems.append('{}: differs only in case from {} -- column names match case-insensitively'.format(column, folded[column.upper()]))
+        folded[column.upper()] = column
+
+    if problems:
+        raise ValueError('; '.join(problems))
+
+    return validated
+
+
 class MaskingConfig(BaseModel):
     """A job's masking policy, normalized here so a bad strategy or option
     fails `bauta validate` rather than a run. An unknown key is an error, so a
@@ -110,23 +135,7 @@ class MaskingConfig(BaseModel):
     @classmethod
     def _validateColumns(cls, columns: Dict[str, Any]) -> Dict[str, Any]:
 
-        normalized = {}
-        problems = []
-        folded: Dict[str, str] = {}
-
-        for column, policy in columns.items():
-            try:
-                normalized[column] = validateColumnPolicy(policy)
-            except ValueError as error:
-                problems.append('{}: {}'.format(column, error))
-            if column.upper() in folded:
-                problems.append('{}: differs only in case from {} -- column names match case-insensitively'.format(column, folded[column.upper()]))
-            folded[column.upper()] = column
-
-        if problems:
-            raise ValueError('; '.join(problems))
-
-        return normalized
+        return _eachColumn(columns, validateColumnPolicy)
 
 
     @field_validator('defaultStrategy')
@@ -176,7 +185,7 @@ class DataJobConfig(BaseJobConfig):
     postTargetAdhocQueries: CleanedStringList = Field(default_factory=list)
     # A file target's alone. Column -> type, for a column whose values don't
     # settle its type, or settle it as something else; see
-    # configuration.fileTypes. singleFile writes an overwrite job's table as
+    # configuration.columnTypes. singleFile writes an overwrite job's table as
     # one file, <targetTableFinal>.parquet, replaced whole each run.
     targetColumnTypes: CleanedMapping = Field(default_factory=dict)
     singleFile: bool = False
@@ -189,24 +198,13 @@ class DataJobConfig(BaseJobConfig):
     @classmethod
     def _parseColumnTypes(cls, declared: Dict[str, Any]) -> Dict[str, Any]:
 
-        problems = []
-        folded: Dict[str, str] = {}
-        for column, text in declared.items():
+        def checked(text: Any) -> Any:
             if not isinstance(text, str):
-                problems.append('{}: a type is text, such as int64 or decimal(18,2), got {!r}'.format(column, text))
-            else:
-                try:
-                    parseColumnType(text)
-                except ValueError as error:
-                    problems.append('{}: {}'.format(column, error))
-            if column.upper() in folded:
-                problems.append('{}: differs only in case from {} -- column names match case-insensitively'.format(column, folded[column.upper()]))
-            folded[column.upper()] = column
+                raise ValueError('a type is text, such as int64 or decimal(18,2), got {!r}'.format(text))
+            parseColumnType(text)
+            return text
 
-        if problems:
-            raise ValueError('; '.join(problems))
-
-        return declared
+        return _eachColumn(declared, checked)
 
 
     @model_validator(mode='after')

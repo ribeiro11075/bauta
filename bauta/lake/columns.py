@@ -20,7 +20,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..configuration import ColumnType, ConfigurationError
-from ..configuration.fileTypes import MAXIMUM_DECIMAL_PRECISION, isInteger
+from ..configuration.columnTypes import MAXIMUM_DECIMAL_PRECISION, isInteger
 from ..database.values import durationText, jsonText
 
 # The scale a decimal is given when the source doesn't report one: Oracle's

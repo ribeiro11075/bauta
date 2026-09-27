@@ -13,8 +13,8 @@ pytest.importorskip('pyiceberg', reason='an Iceberg connection writes with pyice
 import pyarrow  # noqa: E402
 
 from bauta.configuration import Configuration, ConfigurationError, DataJobsFile, connectionConfig  # noqa: E402
-from bauta.files import FileTypeError  # noqa: E402
-from bauta.files.iceberg import catalogProperties, loadCatalog  # noqa: E402
+from bauta.lake import FileTypeError  # noqa: E402
+from bauta.lake.iceberg import catalogProperties, loadCatalog  # noqa: E402
 from bauta.jobs.pipeline import _executeDataJob  # noqa: E402
 from tests.jobConfigs import dataJob, dataJobFields  # noqa: E402
 
@@ -255,7 +255,7 @@ def test_timestamps_keep_their_zone_as_iceberg_does(tmp_path):
     connection.commit()
     connection.close()
 
-    from bauta.files.iceberg import IcebergTarget
+    from bauta.lake.iceberg import IcebergTarget
 
     target = IcebergTarget('j', dataJob(sourceConnection='prod', targetConnection='lake', targetTableFinal='events', insertStrategy='append'),
                            _lake(tmp_path))

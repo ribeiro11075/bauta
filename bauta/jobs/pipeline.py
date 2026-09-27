@@ -74,12 +74,12 @@ def _openTarget(job: str, jobConfig: DataJobConfig, settings: ConnectionConfig) 
     with contextlib.ExitStack() as held:
         target: LoadTarget
         if isinstance(settings, FilesConnection):
-            from ..files import FileTarget
+            from ..lake import FileTarget
 
             target = FileTarget(job, jobConfig, settings)
             held.callback(target.close)
         elif isinstance(settings, IcebergConnection):
-            from ..files.iceberg import IcebergTarget
+            from ..lake.iceberg import IcebergTarget
 
             target = IcebergTarget(job, jobConfig, settings)
             held.callback(target.close)

@@ -1,6 +1,6 @@
 """Where a data job's rows land: what the pipeline asks of a target, and the
 target that is a table in a database. Files are the other kind; see
-bauta.files.
+bauta.lake.
 
 The pipeline reads, transforms and masks; a target decides what loading
 means. A table loads each chunk in a transaction of its own and swaps or

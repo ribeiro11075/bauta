@@ -18,7 +18,7 @@ one standing for it. Only staging is ever emptied, so the one it leaves is
 from __future__ import annotations
 
 import posixpath
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from ..configuration import S3_LARGEST_COPY, ConfigurationError, FilesConnection, FileStore
 
@@ -188,18 +188,6 @@ class Store:
         self.filesystem.delete_file(path)
 
 
-def _endpoint(settings: FilesConnection) -> Tuple[Optional[str], Optional[str]]:
-    """`endpoint` as scheme and host[:port]: https unless it says http."""
-
-    if settings.endpoint is None:
-        return None, None
-    if '://' in settings.endpoint:
-        scheme, authority = settings.endpoint.split('://', 1)
-        return scheme, authority.rstrip('/')
-
-    return 'https', settings.endpoint.rstrip('/')
-
-
 def _s3(settings: FilesConnection) -> Any:
     """Without keys, the AWS SDK's default chain finds credentials as the
     AWS CLI would.
@@ -223,11 +211,8 @@ def _s3(settings: FilesConnection) -> Any:
         'role_arn': settings.roleArn,
         'session_name': 'bauta' if settings.roleArn else None,
         }
-    if settings.accessKeyId is not None and settings.secretAccessKey is not None:
-        arguments['access_key'] = settings.accessKeyId
-        arguments['secret_key'] = settings.secretAccessKey.get_secret_value()
-        if settings.sessionToken is not None:
-            arguments['session_token'] = settings.sessionToken.get_secret_value()
+    if settings.accessKeyId is not None:
+        arguments.update(access_key=settings.accessKeyId, secret_key=settings.plain('secretAccessKey'), session_token=settings.plain('sessionToken'))
 
     return pyarrow.fs.S3FileSystem(**{name: value for name, value in arguments.items() if value is not None})
 
@@ -240,7 +225,7 @@ def _gcs(settings: FilesConnection) -> Any:
 
     import pyarrow.fs
 
-    scheme, authority = _endpoint(settings)
+    scheme, authority = settings.endpointParts()
     arguments = {
         'anonymous': bool(settings.anonymous),
         'target_service_account': settings.serviceAccount,
@@ -259,13 +244,13 @@ def _azure(settings: FilesConnection) -> Any:
 
     import pyarrow.fs
 
-    scheme, authority = _endpoint(settings)
+    scheme, authority = settings.endpointParts()
     arguments = {
         'account_name': settings.azureAccount(),
-        'account_key': settings.accountKey.get_secret_value() if settings.accountKey else None,
-        'sas_token': settings.sasToken.get_secret_value() if settings.sasToken else None,
+        'account_key': settings.plain('accountKey'),
+        'sas_token': settings.plain('sasToken'),
         'client_id': settings.clientId,
-        'client_secret': settings.clientSecret.get_secret_value() if settings.clientSecret else None,
+        'client_secret': settings.plain('clientSecret'),
         'tenant_id': settings.tenantId,
         # Blob and Data Lake answer at one address in an emulator.
         'blob_storage_authority': authority, 'dfs_storage_authority': authority,

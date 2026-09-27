@@ -14,7 +14,7 @@ import pytest
 pytest.importorskip('pyarrow', reason='a files connection writes with pyarrow (pip install -e ".[files]")')
 
 from bauta.configuration import connectionConfig  # noqa: E402
-from bauta.files import FileTarget  # noqa: E402
+from bauta.lake import FileTarget  # noqa: E402
 from tests.jobConfigs import dataJob  # noqa: E402
 
 UTC = datetime.timezone.utc

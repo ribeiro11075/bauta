@@ -10,7 +10,7 @@ from .connections import (EMBEDDED_TYPES, IDENTIFIER, S3_LARGEST_COPY, Connectio
 from .models import (FILE_STRATEGIES, WATERMARK_PLACEHOLDER, BaseJobConfig, Configuration, DataJobConfig, DataJobsFile, DiscoveryRulesFile,
                      InsertStrategy, MaskingConfig, NameRuleConfig, StorageLocation, TableLocation, ValueRuleConfig, connectionConfig, filePathProblem,
                      findCycle, isLake, targetKind, targetProblems)
-from .fileTypes import ColumnType, parseColumnType
+from .columnTypes import ColumnType, parseColumnType
 
 __all__ = [
     'BaseJobConfig',

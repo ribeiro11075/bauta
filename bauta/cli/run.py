@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..configuration import ConfigurationError, ConnectionConfig, DataJobsFile, FilesConnection, IcebergConnection, InsertStrategy, isLake
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, FilesConnection, IcebergConnection, InsertStrategy, isLake
 from ..database import DIALECTS
 from ..jobs.dependencyGraph import DependencyGraph
 from ..log import Log
@@ -304,9 +304,44 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
     return EXIT_SUCCESS
 
 
+def _checkTargetTables(name: str, job: DataJobConfig, connections: _Connections, log: Log, problems: List[str]) -> Optional[List[str]]:
+    """A database target's columns, having checked it is there, keyed for an
+    upsert, and has a stage table holding them all; None, with the problem
+    added, when the target can't be read.
+    """
+
+    try:
+        with connections.use(job.targetConnection) as database:
+            columns = database.getAllColumnNames(table=job.targetTableFinal)
+            log.logging.info('{}: target {} has {} column(s)'.format(name, job.targetTableFinal, len(columns)))
+
+            if job.insertStrategy == InsertStrategy.UPSERT and not database.getPrimaryColumnNames(table=job.targetTableFinal):
+                problems.append('{}: target {} has no primary key, so insertStrategy: upsert cannot match rows'.format(name, job.targetTableFinal))
+    except Exception as error:
+        problems.append('{}: target {} is not readable -- {}'.format(name, job.targetTableFinal, describeError(error)))
+        return None
+
+    # The stage table is where the rows actually land, so a run fails at
+    # once without it.
+    if job.targetTableStage:
+        try:
+            with connections.use(job.targetConnection) as database:
+                staged = {column.upper() for column in database.getAllColumnNames(table=job.targetTableStage)}
+            log.logging.info('{}: stage table {} has {} column(s)'.format(name, job.targetTableStage, len(staged)))
+            missing = [column for column in columns if column.upper() not in staged]
+            if missing:
+                problems.append('{}: stage table {} is missing column(s) {}, which the load writes'.format(
+                    name, job.targetTableStage, ', '.join(missing)))
+        except Exception as error:
+            problems.append('{}: stage table {} is not readable -- {}'.format(name, job.targetTableStage, describeError(error)))
+
+    return columns
+
+
 def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig], log: Log) -> int:
     """Everything `validate` does, plus what needs a connection: that each alias
-    connects, target tables exist, and upsert targets have a primary key.
+    connects or can be written, target tables exist, upsert targets have a
+    primary key, and each query's columns fit its target and masking policy.
     """
 
     problems: List[str] = []
@@ -318,7 +353,7 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, C
         for alias in aliases:
             settings = connectionConfiguration[alias]
             if isLake(settings):
-                from ..files import checkWritable
+                from ..lake import checkWritable
 
                 try:
                     checkWritable(settings)
@@ -339,48 +374,12 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, C
         for name, job in jobsFile.jobs.items():
             if job.targetConnection in unreachable:
                 continue
-            if isLake(connectionConfiguration[job.targetConnection]):
-                # A file target has no table to read yet: it takes the
-                # columns the query returns.
-                if job.sourceConnection in unreachable:
-                    continue
-                try:
-                    returned = _sourceQueryColumns(job, connections)
-                except Exception as error:
-                    problems.append('{}: sourceQuery could not be checked -- {}'.format(name, describeError(error)))
-                    continue
-                problem = _checkColumnCounts(name, job, returned, returned)
-                if problem is None and job.masking is not None:
-                    problem = _checkMaskingCoverage(name, job, returned, log)
-                if problem:
-                    problems.append(problem)
-                continue
-            try:
-                with connections.use(job.targetConnection) as database:
-                    columns = database.getAllColumnNames(table=job.targetTableFinal)
-                    log.logging.info('{}: target {} has {} column(s)'.format(name, job.targetTableFinal, len(columns)))
 
-                    if job.insertStrategy == InsertStrategy.UPSERT and not database.getPrimaryColumnNames(table=job.targetTableFinal):
-                        problems.append('{}: target {} has no primary key, so insertStrategy: upsert cannot match rows'.format(name, job.targetTableFinal))
-            except Exception as error:
-                problems.append('{}: target {} is not readable -- {}'.format(name, job.targetTableFinal, describeError(error)))
-                continue
-
-            # The stage table is where the rows actually land, so a run fails at
-            # once without it.
-            if job.targetTableStage:
-                try:
-                    with connections.use(job.targetConnection) as database:
-                        staged = {column.upper() for column in database.getAllColumnNames(table=job.targetTableStage)}
-                    log.logging.info('{}: stage table {} has {} column(s)'.format(name, job.targetTableStage, len(staged)))
-                    missing = [column for column in columns if column.upper() not in staged]
-                    if missing:
-                        problems.append('{}: stage table {} is missing column(s) {}, which the load writes'.format(
-                            name, job.targetTableStage, ', '.join(missing)))
-                except Exception as error:
-                    problems.append('{}: stage table {} is not readable -- {}'.format(name, job.targetTableStage, describeError(error)))
-
-            if job.sourceConnection in unreachable:
+            # A lake has no table to read before the first run: it takes the
+            # columns the query returns.
+            lake = isLake(connectionConfiguration[job.targetConnection])
+            columns = None if lake else _checkTargetTables(name, job, connections, log, problems)
+            if (not lake and columns is None) or job.sourceConnection in unreachable:
                 continue
 
             try:
@@ -392,13 +391,11 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, C
             # The same comparison the load makes, made before it writes: a target
             # that gained or lost a column against a query that didn't is the
             # ordinary way a working job stops working.
-            problem = _checkColumnCounts(name, job, returned, columns)
+            problem = _checkColumnCounts(name, job, returned, returned if columns is None else columns)
+            if problem is None and job.masking is not None:
+                problem = _checkMaskingCoverage(name, job, returned, log)
             if problem:
                 problems.append(problem)
-            elif job.masking is not None:
-                problem = _checkMaskingCoverage(name, job, returned, log)
-                if problem:
-                    problems.append(problem)
 
     if problems:
         for problem in problems:
