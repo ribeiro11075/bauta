@@ -82,3 +82,24 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+
+  # Google Cloud Storage, for the same tests; its objects are read anonymously.
+  gcs:
+    image: fsouza/fake-gcs-server:1.56.1
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "127.0.0.1:4443"]
+    ports:
+      - "4443:4443"
+
+  # Azure Blob Storage, for the same tests, with Azurite's well-known account
+  # devstoreaccount1. It has no hierarchical namespace, which is the harder
+  # case: a move there is a copy and a delete.
+  azure:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck", "--loose"]
+    ports:
+      - "10000:10000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(10000, '127.0.0.1').on('connect', () => process.exit(0)).on('error', () => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

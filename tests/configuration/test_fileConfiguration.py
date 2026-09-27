@@ -34,11 +34,11 @@ def test_a_files_connection_takes_sizes_as_text_or_bytes():
 
 
 def test_a_files_connection_refuses_a_url_it_cannot_write_rather_than_reading_it_as_a_directory():
-    """`gs://bucket` is a valid relative path on disk: without the check a run
-    would write into ./gs:/bucket and report success.
+    """`hdfs://host/path` is a valid relative path on disk: without the check a
+    run would write into ./hdfs:/host and report success.
     """
-    with pytest.raises(ConfigurationError, match='gs:// is not supported yet'):
-        connectionConfig(type='files', root='gs://bucket/lake')
+    with pytest.raises(ConfigurationError, match='hdfs:// is not supported'):
+        connectionConfig(type='files', root='hdfs://host/lake')
 
 
 def test_an_s3_root_takes_s3s_settings_and_keeps_its_keys_secret():
@@ -46,6 +46,35 @@ def test_an_s3_root_takes_s3s_settings_and_keeps_its_keys_secret():
 
     assert (settings.root, settings.describeTarget()) == ('s3://bucket/lake', 'files in s3://bucket/lake')
     assert 's3cret' not in repr(settings)
+
+
+@pytest.mark.parametrize('root, bucketPath, account', [
+    ('gs://bucket/lake', 'bucket/lake', None),
+    ('az://container/lake', 'container/lake', 'acct'),
+    ('abfss://container@acct.dfs.core.windows.net/lake/', 'container/lake', 'acct'),
+    ('abfss://container@acct.dfs.core.windows.net', 'container', 'acct'),
+    ])
+def test_a_cloud_root_names_its_bucket_or_container_and_account(root, bucketPath, account):
+    settings = connectionConfig(type='files', root=root, **({'accountName': 'acct'} if root.startswith('az://') else {}))
+
+    assert (settings.bucketPath(), settings.azureAccount()) == (bucketPath, account)
+
+
+@pytest.mark.parametrize('setting, message', [
+    ({'root': 'gs://bucket', 'region': 'eu-west-1'}, 'region is for a root on S3, and root is on Google Cloud Storage'),
+    ({'root': 's3://bucket', 'accountName': 'acct'}, 'accountName is for a root on Azure, and root is on S3'),
+    ({'root': 'lake', 'endpoint': 'http://x'}, 'endpoint is for a root on S3, and root is a directory on this machine'),
+    ({'root': 'az://container'}, 'an az:// root needs accountName'),
+    ({'root': 'abfss://container@acct.blob.core.windows.net/lake'}, 'is not an Azure location'),
+    ({'root': 'abfss://c@acct.dfs.core.windows.net', 'accountName': 'other'}, 'accountName other is not the account root names, acct'),
+    ({'root': 'az://c', 'accountName': 'a', 'clientId': 'i'}, 'a service principal needs clientId, clientSecret and tenantId together'),
+    ({'root': 'az://c', 'accountName': 'a', 'accountKey': 'k', 'sasToken': 't'}, 'accountKey and sasToken are each a way to sign in'),
+    ({'root': 'gs://bucket', 'anonymous': True, 'serviceAccount': 'sa@p.iam.gserviceaccount.com'}, 'anonymous and serviceAccount'),
+    ({'root': 'gs://'}, 'names no bucket'),
+    ])
+def test_a_cloud_root_refuses_settings_that_could_not_work(setting, message):
+    with pytest.raises(ConfigurationError, match=message):
+        connectionConfig(**{'type': 'files', **setting})
 
 
 @pytest.mark.parametrize('setting, message', [

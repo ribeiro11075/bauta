@@ -266,7 +266,7 @@ The same reading builds the temporary name a swap renames through, so the suffix
 
 ## Files as a target
 
-A `files` connection is a directory, on this machine or in an S3 bucket, that jobs write tables of files into -- Parquet, CSV or JSON Lines -- for a lake that Athena, Snowflake or Databricks reads, or a handoff. The pipeline is the same as for a database -- streamed, transformed, masked, a chunk at a time -- and only the load differs.
+A `files` connection is a directory, on this machine or in S3, Google Cloud Storage or Azure Blob Storage, that jobs write tables of files into -- Parquet, CSV or JSON Lines -- for a lake that Athena, Snowflake or Databricks reads, or a handoff. The pipeline is the same as for a database -- streamed, transformed, masked, a chunk at a time -- and only the load differs.
 
 ### What a run leaves where
 
@@ -292,9 +292,11 @@ A run's name begins with when it started, in UTC, so names sort by time, and end
 
 Locally, moving is a rename, so a reader opens a part whole or not at all. An `append` that fails *while* moving its parts in has published some of them; see [duplicates](#appends-and-duplicate-rows).
 
-**On S3** the same holds, by other means. S3 has no rename: a part is moved by copying it within the bucket and deleting the staged one, and an object appears only whole, once its copy completes. So a part can be at most 5 GiB, the most S3 copies in one request, which bounds `fileSize` and a `singleFile` table. Staging matters more on S3 than on disk: an upload pyarrow is made to stop is completed rather than abandoned -- it has no way to abort one -- so a part written in its final place would appear, cut short, whenever its job failed. Written in staging, the cut-short part is deleted with it.
+**In a cloud** the same holds, by other means. An object store has no rename: a part is moved by copying it within the bucket and deleting the staged one, and an object appears only whole, once its copy completes. pyarrow does that itself on S3 and GCS; on Azure without a hierarchical namespace it can't move at all, so bauta copies and deletes, and on an account with one (ADLS Gen2) a move is a rename, as on disk. The copy bounds a part's size where it is one request: 5 GiB on S3, and 256 MiB on Azure with pyarrow before 19, which bounds `fileSize` and a `singleFile` table; GCS, and Azure from pyarrow 19, copy any size.
 
-S3 has no directories, and nothing bauta does creates the empty objects some tools write to stand for them, which readers may list as files -- with one exception: pyarrow, deleting the last object under a prefix, leaves one in its place. Only staging is emptied that way, so the one it leaves is `<root>/_bauta_staging/`, outside every table.
+Staging matters more in a cloud than on disk: an upload pyarrow is made to stop is completed rather than abandoned, in all three -- it has no way to abort one -- so a part written in its final place would appear, cut short, whenever its job failed. Written in staging, the cut-short part is deleted with it.
+
+Object stores have no directories, and nothing bauta does creates the empty objects some tools write to stand for them, which readers may list as files -- with one exception: pyarrow, deleting the last object under a prefix, may leave one in its place. Only staging is emptied that way, so the one it leaves is `<root>/_bauta_staging/`, outside every table. For the same reason, bauta finds a table's snapshots from the files under it rather than asking for directories.
 
 **Parts and row groups.** A job holds rows until they reach `rowGroupSize` in memory, then writes them as one row group; a part is closed when it reaches `fileSize` on disk and the next begun. Memory stays at about one row group plus the pipeline's chunks, however large the table. Row groups are what engines skip by, using the minimum and maximum each records for every column, so a job copying in a useful order -- by date, say -- lets a reader's filter skip most of the table.
 

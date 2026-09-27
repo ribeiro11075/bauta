@@ -384,31 +384,53 @@ FORMAT_COMPRESSIONS = {
     FileFormat.NDJSON: (FileCompression.GZIP, FileCompression.NONE),
     }
 
+class FileStore(str, Enum):
+    """Where a files connection's root is: told from its URL."""
+
+    LOCAL = 'local'
+    S3 = 's3'
+    GCS = 'gcs'
+    AZURE = 'azure'
+
+
 S3_SCHEME = 's3://'
+
+# Each URL a root may begin with. Azure's abfss:// is what Databricks and
+# Synapse write, and names the account in the host.
+ROOT_SCHEMES = {S3_SCHEME: FileStore.S3, 'gs://': FileStore.GCS, 'az://': FileStore.AZURE, 'abfss://': FileStore.AZURE, 'abfs://': FileStore.AZURE}
+
+_ABFS = re.compile(r'^abfss?://([^@/]+)@([^./]+)\.dfs\.core\.windows\.net(/.*)?$')
 
 # A part is published by copying it within the bucket, and S3 copies an
 # object of at most 5 GiB in one request.
 S3_LARGEST_COPY = 5 * 2 ** 30
 
-# The settings only a root on S3 takes.
-S3_SETTINGS = ('region', 'endpoint', 'accessKeyId', 'secretAccessKey', 'sessionToken', 'roleArn')
+# The settings only a root in each store takes; `endpoint` is every cloud's.
+STORE_SETTINGS = {
+    FileStore.S3: ('region', 'endpoint', 'accessKeyId', 'secretAccessKey', 'sessionToken', 'roleArn'),
+    FileStore.GCS: ('endpoint', 'anonymous', 'serviceAccount'),
+    FileStore.AZURE: ('endpoint', 'accountName', 'accountKey', 'sasToken', 'clientId', 'clientSecret', 'tenantId'),
+    }
+
+_STORE_NAMES = {FileStore.S3: 'S3', FileStore.GCS: 'Google Cloud Storage', FileStore.AZURE: 'Azure'}
 
 
 class FilesConnection(_BaseConnection):
-    """A directory, on this machine or in an S3 bucket, that jobs write tables
-    of files into, one directory per table: `targetTableFinal` is its path
-    under `root`. Written, never read: a files connection is a target only.
-    See "Files as a target" in docs/design.md.
+    """A directory -- on this machine, or in S3, Google Cloud Storage or
+    Azure Blob Storage -- that jobs write tables of files into, one directory
+    per table: `targetTableFinal` is its path under `root`. Written, never
+    read: a files connection is a target only. See "Files as a target" in
+    docs/design.md.
 
     `fileSize` is where a part is closed and the next begun; `rowGroupSize`
     is how much of a table is held in memory, before compression, and written
     at once -- one Parquet row group. `keepSnapshots` is how many of an
     overwrite job's complete snapshots stay, the newest included.
 
-    On S3, credentials come from the AWS default chain -- the environment, a
-    profile, an instance or task role, IRSA -- unless `accessKeyId` and
-    `secretAccessKey` are given; `roleArn` is assumed with them. `endpoint`
-    points at another service that speaks S3, such as MinIO or R2.
+    In each cloud, credentials come from its own default chain -- what its
+    command-line tool would find: the environment, a profile or login, the
+    machine's or the pod's identity -- unless settings give them. `endpoint`
+    points at another service speaking the same API, such as MinIO or R2.
     """
 
     type: Literal[StoreType.FILES] = StoreType.FILES
@@ -421,12 +443,23 @@ class FilesConnection(_BaseConnection):
     fileSize: ByteSize = ByteSize(DEFAULT_FILE_SIZE)
     rowGroupSize: ByteSize = ByteSize(DEFAULT_ROW_GROUP_SIZE)
     keepSnapshots: int = Field(default=DEFAULT_KEEP_SNAPSHOTS, ge=1)
-    region: Optional[str] = None
     endpoint: Optional[str] = None
+    # S3.
+    region: Optional[str] = None
     accessKeyId: Optional[str] = None
     secretAccessKey: Optional[SecretStr] = None
     sessionToken: Optional[SecretStr] = None
     roleArn: Optional[str] = None
+    # Google Cloud Storage.
+    anonymous: Optional[bool] = None
+    serviceAccount: Optional[str] = None
+    # Azure.
+    accountName: Optional[str] = None
+    accountKey: Optional[SecretStr] = None
+    sasToken: Optional[SecretStr] = None
+    clientId: Optional[str] = None
+    clientSecret: Optional[SecretStr] = None
+    tenantId: Optional[str] = None
 
     @field_validator('fileSize', 'rowGroupSize')
     @classmethod
@@ -443,39 +476,64 @@ class FilesConnection(_BaseConnection):
     @field_validator('root')
     @classmethod
     def _supportedRoot(cls, root: str) -> str:
-        """A directory on this machine, or s3://bucket[/prefix]. Any other URL
-        is refused rather than read as a relative directory named `gs:`.
+        """A directory on this machine, or a bucket or container, with a
+        prefix or without. Any other URL is refused rather than read as a
+        relative directory named `hdfs:`.
         """
 
-        if root.startswith(S3_SCHEME):
-            bucket = root[len(S3_SCHEME):].split('/', 1)[0]
-            if not bucket:
-                raise ValueError('root {!r} names no bucket; write s3://bucket or s3://bucket/prefix'.format(root))
-            return root.rstrip('/')
+        scheme = next((scheme for scheme in ROOT_SCHEMES if root.startswith(scheme)), None)
 
-        if '://' in root:
-            raise ValueError('root must be a directory on this machine or an s3:// location; {} is not supported yet'.format(
-                root.split('://', 1)[0] + '://'))
+        if scheme is None:
+            if '://' in root:
+                raise ValueError('root must be a directory, or begin with {}; {} is not supported'.format(
+                    ', '.join(sorted(ROOT_SCHEMES)), root.split('://', 1)[0] + '://'))
+            return root
 
-        return root
+        if scheme.startswith('abfs'):
+            if not _ABFS.match(root):
+                raise ValueError('root {!r} is not an Azure location; write abfss://container@account.dfs.core.windows.net/prefix, or '
+                                 'az://container/prefix with accountName'.format(root))
+        elif not root[len(scheme):].split('/', 1)[0]:
+            raise ValueError('root {!r} names no {}; write {}name or {}name/prefix'.format(
+                root, 'container' if scheme == 'az://' else 'bucket', scheme, scheme))
+
+        return root.rstrip('/')
 
     @model_validator(mode='after')
     def _coherentSettings(self) -> 'FilesConnection':
 
-        onS3 = self.isObjectStore()
-        given = [name for name in S3_SETTINGS if getattr(self, name) is not None]
-        if given and not onS3:
-            raise ValueError('{} {} for a root on S3, and root is a directory on this machine'.format(
-                _listed(given), 'is' if len(given) == 1 else 'are'))
+        store = self.store()
+        for other, names in STORE_SETTINGS.items():
+            given = [name for name in names if getattr(self, name) is not None and name not in STORE_SETTINGS.get(store, ())]
+            if given:
+                where = 'a directory on this machine' if store == FileStore.LOCAL else 'on {}'.format(_STORE_NAMES[store])
+                raise ValueError('{} {} for a root on {}, and root is {}'.format(
+                    _listed(given), 'is' if len(given) == 1 else 'are', _STORE_NAMES[other], where))
 
-        if (self.accessKeyId is None) != (self.secretAccessKey is None):
-            raise ValueError('set accessKeyId and secretAccessKey together, or neither to use the AWS default credential chain')
-        if self.sessionToken is not None and self.accessKeyId is None:
-            raise ValueError('sessionToken goes with accessKeyId and secretAccessKey')
+        if store == FileStore.S3:
+            if (self.accessKeyId is None) != (self.secretAccessKey is None):
+                raise ValueError('set accessKeyId and secretAccessKey together, or neither to use the AWS default credential chain')
+            if self.sessionToken is not None and self.accessKeyId is None:
+                raise ValueError('sessionToken goes with accessKeyId and secretAccessKey')
+            if self.fileSize > S3_LARGEST_COPY:
+                raise ValueError('fileSize can be at most 5GiB on S3, which copies no larger an object in one request, and a part is '
+                                 'published by copying it')
 
-        if onS3 and self.fileSize > S3_LARGEST_COPY:
-            raise ValueError('fileSize can be at most 5GiB on S3, which copies no larger an object in one request, and a part is '
-                             'published by copying it')
+        if store == FileStore.GCS and self.anonymous and self.serviceAccount is not None:
+            raise ValueError('anonymous and serviceAccount say two different things; set one')
+
+        if store == FileStore.AZURE:
+            match = _ABFS.match(self.root)
+            if match and self.accountName is not None and self.accountName != match.group(2):
+                raise ValueError('accountName {} is not the account root names, {}'.format(self.accountName, match.group(2)))
+            if not match and self.accountName is None:
+                raise ValueError('an az:// root needs accountName, the storage account the container is in')
+            principal = [name for name in ('clientId', 'clientSecret', 'tenantId') if getattr(self, name) is not None]
+            if principal and len(principal) != 3:
+                raise ValueError('a service principal needs clientId, clientSecret and tenantId together')
+            ways = [name for name in ('accountKey', 'sasToken') if getattr(self, name) is not None] + (['a service principal'] if principal else [])
+            if len(ways) > 1:
+                raise ValueError('{} are each a way to sign in; set one, or none to use the Azure default credential chain'.format(_listed(ways)))
 
         allowed = FORMAT_COMPRESSIONS[self.format]
         if self.compression is not None and self.compression not in allowed:
@@ -490,9 +548,30 @@ class FilesConnection(_BaseConnection):
 
         return self
 
+    def store(self) -> FileStore:
+
+        return next((store for scheme, store in ROOT_SCHEMES.items() if self.root.startswith(scheme)), FileStore.LOCAL)
+
     def isObjectStore(self) -> bool:
 
-        return self.root.startswith(S3_SCHEME)
+        return self.store() != FileStore.LOCAL
+
+    def bucketPath(self) -> str:
+        """The root as its store's filesystem names it: `bucket/prefix`, or
+        `container/prefix` on Azure.
+        """
+
+        match = _ABFS.match(self.root)
+        if match:
+            return match.group(1) + (match.group(3) or '').rstrip('/')
+
+        return self.root.split('://', 1)[1].rstrip('/')
+
+    def azureAccount(self) -> Optional[str]:
+
+        match = _ABFS.match(self.root)
+
+        return match.group(2) if match else self.accountName
 
     def effectiveCompression(self) -> FileCompression:
 

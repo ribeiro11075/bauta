@@ -7,7 +7,7 @@
 - **Audit:** report what every job does with data and what a reviewer should question, and seal each run's masking manifest so it can be verified later.
 - **Provable coverage:** list every table in production and what the jobs do with each, so a table nobody wrote a job for fails the build rather than going unnoticed. A database can require that nothing reaches it unmasked.
 - **Seven databases:** Oracle, SQL Server, PostgreSQL, MySQL, MariaDB, SQLite and DuckDB, as source or target in any combination.
-- **Files as a target:** a masked copy in Parquet, CSV or JSON Lines, in a directory or an S3 bucket, for a data lake that Athena, Snowflake or Databricks reads: appended to incrementally or published whole as a snapshot, with nothing visible until a run succeeds.
+- **Files as a target:** a masked copy in Parquet, CSV or JSON Lines, in a directory or in S3, Google Cloud Storage or Azure, for a data lake that Athena, Snowflake or Databricks reads: appended to incrementally or published whole as a snapshot, with nothing visible until a run succeeds.
 - **Streaming:** memory stays flat however large the table, and PostgreSQL and SQL Server targets load in bulk.
 - **Fast:** a million rows of six masked columns, two of them one-to-one keys, in under 8 seconds on one core with the optional native masker, and 74 without; more cores for wide tables. Either way the masks are the same.
 - **Incremental loads:** extract only what changed since the last successful run.
@@ -32,7 +32,7 @@ pip install "bauta[postgresql,oracle]"
 | `mssql` | pymssql | nothing |
 | `sqlite` | Python's own `sqlite3` | nothing |
 | `duckdb` | duckdb, with pyarrow for fast loads | nothing; one process at a time per file, see [DuckDB](docs/configuration.md#duckdb) |
-| `files` | pyarrow, to write Parquet, CSV and JSON Lines, locally or to S3 | nothing; see [files](docs/configuration.md#files) |
+| `files` | pyarrow, to write Parquet, CSV and JSON Lines, locally or to S3, GCS or Azure | nothing; see [files](docs/configuration.md#files) |
 | `fpe` | cryptography, for the `fpe` masking strategy | nothing; `oracle` already brings it |
 | `native` | `bauta-rs`, the native masker (below) | nothing on Linux (x86-64, ARM) or macOS; elsewhere, [Rust](https://rustup.rs) 1.83 or newer |
 | `all` | every driver above | nothing |

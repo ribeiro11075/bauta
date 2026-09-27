@@ -74,7 +74,7 @@ Each type takes only the settings that apply to it. A setting that belongs to an
 
 | Setting | Types | Required or default | Meaning |
 | --- | --- | --- | --- |
-| `type` | all | required | `postgresql`, `mysql`, `mariadb`, `mssql`, `oracle`, `sqlite` or `duckdb`, or `files` for tables of files in a directory or an S3 bucket; see [files](#files) for its settings |
+| `type` | all | required | `postgresql`, `mysql`, `mariadb`, `mssql`, `oracle`, `sqlite` or `duckdb`, or `files` for tables of files in a directory or a cloud bucket; see [files](#files) for its settings |
 | `database` | postgresql, mysql, mariadb, mssql | required | The database name. |
 | `path` | sqlite, duckdb | required | The database file, or `:memory:`. SQLite connections enforce declared foreign keys, as every other database does; SQLite itself leaves them off unless asked. See [DuckDB](#duckdb) for what differs there. |
 | `host`, `user` | the five server types | required | |
@@ -111,31 +111,37 @@ Install it with `pip install "bauta[duckdb]"`, which brings pyarrow for fast loa
 ```yaml
 lake:
   type: files
-  root: s3://acme-lake/masked      # or a directory: /srv/lake/masked
+  root: s3://acme-lake/masked      # or gs://..., az://..., abfss://..., or a directory
   format: parquet
   requireMasking: true
 ```
 
-A directory, on this machine or in an S3 bucket, that jobs write tables of files into, for a data lake or a handoff. Install it with `pip install "bauta[files]"`, which brings pyarrow; S3 needs nothing more. It is a target only: a job naming it as `sourceConnection`, and `discover`, `subset`, `schema`, `synthesize`, `coverage` and `clear`, are refused, and so is keeping run state, history or a manifest in it. A job writing to it takes `insertStrategy: append` or `overwrite` ([load](#load)); [files as a target](design.md#files-as-a-target) describes what a run leaves where.
+A directory -- on this machine, or in Amazon S3, Google Cloud Storage or Azure Blob Storage -- that jobs write tables of files into, for a data lake or a handoff. Install it with `pip install "bauta[files]"`, which brings pyarrow; the clouds need nothing more. It is a target only: a job naming it as `sourceConnection`, and `discover`, `subset`, `schema`, `synthesize`, `coverage` and `clear`, are refused, and so is keeping run state, history or a manifest in it. A job writing to it takes `insertStrategy: append` or `overwrite` ([load](#load)); [files as a target](design.md#files-as-a-target) describes what a run leaves where.
 
 | Setting | Required or default | Meaning |
 | --- | --- | --- |
-| `root` | required | Where the tables go: a directory, created if missing, or `s3://bucket` or `s3://bucket/prefix`, whose bucket must exist. Each job's `targetTableFinal` is a path under it. Other URLs, such as `gs://`, are refused for now rather than read as a directory named `gs:`. |
+| `root` | required | Where the tables go: a directory, created if missing; `s3://bucket[/prefix]`; `gs://bucket[/prefix]`; or on Azure `az://container[/prefix]` with `accountName`, or `abfss://container@account.dfs.core.windows.net[/prefix]` as Databricks and Synapse write it. A bucket or container must exist. Each job's `targetTableFinal` is a path under the root. Any other URL is refused rather than read as a directory. |
 | `format` | `parquet` | `parquet`, `csv` or `ndjson` (JSON Lines: one JSON object per line). See [formats](design.md#formats) for how each type is spelled in the two text formats. |
 | `compression` | `zstd` for Parquet, `gzip` for text | Parquet: `zstd`, `snappy` (for older readers), `gzip` or `none`. CSV and JSON Lines: `gzip` or `none`, the whole file compressed, and named `.gz` so readers know. |
 | `delimiter` | `,` | CSV's alone: one character, not a quote or a line break. |
-| `fileSize` | `256MB` | Where a part is closed and the next begun, measured as written, compressed. Bytes, or text such as `256MB` or `256MiB`. Snowflake loads best from files of 100 to 250 MB compressed, and Athena and Spark read one file per worker. At most `5GiB` on S3, which publishes a part by copying it. |
+| `fileSize` | `256MB` | Where a part is closed and the next begun, measured as written, compressed. Bytes, or text such as `256MB` or `256MiB`. Snowflake loads best from files of 100 to 250 MB compressed, and Athena and Spark read one file per worker. At most `5GiB` on S3, and `256MiB` on Azure with pyarrow before 19, which publish a part by copying it in one request. |
 | `rowGroupSize` | `128MB` | How much of a table is held in memory, before compression, and written at once: one Parquet row group. Larger compresses better and lets engines skip more; smaller holds less. |
 | `keepSnapshots` | `2` | How many complete snapshots of an `overwrite` job's table stay, the newest included. |
-| `region` | S3 only; the bucket's, asked of S3 | The bucket's AWS region. |
-| `endpoint` | S3 only | Another service that speaks S3 -- MinIO, Cloudflare R2, Ceph -- as a URL, `https://...` or `http://...`. |
-| `accessKeyId`, `secretAccessKey` | S3 only; both or neither | Keys to sign with. The secret is held as `password` is. Without them, the AWS default chain finds credentials as the AWS CLI does: the environment's `AWS_ACCESS_KEY_ID` and friends, a profile, SSO, an EC2 instance role, an ECS task role, IRSA on Kubernetes. Prefer those: nothing to rotate in a file. |
-| `sessionToken` | S3 only | With temporary keys. |
-| `roleArn` | S3 only | A role to assume, with whichever credentials the rest find: for a bucket in another account. |
+| `endpoint` | any cloud | Another service speaking the same API -- MinIO or Cloudflare R2 for S3, an emulator for the others -- as a URL, `https://...` or `http://...`. |
 
-`requireMasking` and `maxConcurrentJobs` apply as to any connection. Two connections may share a root, to write some tables as Parquet and others as CSV.
+`requireMasking` and `maxConcurrentJobs` apply as to any connection. Two connections may share a root, to write some tables as Parquet and others as CSV. A setting of one cloud given with another's root is an error naming the cloud it belongs to.
 
-**What the credentials need on S3**, on the root's prefix: `s3:PutObject`, `s3:GetObject` (a part is published by copying it), `s3:DeleteObject`, `s3:ListBucket`, and `s3:AbortMultipartUpload`. `bauta run --dry-run` writes, lists and deletes an object under the root to check. Give the bucket a lifecycle rule aborting incomplete multipart uploads after a day or so: a process killed mid-upload leaves parts that S3 bills for and nothing lists.
+**Credentials.** In each cloud, without settings that give them, bauta finds credentials as that cloud's command-line tool would. Prefer that: nothing to rotate in a file, and the machine's or the pod's own identity where it has one.
+
+| Cloud | Found without settings | Settings, each optional |
+| --- | --- | --- |
+| S3 | The AWS default chain: `AWS_ACCESS_KEY_ID` and friends, a profile, SSO, an EC2 instance role, an ECS task role, IRSA on Kubernetes. | `region` (else the bucket's, asked of S3); `accessKeyId` with `secretAccessKey`, and `sessionToken` for temporary keys; `roleArn`, a role to assume with whichever credentials the rest find, for a bucket in another account. |
+| Google Cloud Storage | Application Default Credentials: the key file `GOOGLE_APPLICATION_CREDENTIALS` names, `gcloud auth application-default login`, a GCE or GKE service account, workload identity. | `serviceAccount`, an account to impersonate with them; `anonymous` set to `true`, for a public bucket or an emulator. |
+| Azure | The Azure default chain: `AZURE_CLIENT_ID` and friends in the environment, workload identity on Kubernetes, a managed identity, `az login`. | One of: `accountKey`; `sasToken` (pyarrow 20 or newer); a service principal, `clientId` with `clientSecret` and `tenantId` (pyarrow 21 or newer). `accountName` names the storage account for an `az://` root. |
+
+Secrets -- `secretAccessKey`, `sessionToken`, `accountKey`, `sasToken`, `clientSecret` -- are held as `password` is, never in a log line; give them as `${VARIABLES}`.
+
+**What the credentials need**, on the root's prefix: to write, read (a part is published by copying it), delete and list objects -- on S3 `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:ListBucket` and `s3:AbortMultipartUpload`; on GCS the role `roles/storage.objectAdmin`; on Azure `Storage Blob Data Contributor`. `bauta run --dry-run` writes, lists and deletes an object under the root to check. On S3, give the bucket a lifecycle rule aborting incomplete multipart uploads after a day or so: a process killed mid-upload leaves parts that S3 bills for and nothing lists.
 
 ### Requiring masking
 

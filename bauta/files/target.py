@@ -22,7 +22,6 @@ import secrets
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..configuration import ColumnType, ConfigurationError, DataJobConfig, FilesConnection, InsertStrategy, parseColumnType
-from ..configuration.models import S3_LARGEST_COPY
 from ..jobs.targets import LoadTarget
 from ..log import LOGGER_NAME
 from .columns import arrowType, inferType, normalized, reportedDecimal, toArrow
@@ -108,9 +107,10 @@ class _Parts:
         self._rows += table.num_rows
         written = self._stream.tell()
 
-        if self.singleFile and self.store.objectStore and written > S3_LARGEST_COPY:
-            raise ConfigurationError('the table is past 5GiB, and S3 publishes a file by copying it, which it does to at most 5GiB at '
-                                     'once; write it in parts, without singleFile')
+        largest = self.store.largestMove()
+        if self.singleFile and largest is not None and written > largest:
+            raise ConfigurationError('the table is past {} MiB, the largest file this store can publish, by copying it in one request; '
+                                     'write it in parts, without singleFile'.format(largest // 2 ** 20))
         if not self.singleFile and written >= self.settings.fileSize:
             self._close()
 
@@ -161,6 +161,11 @@ class FileTarget(LoadTarget):
         self.jobConfig = jobConfig
         self.settings = settings
         self.store = Store(settings)
+        largest = self.store.largestMove()
+        if largest is not None and settings.fileSize > largest:
+            # Azure's, before pyarrow 19: S3's is checked with the settings.
+            raise ConfigurationError('fileSize is past {} MiB, the largest file this store can publish with the pyarrow installed, which '
+                                     'copies it in one request; lower fileSize, or install pyarrow 19 or newer'.format(largest // 2 ** 20))
         self.tablePath = self.store.path(jobConfig.targetTableFinal)
         self.singleFilePath = self.tablePath + extension(settings)
         self.runId = newRunId()
