@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.0 — 2026-09-26
 
 Jobs can write files: a `files` connection is a directory, or a bucket in S3, Google Cloud Storage or Azure, of tables in Parquet, CSV or JSON Lines, for a data lake or a handoff. No mask changes, and nothing existing changes behaviour.
 
