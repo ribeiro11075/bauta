@@ -32,8 +32,9 @@ try:
     from pyiceberg.io.pyarrow import PyArrowFileIO
 except ImportError:
     # The extra isn't installed: requirePyiceberg() says so, with how to
-    # install it, when a job first needs a catalog.
-    PyArrowFileIO = object  # type: ignore[misc,assignment]
+    # install it, when a job first needs a catalog. The ignore is needed only
+    # where pyiceberg is, whose class this replaces.
+    PyArrowFileIO = object  # type: ignore[misc,assignment,unused-ignore]
 
 logger = logging.getLogger(LOGGER_NAME)
 
