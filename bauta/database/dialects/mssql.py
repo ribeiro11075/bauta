@@ -5,7 +5,7 @@ import decimal
 from typing import Any, Dict, List, Optional, Sequence
 
 from ..driver import Cursor
-from ...configuration import ConnectionConfig, DatabaseType, MSSQLConnection
+from ...configuration import DatabaseConfig, DatabaseType, MSSQLConnection
 from .base import DatabaseDialect, settingsOf, _mergeUpdateInsertClause
 from .names import bareName, unqualifiedName
 
@@ -29,14 +29,14 @@ class MSSQLDialect(DatabaseDialect):
 
     databaseType = DatabaseType.MSSQL
 
-    def openConnection(self, settings: ConnectionConfig) -> Any:
+    def openConnection(self, settings: DatabaseConfig) -> Any:
 
         import pymssql
 
         return pymssql.connect(**self.connectArguments(settings))
 
 
-    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
         """pymssql takes the port as a str, and fails on None, so it's left out
         when unset.
         """

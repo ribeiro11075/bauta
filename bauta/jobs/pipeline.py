@@ -6,14 +6,15 @@ safe. See "How a data job moves rows" in docs/design.md.
 from __future__ import annotations
 
 import collections
+import contextlib
 import logging
 import os
 import re
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Deque, Dict, Generator, Iterable, List, Optional, Sequence, Tuple
 
-from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, InsertStrategy
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, FilesConnection, targetMismatch
 from ..database import Database
 from ..log import LOGGER_NAME
 from ..log.scrubbing import describeError
@@ -22,6 +23,7 @@ from ..masking import core as maskingModule
 from ..transform import Transform, Transformer, TransformError, TransformResolutionError, resolveTransformer
 from .dependencyGraph import JobOutcome, JobStatus
 from .memory import MemoryBackend
+from .targets import LoadTarget, PostLoadError, TableTarget
 
 logger = logging.getLogger(LOGGER_NAME)
 
@@ -56,6 +58,38 @@ def _bindMasking(job: str, jobConfig: DataJobConfig, columns: List[str]) -> Opti
     return bound
 
 
+@contextlib.contextmanager
+def _openTarget(job: str, jobConfig: DataJobConfig, settings: ConnectionConfig) -> Generator[LoadTarget, None, None]:
+    """The job's target, open for as long as the job runs. abort() is called on
+    the way out of a failure, before the target's connection closes.
+    """
+
+    mismatch = targetMismatch(jobConfig, settings)
+    if mismatch:
+        # Validation says so against connections.yaml; asked again here for a
+        # caller that built the job without it.
+        raise ConfigurationError('targetConnection "{}" {}'.format(jobConfig.targetConnection, mismatch))
+
+    if isinstance(settings, FilesConnection):
+        from ..files import FileTarget
+
+        fileTarget = FileTarget(job, jobConfig, settings)
+        try:
+            yield fileTarget
+        except BaseException:
+            fileTarget.abort()
+            raise
+        return
+
+    with Database(connectionSettings=settings) as database:
+        target = TableTarget(database, jobConfig)
+        try:
+            yield target
+        except BaseException:
+            target.abort()
+            raise
+
+
 def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], watermark: Any = None) -> JobOutcome:
     """Runs one data job to completion, raising on failure. See "How a data job
     moves rows" in docs/design.md.
@@ -71,7 +105,7 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
         }
 
     with Database(connectionSettings=connectionConfiguration[jobConfig.sourceConnection]) as sourceConnection, \
-         Database(connectionSettings=connectionConfiguration[jobConfig.targetConnection]) as targetConnection:
+         _openTarget(job, jobConfig, connectionConfiguration[jobConfig.targetConnection]) as target:
 
         sourceQuery = jobConfig.sourceQuery
         parameters = None
@@ -108,35 +142,9 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
                                'and logs, so it would leak the unmasked value'.format(
                                    jobConfig.watermarkColumn, masking.manifest[watermarkIndex].strategy))
 
-        columns = jobConfig.targetColumns or targetConnection.getAllColumnNames(table=jobConfig.targetTableFinal)
-        logger.debug('Resolved target columns for {}: {}'.format(jobConfig.targetTableFinal, columns))
+        target.begin(sourceQueryColumns, getattr(chunks, 'description', None))
 
-        if not jobConfig.targetColumns and len(columns) != len(sourceQueryColumns):
-            # The load binds by position, so the two lists must line up, and
-            # the driver's own complaint names neither the table nor the columns.
-            raise ConfigurationError(
-                'sourceQuery returns {} column(s) {} and {} has {} ({}). List the ones the query fills in targetColumns, in the '
-                'query\'s order'.format(len(sourceQueryColumns), sourceQueryColumns, jobConfig.targetTableFinal, len(columns),
-                                        ', '.join(columns)))
-
-        if jobConfig.insertStrategy == InsertStrategy.UPSERT and not targetConnection.getPrimaryColumnNames(table=jobConfig.targetTableFinal):
-            # Asked before anything is written -- preTargetAdhocQueries, the
-            # stage table -- rather than when the first chunk is upserted.
-            raise ConfigurationError('{} has no primary key, so an upsert cannot match its rows -- add one, or use '
-                                     'insertStrategy: swap'.format(jobConfig.targetTableFinal))
-
-        for preTargetAdhocQuery in jobConfig.preTargetAdhocQueries:
-            logger.debug('Running preTargetAdhocQuery: {}'.format(preTargetAdhocQuery))
-            targetConnection.alter(preTargetAdhocQuery)
-
-        if jobConfig.targetTableStage:
-            logger.debug('Truncating stage table {}'.format(jobConfig.targetTableStage))
-            targetConnection.truncate(table=jobConfig.targetTableStage)
-
-        loadTable = jobConfig.targetTableStage or jobConfig.targetTableFinal
-        streamsDirectlyIntoTarget = jobConfig.insertStrategy == InsertStrategy.UPSERT and not jobConfig.targetTableStage
-
-        logger.info('Loading into {} a chunk at a time'.format(loadTable))
+        logger.info('Loading into {} a chunk at a time'.format(target.loadName))
 
         rowCount = 0
         highWatermark = None
@@ -144,10 +152,7 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
         def writeChunk(rows: List[Any], watermark: Any) -> None:
             nonlocal rowCount, highWatermark
 
-            if streamsDirectlyIntoTarget:
-                targetConnection.upsert(table=loadTable, data=rows, chunkSize=jobConfig.chunkSize, columns=columns)
-            else:
-                targetConnection.insert(table=loadTable, data=rows, chunkSize=jobConfig.chunkSize, columns=columns)
+            target.write(rows)
 
             rowCount += len(rows)
             # Only once the rows have landed, or a failed job's next run would
@@ -155,7 +160,7 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
             if watermark is not None and (highWatermark is None or watermark > highWatermark):
                 highWatermark = watermark
 
-            logger.debug('Loaded {} row(s) into {} ({} so far)'.format(len(rows), loadTable, rowCount))
+            logger.debug('Loaded {} row(s) into {} ({} so far)'.format(len(rows), target.loadName, rowCount))
 
         def prepareChunk(chunkIndex: int, chunk: List[Tuple[Any, ...]]) -> List[Any]:
             rows = transform.apply(chunk)
@@ -170,34 +175,12 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
             _streamChunks(chunks, prepareChunk, writeChunk, watermarkIndex, _pipelineDepth())
         except Exception as error:
             if masking is not None:
-                _noteIfMaskedValueDoesNotFit(error, job, loadTable)
+                _noteIfMaskedValueDoesNotFit(error, job, target.loadName)
             raise
 
-        logger.info('Streamed {} row(s) from {} into {}'.format(rowCount, jobConfig.sourceConnection, loadTable))
+        logger.info('Streamed {} row(s) from {} into {}'.format(rowCount, jobConfig.sourceConnection, target.loadName))
 
-        if jobConfig.insertStrategy == InsertStrategy.SWAP:
-            assert jobConfig.targetTableStage is not None
-            logger.info('Swapping {} with stage table {}'.format(jobConfig.targetTableFinal, jobConfig.targetTableStage))
-            targetConnection.swap(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage)
-
-            if masking is not None:
-                # The swap moved what the target held into the stage. For a job
-                # masking in place that is the unmasked original, which must not
-                # stay readable beside the masked copy.
-                logger.info('Emptying stage table {}, which now holds what {} held before the swap'.format(
-                    jobConfig.targetTableStage, jobConfig.targetTableFinal))
-                targetConnection.truncate(table=jobConfig.targetTableStage)
-
-        if jobConfig.insertStrategy == InsertStrategy.UPSERT and jobConfig.targetTableStage:
-            logger.info('Upserting {} from stage table {}'.format(jobConfig.targetTableFinal, jobConfig.targetTableStage))
-            targetConnection.upsertFromStage(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage, columns=columns)
-
-        for postTargetAdhocQuery in jobConfig.postTargetAdhocQueries:
-            logger.debug('Running postTargetAdhocQuery: {}'.format(postTargetAdhocQuery))
-            try:
-                targetConnection.alter(postTargetAdhocQuery)
-            except Exception as error:
-                raise PostLoadError(postTargetAdhocQuery, error, rowCount, jobConfig.targetTableFinal) from error
+        target.finish(rowCount)
 
     maskingApplied = None
     if masking is not None:
@@ -293,20 +276,6 @@ def _noteIfMaskedValueDoesNotFit(error: Exception, job: str, table: str) -> None
                    '`key` keeps an integer\'s digit count, so a 10-digit value can leave an INT column\'s range, and `number` '
                    'varies a value that may already be at its column\'s limit. Bound `number` with min and max, or widen the '
                    'column'.format(job, table), extra={'job': job})
-
-
-class PostLoadError(Exception):
-    """A postTargetAdhocQuery that failed after the rows were already in place.
-
-    Carries the row count, so the failure says how many rows the target holds:
-    a swap that has happened has already replaced the target, which a failure
-    reporting no rows would hide.
-    """
-
-    def __init__(self, query: str, error: Exception, rowCount: int, targetTable: str) -> None:
-        super().__init__('the load finished and {} holds its {} row(s), but a postTargetAdhocQuery failed -- {}: {}'.format(
-            targetTable, rowCount, query, describeError(error)))
-        self.rowCount = rowCount
 
 
 # Deterministic errors, raised by this package, that a retry can't fix.

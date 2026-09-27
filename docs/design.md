@@ -12,6 +12,7 @@ The behaviour behind the fields in [configuration.md](configuration.md), and the
 - [Structured logs](#structured-logs)
 - [Masking](#masking)
 - [Moving values between drivers](#moving-values-between-drivers)
+- [Files as a target](#files-as-a-target)
 
 
 ## How a data job moves rows
@@ -92,7 +93,7 @@ loadOrders:
 - **`{{ watermark }}`** is a bound parameter, not text substitution. It can go anywhere a value can, including a join or subquery, and is rewritten to each dialect's own placeholder, so one query works on all seven.
 - **`watermarkColumn`** is read from the *raw* rows, before transforms run. A transform may reformat the column, and the next run's predicate needs a value the source can still compare against.
 - **`watermarkInitial` is bound as whatever YAML made of it.** Written without quotes, `1970-01-01 00:00:00` is a timestamp, which is what a timestamp column and the lookback arithmetic below both want. In quotes it is text, and PostgreSQL, Oracle and DuckDB refuse to subtract an interval from text — on the first run, every run, so the job never advances. Quote it only where the column really is text.
-- **`insertStrategy: upsert`** is required. `swap` would replace the target with only the rows that changed, deleting everything else.
+- **`insertStrategy: upsert`** is required, or `append` into a files connection. `swap` or `overwrite` would replace the target with only the rows that changed, deleting everything else. An append keeps no key, so the overlap below is loaded twice there; see [appends and duplicate rows](#appends-and-duplicate-rows).
 
 ### Why the lookback window
 
@@ -261,3 +262,118 @@ Two things follow. Writing `orders` means whatever the database means by `orders
 A name longer than the target keeps is refused rather than used. Every database but SQLite and DuckDB, which have none, cuts one to its limit — 63 bytes on PostgreSQL, 64 characters on MySQL and MariaDB, 128 on Oracle and SQL Server — and none of them says so, so two names alike up to the limit are one table: two jobs would load over each other, and the second swap would rename over the first's rows.
 
 The same reading builds the temporary name a swap renames through, so the suffix goes inside the quotes — `[group_tmp]`, never `[group]_tmp`, which SQL Server's parser refuses. `bauta schema` quotes the tables it creates as it already quoted their columns, and `subset` and `discover` quote the names they write into the jobs and queries they generate.
+
+
+## Files as a target
+
+A `files` connection is a directory, on this machine or in an S3 bucket, that jobs write tables of files into -- Parquet, CSV or JSON Lines -- for a lake that Athena, Snowflake or Databricks reads, or a handoff. The pipeline is the same as for a database -- streamed, transformed, masked, a chunk at a time -- and only the load differs.
+
+### What a run leaves where
+
+```
+<root>/
+  _bauta_staging/<run>/                    a run's parts while it writes; gone when it ends
+  crm/customer_events/                     append: every run's parts, side by side
+    part-20260926T120000Z-a1b2c3-00001.parquet
+    part-20260926T130000Z-d4e5f6-00001.parquet
+  crm/customers/                           overwrite: one directory per complete snapshot
+    snapshot=20260926T120000Z-a1b2c3/
+      _SUCCESS                             what the run wrote: rows, files, column types
+      part-20260926T120000Z-a1b2c3-00001.parquet
+      part-20260926T120000Z-a1b2c3-00002.parquet
+  exports/customers.parquet                singleFile: one file, replaced whole
+```
+
+A part's name ends in its format's extension: `.parquet`, `.csv` or `.ndjson`, and `.gz` after a text format's when it is gzipped, which is how Athena and Spark tell.
+
+A run's name begins with when it started, in UTC, so names sort by time, and ends in six random characters so two runs in one second differ.
+
+**Nothing is visible until the job succeeds.** Parts are written under `_bauta_staging`, outside every table's directory; an engine discovering the whole tree -- Spark, Hive, pyarrow -- skips it too, as it skips any name beginning with `_` or `.`, which is why a table's own path may not begin with either. `_SUCCESS` is skipped the same way, so it is never read as data. Once every row is written they are moved into place, and a failed job's staging is removed. A failure leaves the table as it was, and a retry starts over under a new run name. A process killed outright leaves its staging directory behind, out of sight; delete it when no run is going.
+
+Locally, moving is a rename, so a reader opens a part whole or not at all. An `append` that fails *while* moving its parts in has published some of them; see [duplicates](#appends-and-duplicate-rows).
+
+**On S3** the same holds, by other means. S3 has no rename: a part is moved by copying it within the bucket and deleting the staged one, and an object appears only whole, once its copy completes. So a part can be at most 5 GiB, the most S3 copies in one request, which bounds `fileSize` and a `singleFile` table. Staging matters more on S3 than on disk: an upload pyarrow is made to stop is completed rather than abandoned -- it has no way to abort one -- so a part written in its final place would appear, cut short, whenever its job failed. Written in staging, the cut-short part is deleted with it.
+
+S3 has no directories, and nothing bauta does creates the empty objects some tools write to stand for them, which readers may list as files -- with one exception: pyarrow, deleting the last object under a prefix, leaves one in its place. Only staging is emptied that way, so the one it leaves is `<root>/_bauta_staging/`, outside every table.
+
+**Parts and row groups.** A job holds rows until they reach `rowGroupSize` in memory, then writes them as one row group; a part is closed when it reaches `fileSize` on disk and the next begun. Memory stays at about one row group plus the pipeline's chunks, however large the table. Row groups are what engines skip by, using the minimum and maximum each records for every column, so a job copying in a useful order -- by date, say -- lets a reader's filter skip most of the table.
+
+### Reading an overwrite job's table
+
+Each run of an `overwrite` job publishes a complete snapshot of the table beside the previous ones, writes its `_SUCCESS` last, and then removes all but the newest `keepSnapshots`, along with any older snapshot a crashed run left without a `_SUCCESS`. The table is never half-replaced; the price is that a reader must choose a snapshot. Pointed at the table's directory as a whole, a reader sees every snapshot kept, each row once per snapshot.
+
+- **Athena, Spark, Databricks, Trino:** declare `snapshot` as a partition column (it is a Hive-style `name=value` directory) and read `where snapshot = (select max(snapshot) ...)`, or keep a view that does.
+- **Snowflake:** an external table over the table's directory with `snapshot` derived from the file path, filtered the same way; or load the newest snapshot's path with `COPY INTO`.
+- **Anything reading one file:** `singleFile: true`, where the table is small enough to be one file. It is replaced by a rename, or on S3 a copy that replaces the object as it completes, so a reader sees the old file or the new one.
+
+`keepSnapshots: 1` removes the previous snapshot as soon as the new one is complete, and a query still reading it then fails; the default of 2 leaves it for the next run to remove.
+
+Atomic replacement of a table read in place, and upserts, are what table formats such as Iceberg and Delta Lake are for; plain Parquet has neither.
+
+### Appends and duplicate rows
+
+An `append` job adds new parts each run and never rewrites old ones, so nothing stops a row from arriving twice:
+
+- the [lookback window](#why-the-lookback-window) of an incremental job re-reads its overlap every run, on purpose;
+- a job that fails after moving some of its parts in, or dies between publishing and recording its watermark, is run again from the old watermark.
+
+Against a database, `upsert` makes both harmless. In an append-only table, readers take the latest version of each key, by the watermark column:
+
+```sql
+select * from (
+  select *, row_number() over (partition by id order by updatedAt desc) as newest
+  from customer_events
+) where newest = 1
+```
+
+Hard deletes are as invisible as in any incremental load.
+
+### Column types
+
+A Parquet file has one schema, and a table's parts should share it, so each column's type is fixed before the first row group is written and never changes:
+
+- **declared** in `targetColumnTypes`, or else
+- **settled by the first chunk that holds a value in the column**, from the Python values the driver returned, after transforms and masking:
+
+| Values | Written as |
+| --- | --- |
+| `int` | `int64`, or `decimal(38,0)` where one is past 64 bits |
+| `float`, or `float` with `int` | `float64` |
+| `Decimal`, or `Decimal` with `int` | `decimal(p,s)` as the driver reports it (PostgreSQL, Oracle, DuckDB), else `decimal(38,s)`, `s` the larger of 10 and the widest scale in that chunk |
+| `str`, or text with numbers (SQLite) | `string` |
+| `bytes` | `binary` |
+| `bool` | `bool` |
+| `date` | `date` |
+| `datetime` without a time zone | `timestamp`, the wall-clock value as the source held it |
+| `datetime` with a time zone | `timestamptz`, converted to UTC |
+| `time` | `time` |
+| a JSON document or list, a UUID, an interval | `string`: JSON text, the UUID's text, `HH:MM:SS[.ffffff]` |
+
+A value that doesn't fit its column's type fails the job, naming the column and the type to declare, never the value. That includes a float in an integer column -- which pyarrow on its own would write as its truncation -- a decimal with more places than its scale, and a time with a time zone in a column without one. A declared `decimal` takes floats, by their shortest text (`0.1` is `0.1`), and a declared `string` takes numbers and dates as their text.
+
+A column with no value in the rows before the first row group is written has nothing to be settled by. It is written as `string`, with a warning naming it; a later value there that isn't text fails the job, rather than becoming its text unseen. Declare such a column's type if it holds anything else.
+
+`targetColumnTypes` names columns as the file does -- after `targetColumns` -- matched ignoring case, and naming one the table doesn't have is an error.
+
+### Formats
+
+`format` is a connection's: every table it holds is written one way. Parquet keeps each column's type; CSV and JSON Lines are text, so every type is spelled one way in both, and a reader told the column types reads it back exact:
+
+| Type | CSV | JSON Lines |
+| --- | --- | --- |
+| null | an empty, unquoted field | `null` |
+| empty text | `""`, quoted, so it isn't read as null | `""` |
+| decimal | its digits, to the column's scale: `12.30` | a string, `"12.30"`: a JSON number is a float to most readers, and money would lose cents |
+| float | `1.5`, `nan`, `inf` | `1.5`; JSON has no NaN or infinity, so `"NaN"`, `"Infinity"`, `"-Infinity"`, as BigQuery and Snowflake read them |
+| timestamp | `2026-01-02 03:04:05.000006` | the same, as a string |
+| timestamptz | `2026-01-02 03:04:05.000006Z`, in UTC | the same, as a string |
+| date, time | `2026-01-02`, `03:04:05.000000` | the same, as strings |
+| bool | `true`, `false` | `true`, `false` |
+| binary | base64 | base64, as a string |
+| a JSON document or list | its JSON text | nested, as itself |
+
+A timestamp has a space where ISO 8601 has a `T`: it is what Hive, Athena and Spark read as a timestamp in text, and Snowflake and BigQuery read either.
+
+CSV quotes every text value, doubles a quote within one, and writes a header in every part, so each part reads on its own. JSON Lines writes every column in every line, in the table's order.
+
+A JSON document is nested only in a column that has held one -- a dictionary or list from the driver, such as PostgreSQL's `jsonb` -- and only where its text is a JSON object or array; anything else there, and every other text column, is written as a string.

@@ -12,7 +12,7 @@ from ..database.dialects import catalogTable, quoteIdentifier, quoteTableName
 from ..log import Log
 from ..log.scrubbing import describeError
 from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadConnections, _loadDataJobs, _memoryBackend,
-                     _requireAlias, _selectJobs, _writeOutput)
+                     _requireDatabase, _selectJobs, _writeOutput)
 
 
 def _generatedHeading(command: str, source: str, target: str) -> List[str]:
@@ -68,8 +68,8 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
     connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
     target = arguments.target or arguments.connection
-    _requireAlias(connectionConfiguration, arguments.connection)
-    _requireAlias(connectionConfiguration, target)
+    _requireDatabase(connectionConfiguration, arguments.connection)
+    targetSettings = _requireDatabase(connectionConfiguration, target)
 
     drafts = []
     with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
@@ -99,7 +99,7 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
 
     heading = _generatedHeading('discover', arguments.connection, target) + _nextSteps(arguments.connection, target, requestedTables)
     _writeOutput(renderJobs(drafts, arguments.connection, target, heading, keyVariable=arguments.key_variable,
-                            chunkSize=arguments.chunk_size, targetType=connectionConfiguration[target].type), arguments.output)
+                            chunkSize=arguments.chunk_size, targetType=targetSettings.type), arguments.output)
 
     return EXIT_SUCCESS
 
@@ -114,8 +114,8 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
 
     connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
-    _requireAlias(connectionConfiguration, arguments.connection)
-    _requireAlias(connectionConfiguration, arguments.target)
+    _requireDatabase(connectionConfiguration, arguments.connection)
+    targetSettings = _requireDatabase(connectionConfiguration, arguments.target)
 
     if arguments.target == arguments.connection:
         raise UsageError('--target must differ from --database: a subset is loaded into another database, not over its source')
@@ -148,7 +148,7 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
         '',
         ] + _nextSteps(arguments.connection, arguments.target, [arguments.root], related=True)
     _writeOutput(renderJobs(drafts, arguments.connection, arguments.target, heading, keyVariable=arguments.key_variable,
-                            chunkSize=arguments.chunk_size, targetType=connectionConfiguration[arguments.target].type), arguments.output)
+                            chunkSize=arguments.chunk_size, targetType=targetSettings.type), arguments.output)
 
     return EXIT_SUCCESS
 
@@ -164,11 +164,8 @@ def _commandSchema(arguments: argparse.Namespace, log: Log) -> int:
     from ..generate.subset import relatedTables
 
     connectionConfiguration = _loadConnections(arguments)
-    _requireAlias(connectionConfiguration, arguments.connection)
-    _requireAlias(connectionConfiguration, arguments.target)
-
-    sourceSettings = connectionConfiguration[arguments.connection]
-    targetSettings = connectionConfiguration[arguments.target]
+    sourceSettings = _requireDatabase(connectionConfiguration, arguments.connection)
+    targetSettings = _requireDatabase(connectionConfiguration, arguments.target)
     stagesOnly = arguments.connection == arguments.target
 
     if stagesOnly and not arguments.stage_suffix:
@@ -244,7 +241,7 @@ def _commandSynthesize(arguments: argparse.Namespace, log: Log) -> int:
 
     connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
-    _requireAlias(connectionConfiguration, arguments.connection)
+    _requireDatabase(connectionConfiguration, arguments.connection)
     requested = dict(_parseTableRows(arguments.table, arguments.rows))
 
     if not arguments.dry_run and not arguments.yes:
@@ -298,6 +295,10 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
     if incremental:
         raise UsageError('refusing to clear the targets of incremental job(s) {}: their stored watermark would make the next run '
                          'load only new rows. Leave them out with --job'.format(', '.join(incremental)))
+
+    writingFiles = sorted(name for name, job in jobs.items() if job.writesFiles())
+    if writingFiles:
+        raise UsageError('clear empties tables in databases, and job(s) {} write files. Leave them out with --job'.format(', '.join(writingFiles)))
 
     tablesByDatabase: Dict[str, List[str]] = {}
     for job in jobs.values():

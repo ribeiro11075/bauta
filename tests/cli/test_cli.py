@@ -1343,3 +1343,62 @@ def test_discover_needs_exactly_one_way_of_choosing_tables():
         with pytest.raises(UsageError):
             _requireTableSelection(bad)
 
+
+
+@pytest.fixture
+def lakeWorkspace(workspace):
+    """The workspace with a files connection, and a job writing a snapshot of
+    src into it.
+    """
+    pytest.importorskip('pyarrow', reason='a files connection writes with pyarrow (pip install -e ".[files]")')
+    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: demo.db\nlake:\n  type: files\n  root: lake\n')
+    (workspace / 'configuration' / 'jobs.yaml').write_text(yaml.safe_dump({'jobs': {'export': {
+        'sourceConnection': 'demo', 'sourceQuery': 'SELECT id, name FROM src', 'targetConnection': 'lake',
+        'targetTableFinal': 'crm/src', 'insertStrategy': 'overwrite', 'unmasked': True}}}))
+    return workspace
+
+
+def test_a_job_writes_files_through_the_command(lakeWorkspace, capsys):
+    import pyarrow.dataset
+
+    assert main(['validate', '--quiet']) == EXIT_SUCCESS
+    assert main(['run', '--quiet', '--dry-run']) == EXIT_SUCCESS
+    assert not list((lakeWorkspace / 'lake').glob('crm/src/snapshot=*')), 'a dry run writes nothing'
+    assert main(['run', '--quiet']) == EXIT_SUCCESS
+
+    snapshot, = (lakeWorkspace / 'lake' / 'crm' / 'src').glob('snapshot=*')
+    assert pyarrow.dataset.dataset(str(snapshot), format='parquet').to_table().num_rows == 5
+
+
+def test_dry_run_reports_a_files_root_it_cannot_write(lakeWorkspace, caplog):
+    (lakeWorkspace / 'lake').write_text('a file where the directory should be')
+
+    assert main(['run', '--quiet', '--dry-run']) == EXIT_JOBS_DID_NOT_SUCCEED
+    assert 'lake: cannot write to files in' in caplog.text
+
+
+@pytest.mark.parametrize('command', [['discover', '--connection', 'lake', '--all-tables'], ['coverage', '--connection', 'lake'],
+                                     ['schema', '--connection', 'demo', '--target', 'lake', '--table', 'src']])
+def test_a_command_that_reads_catalogs_refuses_a_files_connection(lakeWorkspace, command, caplog):
+    assert main(command + ['--quiet']) == EXIT_BAD_CONFIGURATION
+    assert 'lake is a files connection; this command works with databases' in caplog.text
+
+
+def test_clear_refuses_a_job_that_writes_files(lakeWorkspace, caplog):
+    assert main(['clear', '--quiet', '--yes']) == EXIT_BAD_CONFIGURATION
+    assert 'job(s) export write files' in caplog.text
+
+
+def test_run_state_cannot_be_kept_in_a_files_connection(lakeWorkspace, caplog):
+    jobs = yaml.safe_load((lakeWorkspace / 'configuration' / 'jobs.yaml').read_text())
+    jobs['memory'] = {'connection': 'lake'}
+    (lakeWorkspace / 'configuration' / 'jobs.yaml').write_text(yaml.safe_dump(jobs))
+
+    assert main(['validate', '--quiet']) == EXIT_BAD_CONFIGURATION
+    assert 'memory: connection "lake" is a files connection' in caplog.text
+
+
+def test_audit_reads_a_file_jobs_columns_from_its_query(lakeWorkspace, capsys):
+    """A file target has no table to read columns from before its first run."""
+    assert main(['audit', '--quiet', '--connect']) in (EXIT_SUCCESS, EXIT_JOBS_DID_NOT_SUCCEED)
+    assert 'export' in capsys.readouterr().out

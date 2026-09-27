@@ -5,7 +5,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from ..driver import Connection, Cursor, native
-from ...configuration import ConnectionConfig, DatabaseType, SQLiteConnection
+from ...configuration import DatabaseConfig, DatabaseType, SQLiteConnection
 from .base import ColumnDefinition, ForeignKey, settingsOf, _OnConflictDialect, _groupForeignKeys, _renameInThreeSteps
 from .names import catalogName, catalogTableName, quoteIdentifier
 
@@ -17,14 +17,14 @@ class SQLiteDialect(_OnConflictDialect):
 
     databaseType = DatabaseType.SQLITE
 
-    def openConnection(self, settings: ConnectionConfig) -> Any:
+    def openConnection(self, settings: DatabaseConfig) -> Any:
 
         import sqlite3
 
         return sqlite3.connect(**self.connectArguments(settings))
 
 
-    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Any:
+    def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
 
         # WAL, so a writer can proceed while a stream reads the same file; the
         # default journal fails it with "database is locked". It persists in
@@ -37,7 +37,7 @@ class SQLiteDialect(_OnConflictDialect):
         return connection.cursor()
 
 
-    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
 
         return {'database': settingsOf(settings, SQLiteConnection).path, 'timeout': 30.0}
 

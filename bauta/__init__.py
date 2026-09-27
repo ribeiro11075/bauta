@@ -6,7 +6,7 @@ describes. A name reached only through a submodule is internal, unless the
 documentation names it there, and may change in any release.
 """
 from .configuration import (Configuration, ConfigurationError, ConnectionConfig, DatabaseType, DataJobConfig, DataJobsFile, DiscoveryRulesFile,
-                            DuckDBConnection, InsertStrategy, MariaDBConnection, MaskingConfig, MSSQLConnection, MySQLConnection, OracleConnection,
+                            DuckDBConnection, FilesConnection, InsertStrategy, MariaDBConnection, MaskingConfig, MSSQLConnection, MySQLConnection, OracleConnection,
                             PostgreSQLConnection, SQLiteConnection, connectionConfig, expandEnvironmentVariables)
 from .database import Database
 from .jobs.dependencyGraph import DependencyGraph, JobOutcome, JobStatus
@@ -35,6 +35,7 @@ __all__ = [
     'ConnectionConfig',
     'connectionConfig',
     'DuckDBConnection',
+    'FilesConnection',
     'MariaDBConnection',
     'MSSQLConnection',
     'MySQLConnection',

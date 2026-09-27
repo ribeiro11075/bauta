@@ -9,7 +9,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 from ..driver import Connection, Cursor
-from ...configuration import ConfigurationError, ConnectionConfig, DatabaseType, DuckDBConnection
+from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType, DuckDBConnection
 from .base import ColumnCategory, ForeignKey, settingsOf, _OnConflictDialect, _groupForeignKeys, _renameInThreeSteps
 from .names import catalogTableName
 
@@ -198,7 +198,7 @@ class DuckDBDialect(_OnConflictDialect):
     _DATE_TYPES = {'DATE', 'TIMESTAMP', 'TIMESTAMP WITH TIME ZONE', 'TIMESTAMP_S', 'TIMESTAMP_MS', 'TIMESTAMP_NS'}
     _TEXT_TYPES = {'VARCHAR'}
 
-    def openConnection(self, settings: ConnectionConfig) -> Any:
+    def openConnection(self, settings: DatabaseConfig) -> Any:
 
         import duckdb
 
@@ -218,7 +218,7 @@ class DuckDBDialect(_OnConflictDialect):
                 time.sleep(LOCK_POLL_SECONDS)
 
 
-    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Any:
+    def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
         """The session is its own cursor; see _Session. Its time zone is UTC:
         DuckDB's default is the machine's own, which it converts through
         whenever a time-zone-aware value meets a column without one, so the
@@ -245,12 +245,12 @@ class DuckDBDialect(_OnConflictDialect):
         return cursor
 
 
-    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
 
         return {'database': settingsOf(settings, DuckDBConnection).path}
 
 
-    def connectArguments(self, settings: ConnectionConfig, resolvePassword: bool = True) -> Dict[str, Any]:
+    def connectArguments(self, settings: DatabaseConfig, resolvePassword: bool = True) -> Dict[str, Any]:
         """`options` are DuckDB's own settings (`memory_limit`, `threads`, ...),
         which duckdb.connect takes as one `config` mapping.
         """

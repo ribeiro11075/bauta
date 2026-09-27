@@ -25,7 +25,7 @@ Everything importable from `bauta` itself is the public API, and this page descr
 
 | Model | Holds |
 | --- | --- |
-| `ConnectionConfig` | One `connections.yaml` alias: a `PostgreSQLConnection`, `MySQLConnection`, `MariaDBConnection`, `MSSQLConnection`, `OracleConnection`, `SQLiteConnection` or `DuckDBConnection`, as its `type` says. Build one with that class, `SQLiteConnection(path='copy.db')`, or from settings as the file would give them, `connectionConfig(type='sqlite', path='copy.db')`. |
+| `ConnectionConfig` | One `connections.yaml` alias: a `PostgreSQLConnection`, `MySQLConnection`, `MariaDBConnection`, `MSSQLConnection`, `OracleConnection`, `SQLiteConnection`, `DuckDBConnection` or `FilesConnection`, as its `type` says. Build one with that class, `SQLiteConnection(path='copy.db')`, or from settings as the file would give them, `connectionConfig(type='sqlite', path='copy.db')`. |
 | `DataJobsFile` | A whole `jobs.yaml`: `jobs`, `workers`, `maskingThreads` and the file-level settings, with `defaults` already applied. |
 | `DataJobConfig` | One job. `insertStrategy` is an `InsertStrategy`; `masking` a `MaskingConfig`, or `None`. |
 | `DiscoveryRulesFile` | A validated `discovery.yaml`, for `discoveryRules`. |

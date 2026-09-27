@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..configuration import ConfigurationError, ConnectionConfig, DataJobsFile, InsertStrategy
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobsFile, FilesConnection, InsertStrategy
 from ..database import DIALECTS
 from ..jobs.dependencyGraph import DependencyGraph
 from ..log import Log
@@ -255,6 +255,8 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
                     problems.append('{}: {} -> {}'.format(name, column, error))
 
     for alias, settings in sorted(connectionConfiguration.items()):
+        if isinstance(settings, FilesConnection):
+            continue
         try:
             DIALECTS[settings.type].connectArguments(settings, resolvePassword=False)
         except ConfigurationError as error:
@@ -313,6 +315,17 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, C
     with _Connections(connectionConfiguration) as connections:
 
         for alias in aliases:
+            settings = connectionConfiguration[alias]
+            if isinstance(settings, FilesConnection):
+                from ..files import checkWritable
+
+                try:
+                    checkWritable(settings)
+                    log.logging.info('{}: writable ({})'.format(alias, settings.describeTarget()))
+                except Exception as error:
+                    unreachable.add(alias)
+                    problems.append('{}: cannot write to {} -- {}'.format(alias, settings.describeTarget(), describeError(error)))
+                continue
             try:
                 with connections.use(alias) as database:
                     encrypted = {True: 'encrypted', False: 'NOT encrypted', None: 'encryption unknown'}[database.isEncrypted()]
@@ -324,6 +337,22 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, C
 
         for name, job in jobsFile.jobs.items():
             if job.targetConnection in unreachable:
+                continue
+            if job.writesFiles():
+                # A file target has no table to read yet: it takes the
+                # columns the query returns.
+                if job.sourceConnection in unreachable:
+                    continue
+                try:
+                    returned = _sourceQueryColumns(job, connections)
+                except Exception as error:
+                    problems.append('{}: sourceQuery could not be checked -- {}'.format(name, describeError(error)))
+                    continue
+                problem = _checkColumnCounts(name, job, returned, returned)
+                if problem is None and job.masking is not None:
+                    problem = _checkMaskingCoverage(name, job, returned, log)
+                if problem:
+                    problems.append(problem)
                 continue
             try:
                 with connections.use(job.targetConnection) as database:

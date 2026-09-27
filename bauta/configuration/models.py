@@ -8,10 +8,11 @@ import re
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple, Type, TypeVar, Union, cast
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, TypeAdapter, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, ByteSize, ConfigDict, Field, SecretStr, TypeAdapter, ValidationError, field_validator, model_validator
 
 from ..masking import changesValues, policyFor, validateColumnPolicy, validateKey
 from .environment import ConfigurationError, runPasswordCommand, splitPasswordCommand
+from .fileTypes import parseColumnType
 
 # A job's rows per batch when it names none. What `discover` and `subset`
 # generate, so a hand-written job behaves like a generated one.
@@ -97,6 +98,24 @@ WATERMARK_PLACEHOLDER = re.compile(r'\{\{\s*watermark\s*\}\}')
 class InsertStrategy(str, Enum):
     SWAP = 'swap'
     UPSERT = 'upsert'
+    # A files connection's two: a run adds new files beside the ones already
+    # there, or publishes a whole new snapshot of the table.
+    APPEND = 'append'
+    OVERWRITE = 'overwrite'
+
+
+# The strategies that write files, and the only ones a files connection takes.
+FILE_STRATEGIES = frozenset({InsertStrategy.APPEND, InsertStrategy.OVERWRITE})
+
+
+class StoreType(str, Enum):
+    """The connections that aren't databases."""
+
+    FILES = 'files'
+
+
+# Every value a connection's `type` may take.
+CONNECTION_TYPES = tuple(connectionType.value for connectionType in DatabaseType) + tuple(storeType.value for storeType in StoreType)
 
 
 # A plain SQL identifier -- what currentSchema is written into a session
@@ -105,10 +124,8 @@ IDENTIFIER = re.compile(r'^[A-Za-z_][A-Za-z0-9_$#]*$')
 
 
 
-class _Connection(BaseModel):
-    """What every connection has, whatever it connects to. `options` -- extra
-    driver arguments, TLS above all -- are left out of the repr, since they
-    can hold secrets.
+class _BaseConnection(BaseModel):
+    """What every connection has, whatever it connects to.
 
     Each type is a model of its own, taking only the settings that type has,
     so a setting given to the wrong type is refused rather than ignored. See
@@ -117,7 +134,6 @@ class _Connection(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    type: DatabaseType
     # No job may read from or write to this connection without masking. The
     # line a reviewer signs: "this copy can only ever hold masked data." Unlike
     # a job's own `unmasked`, nothing overrides it.
@@ -125,7 +141,6 @@ class _Connection(BaseModel):
     # The most jobs that may use this connection at once, whatever `workers`
     # allows. None is no limit. See jobLimit.
     maxConcurrentJobs: Optional[int] = Field(default=None, ge=1)
-    options: CleanedMapping = Field(default_factory=dict, repr=False)
 
     @model_validator(mode='before')
     @classmethod
@@ -169,6 +184,15 @@ class _Connection(BaseModel):
         """
 
         raise NotImplementedError
+
+
+class _Connection(_BaseConnection):
+    """A database. `options` -- extra driver arguments, TLS above all -- are
+    left out of the repr, since they can hold secrets.
+    """
+
+    type: DatabaseType
+    options: CleanedMapping = Field(default_factory=dict, repr=False)
 
 
 class _CurrentSchema(BaseModel):
@@ -329,15 +353,178 @@ class DuckDBConnection(_FileConnection, _CurrentSchema):
         return 1
 
 
-_CONNECTION_MODELS: Dict[DatabaseType, Type[_Connection]] = {
+# What a file target writes in, and how. Sizes are bytes, or text such as
+# 256MB (decimal) or 256MiB (binary). 256MB is what Snowflake suggests a file
+# to load be at most, and a size Athena and Spark split well.
+DEFAULT_FILE_SIZE = 256 * 10 ** 6
+DEFAULT_ROW_GROUP_SIZE = 128 * 10 ** 6
+DEFAULT_KEEP_SNAPSHOTS = 2
+
+
+class FileFormat(str, Enum):
+    PARQUET = 'parquet'
+    CSV = 'csv'
+    # JSON Lines: one JSON object per line.
+    NDJSON = 'ndjson'
+
+
+class FileCompression(str, Enum):
+    ZSTD = 'zstd'
+    SNAPPY = 'snappy'
+    GZIP = 'gzip'
+    NONE = 'none'
+
+
+# What each format may be compressed with, the default first. Parquet
+# compresses inside the file; text is compressed whole, and gzip is what
+# every engine reading text reads.
+FORMAT_COMPRESSIONS = {
+    FileFormat.PARQUET: (FileCompression.ZSTD, FileCompression.SNAPPY, FileCompression.GZIP, FileCompression.NONE),
+    FileFormat.CSV: (FileCompression.GZIP, FileCompression.NONE),
+    FileFormat.NDJSON: (FileCompression.GZIP, FileCompression.NONE),
+    }
+
+S3_SCHEME = 's3://'
+
+# A part is published by copying it within the bucket, and S3 copies an
+# object of at most 5 GiB in one request.
+S3_LARGEST_COPY = 5 * 2 ** 30
+
+# The settings only a root on S3 takes.
+S3_SETTINGS = ('region', 'endpoint', 'accessKeyId', 'secretAccessKey', 'sessionToken', 'roleArn')
+
+
+class FilesConnection(_BaseConnection):
+    """A directory, on this machine or in an S3 bucket, that jobs write tables
+    of files into, one directory per table: `targetTableFinal` is its path
+    under `root`. Written, never read: a files connection is a target only.
+    See "Files as a target" in docs/design.md.
+
+    `fileSize` is where a part is closed and the next begun; `rowGroupSize`
+    is how much of a table is held in memory, before compression, and written
+    at once -- one Parquet row group. `keepSnapshots` is how many of an
+    overwrite job's complete snapshots stay, the newest included.
+
+    On S3, credentials come from the AWS default chain -- the environment, a
+    profile, an instance or task role, IRSA -- unless `accessKeyId` and
+    `secretAccessKey` are given; `roleArn` is assumed with them. `endpoint`
+    points at another service that speaks S3, such as MinIO or R2.
+    """
+
+    type: Literal[StoreType.FILES] = StoreType.FILES
+    root: str = Field(min_length=1)
+    format: FileFormat = FileFormat.PARQUET
+    # None is the format's default: FORMAT_COMPRESSIONS.
+    compression: Optional[FileCompression] = None
+    # CSV's alone; a comma when not given.
+    delimiter: Optional[str] = None
+    fileSize: ByteSize = ByteSize(DEFAULT_FILE_SIZE)
+    rowGroupSize: ByteSize = ByteSize(DEFAULT_ROW_GROUP_SIZE)
+    keepSnapshots: int = Field(default=DEFAULT_KEEP_SNAPSHOTS, ge=1)
+    region: Optional[str] = None
+    endpoint: Optional[str] = None
+    accessKeyId: Optional[str] = None
+    secretAccessKey: Optional[SecretStr] = None
+    sessionToken: Optional[SecretStr] = None
+    roleArn: Optional[str] = None
+
+    @field_validator('fileSize', 'rowGroupSize')
+    @classmethod
+    def _positiveSize(cls, size: ByteSize) -> ByteSize:
+        """Checked here rather than with Field(gt=0): whether pydantic can apply
+        a constraint to ByteSize has differed between the versions this allows.
+        """
+
+        if size <= 0:
+            raise ValueError('must be more than 0 bytes')
+
+        return size
+
+    @field_validator('root')
+    @classmethod
+    def _supportedRoot(cls, root: str) -> str:
+        """A directory on this machine, or s3://bucket[/prefix]. Any other URL
+        is refused rather than read as a relative directory named `gs:`.
+        """
+
+        if root.startswith(S3_SCHEME):
+            bucket = root[len(S3_SCHEME):].split('/', 1)[0]
+            if not bucket:
+                raise ValueError('root {!r} names no bucket; write s3://bucket or s3://bucket/prefix'.format(root))
+            return root.rstrip('/')
+
+        if '://' in root:
+            raise ValueError('root must be a directory on this machine or an s3:// location; {} is not supported yet'.format(
+                root.split('://', 1)[0] + '://'))
+
+        return root
+
+    @model_validator(mode='after')
+    def _coherentSettings(self) -> 'FilesConnection':
+
+        onS3 = self.isObjectStore()
+        given = [name for name in S3_SETTINGS if getattr(self, name) is not None]
+        if given and not onS3:
+            raise ValueError('{} {} for a root on S3, and root is a directory on this machine'.format(
+                _listed(given), 'is' if len(given) == 1 else 'are'))
+
+        if (self.accessKeyId is None) != (self.secretAccessKey is None):
+            raise ValueError('set accessKeyId and secretAccessKey together, or neither to use the AWS default credential chain')
+        if self.sessionToken is not None and self.accessKeyId is None:
+            raise ValueError('sessionToken goes with accessKeyId and secretAccessKey')
+
+        if onS3 and self.fileSize > S3_LARGEST_COPY:
+            raise ValueError('fileSize can be at most 5GiB on S3, which copies no larger an object in one request, and a part is '
+                             'published by copying it')
+
+        allowed = FORMAT_COMPRESSIONS[self.format]
+        if self.compression is not None and self.compression not in allowed:
+            raise ValueError('compression {} is not one for {}; choose from {}'.format(
+                self.compression.value, self.format.value, ', '.join(compression.value for compression in allowed)))
+
+        if self.delimiter is not None:
+            if self.format != FileFormat.CSV:
+                raise ValueError('delimiter is for format: csv')
+            if len(self.delimiter) != 1 or self.delimiter in '"\r\n':
+                raise ValueError('delimiter must be one character, other than a quote or a line break, got {!r}'.format(self.delimiter))
+
+        return self
+
+    def isObjectStore(self) -> bool:
+
+        return self.root.startswith(S3_SCHEME)
+
+    def effectiveCompression(self) -> FileCompression:
+
+        return self.compression or FORMAT_COMPRESSIONS[self.format][0]
+
+    def location(self) -> str:
+        """The root as a person would write it: the URL, or the absolute
+        directory -- a driver's own message leaves a relative one unresolved.
+        """
+
+        if self.isObjectStore():
+            return self.root
+
+        return os.path.abspath(os.path.expanduser(self.root))
+
+    def describeTarget(self) -> str:
+
+        return 'files in {}'.format(self.location())
+
+
+_CONNECTION_MODELS: Dict[Union[DatabaseType, StoreType], Type[_BaseConnection]] = {
     DatabaseType.POSTGRESQL: PostgreSQLConnection, DatabaseType.MYSQL: MySQLConnection, DatabaseType.MARIADB: MariaDBConnection,
     DatabaseType.MSSQL: MSSQLConnection, DatabaseType.ORACLE: OracleConnection, DatabaseType.SQLITE: SQLiteConnection,
-    DatabaseType.DUCKDB: DuckDBConnection,
+    DatabaseType.DUCKDB: DuckDBConnection, StoreType.FILES: FilesConnection,
     }
+
+# One database in connections.yaml.
+DatabaseConfig = Union[PostgreSQLConnection, MySQLConnection, MariaDBConnection, MSSQLConnection, OracleConnection, SQLiteConnection, DuckDBConnection]
 
 # One connection in connections.yaml: the model its `type` names.
 ConnectionConfig = Annotated[Union[PostgreSQLConnection, MySQLConnection, MariaDBConnection, MSSQLConnection, OracleConnection,
-                                   SQLiteConnection, DuckDBConnection], Field(discriminator='type')]
+                                   SQLiteConnection, DuckDBConnection, FilesConnection], Field(discriminator='type')]
 
 # Cast, since pydantic's stubs before 2.7 take a class here and not a union.
 _CONNECTION_ADAPTER: 'TypeAdapter[ConnectionConfig]' = TypeAdapter(cast(Any, ConnectionConfig))
@@ -460,6 +647,64 @@ class DataJobConfig(BaseJobConfig):
     unmasked: bool = False
     preTargetAdhocQueries: CleanedStringList = Field(default_factory=list)
     postTargetAdhocQueries: CleanedStringList = Field(default_factory=list)
+    # A file target's alone. Column -> type, for a column whose values don't
+    # settle its type, or settle it as something else; see
+    # configuration.fileTypes. singleFile writes an overwrite job's table as
+    # one file, <targetTableFinal>.parquet, replaced whole each run.
+    targetColumnTypes: CleanedMapping = Field(default_factory=dict)
+    singleFile: bool = False
+
+    @field_validator('targetColumnTypes')
+    @classmethod
+    def _parseColumnTypes(cls, declared: Dict[str, Any]) -> Dict[str, Any]:
+
+        problems = []
+        folded: Dict[str, str] = {}
+        for column, text in declared.items():
+            if not isinstance(text, str):
+                problems.append('{}: a type is text, such as int64 or decimal(18,2), got {!r}'.format(column, text))
+            else:
+                try:
+                    parseColumnType(text)
+                except ValueError as error:
+                    problems.append('{}: {}'.format(column, error))
+            if column.upper() in folded:
+                problems.append('{}: differs only in case from {} -- column names match case-insensitively'.format(column, folded[column.upper()]))
+            folded[column.upper()] = column
+
+        if problems:
+            raise ValueError('; '.join(problems))
+
+        return declared
+
+
+    @model_validator(mode='after')
+    def _fileSettingsNeedAFileStrategy(self) -> 'DataJobConfig':
+        """What only a file target has, or what only a table has, given to the
+        other kind is an error rather than ignored.
+        """
+
+        writesFiles = self.insertStrategy in FILE_STRATEGIES
+
+        if writesFiles:
+            tableOnly = [name for name in ('targetTableStage', 'preTargetAdhocQueries', 'postTargetAdhocQueries') if getattr(self, name)]
+            if tableOnly:
+                raise ValueError('{} {} for a table in a database; insertStrategy: {} writes files'.format(
+                    _listed(tableOnly), 'is' if len(tableOnly) == 1 else 'are', self.insertStrategy.value))
+            problem = filePathProblem(self.targetTableFinal)
+            if problem:
+                raise ValueError('targetTableFinal {!r} {}'.format(self.targetTableFinal, problem))
+        else:
+            fileOnly = [name for name in ('targetColumnTypes', 'singleFile') if getattr(self, name)]
+            if fileOnly:
+                raise ValueError('{} {} for a file target, with insertStrategy append or overwrite'.format(
+                    _listed(fileOnly), 'is' if len(fileOnly) == 1 else 'are'))
+
+        if self.singleFile and self.insertStrategy != InsertStrategy.OVERWRITE:
+            raise ValueError('singleFile needs insertStrategy: overwrite -- a file can be replaced, not added to')
+
+        return self
+
 
     @model_validator(mode='after')
     def _rejectUnmaskedWithMasking(self) -> 'DataJobConfig':
@@ -564,14 +809,56 @@ class DataJobConfig(BaseJobConfig):
 
     @model_validator(mode='after')
     def _rejectWatermarkWithSwap(self) -> 'DataJobConfig':
-        """A watermark needs upsert: a swap would replace the target with only
-        the rows that changed.
+        """A watermark needs upsert, or append for files: a swap or an
+        overwrite would replace the target with only the rows that changed.
         """
 
-        if self.watermarkColumn and self.insertStrategy != InsertStrategy.UPSERT:
-            raise ValueError('watermarkColumn requires insertStrategy: upsert -- swap would replace the whole target with only the rows that changed')
+        if self.watermarkColumn and self.insertStrategy not in (InsertStrategy.UPSERT, InsertStrategy.APPEND):
+            raise ValueError('watermarkColumn requires insertStrategy: upsert, or append for a file target -- {} would replace the whole '
+                             'target with only the rows that changed'.format(self.insertStrategy.value))
 
         return self
+
+
+    def writesFiles(self) -> bool:
+
+        return self.insertStrategy in FILE_STRATEGIES
+
+
+def filePathProblem(path: str) -> Optional[str]:
+    """What is wrong with `path` as a table's directory under a files
+    connection's root, or None.
+
+    It must stay under the root, and no part of it may begin with `_` or `.`:
+    an engine discovering a directory tree -- Spark, Hive, pyarrow -- skips
+    such names, which is what keeps bauta's own staging out of sight, so a
+    table named that way would be skipped too.
+    """
+
+    if path.startswith(('/', '\\')) or re.match(r'^[A-Za-z]:', path):
+        return 'must be a path under the connection\'s root, not an absolute one'
+
+    parts = path.replace('\\', '/').split('/')
+    if any(part in ('', '.', '..') for part in parts):
+        return 'must be a path under the connection\'s root, such as sales/orders, without empty, . or .. parts'
+    if any(part.startswith(('_', '.')) for part in parts):
+        return 'has a part beginning with _ or ., which engines reading a directory tree skip as hidden, and bauta keeps for its own staging'
+
+    return None
+
+
+def targetMismatch(job: DataJobConfig, connection: Any) -> Optional[str]:
+    """Why `job` can't write to `connection`, or None: files take append and
+    overwrite, and a database the rest.
+    """
+
+    if isinstance(connection, FilesConnection) and not job.writesFiles():
+        return 'is a files connection, which takes insertStrategy append or overwrite, not {}'.format(job.insertStrategy.value)
+    if not isinstance(connection, FilesConnection) and job.writesFiles():
+        return 'is a {} database, and insertStrategy: {} writes files -- use swap or upsert, or a files connection'.format(
+            connection.type.value, job.insertStrategy.value)
+
+    return None
 
 
 class NameRuleConfig(BaseModel):
@@ -865,9 +1152,9 @@ class Configuration:
         names the setting alone.
         """
 
-        if isinstance(rawConnection, Mapping) and rawConnection.get('type') not in {connectionType.value for connectionType in DatabaseType}:
+        if isinstance(rawConnection, Mapping) and getattr(rawConnection.get('type'), 'value', rawConnection.get('type')) not in CONNECTION_TYPES:
             raise ConfigurationError('Invalid configuration in {}:\ntype: {!r} is not a connection type; choose from {}'.format(
-                sourceDescription, rawConnection.get('type'), ', '.join(sorted(connectionType.value for connectionType in DatabaseType))))
+                sourceDescription, rawConnection.get('type'), ', '.join(sorted(CONNECTION_TYPES))))
 
         try:
             return _CONNECTION_ADAPTER.validate_python(rawConnection)
@@ -939,6 +1226,14 @@ class Configuration:
             for predecessor in job.predecessors:
                 if predecessor not in jobs:
                     problems.append(f'{jobName}: predecessor "{predecessor}" is not a known job')
+
+            if connections is not None and isinstance(job, DataJobConfig):
+                source, target = connections.get(job.sourceConnection), connections.get(job.targetConnection)
+                if isinstance(source, FilesConnection):
+                    problems.append('{}: sourceConnection "{}" is a files connection, which can only be written to'.format(jobName, job.sourceConnection))
+                mismatch = None if target is None else targetMismatch(job, target)
+                if mismatch:
+                    problems.append('{}: targetConnection "{}" {}'.format(jobName, job.targetConnection, mismatch))
 
             if connectionAliases is not None and isinstance(job, DataJobConfig):
                 if job.sourceConnection not in connectionAliases:

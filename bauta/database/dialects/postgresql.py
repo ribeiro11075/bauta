@@ -9,7 +9,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 from ..driver import Connection, Cursor, native
-from ...configuration import ConnectionConfig, DatabaseType, PostgreSQLConnection
+from ...configuration import DatabaseConfig, DatabaseType, PostgreSQLConnection
 from .base import ColumnCategory, settingsOf, _OnConflictDialect, _holdsOnly
 from .names import unqualifiedName
 
@@ -45,7 +45,7 @@ class PostgreSQLDialect(_OnConflictDialect):
     _DATE_OIDS = {1114, 1018}
     _TEXT_OIDS = {1043, 18, 25}
 
-    def openConnection(self, settings: ConnectionConfig) -> Any:
+    def openConnection(self, settings: DatabaseConfig) -> Any:
 
         import psycopg
 
@@ -55,7 +55,7 @@ class PostgreSQLDialect(_OnConflictDialect):
         return psycopg.connect(**self.connectArguments(settings), cursor_factory=psycopg.ClientCursor)
 
 
-    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Any:
+    def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
 
         cursor = connection.cursor()
 
@@ -69,7 +69,7 @@ class PostgreSQLDialect(_OnConflictDialect):
         return cursor
 
 
-    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
 
         settings = settingsOf(settings, PostgreSQLConnection)
 

@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple, Type, TypeVar
 
 from ..driver import Connection, Cursor
-from ...configuration import ConfigurationError, ConnectionConfig, DatabaseType
+from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType
 from .names import catalogName, catalogTableName, unqualifiedName
 
 
@@ -138,7 +138,7 @@ def _renameInThreeSteps(targetTable: str, stageTable: str, tempTable: str) -> Li
 M = TypeVar('M')
 
 
-def settingsOf(settings: ConnectionConfig, model: Type[M]) -> M:
+def settingsOf(settings: DatabaseConfig, model: Type[M]) -> M:
     """`settings` as the connection type `model` is, for a dialect reading the
     settings only that type has. A dialect handed another type's settings is
     a bug in bauta, not in the configuration.
@@ -159,7 +159,7 @@ class DatabaseDialect(ABC):
 
     databaseType: DatabaseType
 
-    def connect(self, settings: ConnectionConfig) -> Tuple[Connection, Cursor]:
+    def connect(self, settings: DatabaseConfig) -> Tuple[Connection, Cursor]:
         """Returns (connection, cursor), the session prepared. A connection
         whose preparation fails is closed before the error goes on, or every
         retry of a misconfigured job would leave one open.
@@ -177,12 +177,12 @@ class DatabaseDialect(ABC):
         return connection, cursor
 
     @abstractmethod
-    def openConnection(self, settings: ConnectionConfig) -> Connection:
+    def openConnection(self, settings: DatabaseConfig) -> Connection:
         """A new connection. Drivers are imported here, so only the one in use
         needs installing.
         """
 
-    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Cursor:
+    def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Cursor:
         """Sets the session up the way every statement expects, returning the
         cursor to run them on.
         """
@@ -190,10 +190,10 @@ class DatabaseDialect(ABC):
         return connection.cursor()
 
     @abstractmethod
-    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
         """The driver keyword arguments the connection fields map to."""
 
-    def connectArguments(self, settings: ConnectionConfig, resolvePassword: bool = True) -> Dict[str, Any]:
+    def connectArguments(self, settings: DatabaseConfig, resolvePassword: bool = True) -> Dict[str, Any]:
         """The fields' driver arguments plus settings.options, refusing an
         option that duplicates a field. resolvePassword=False lets `validate`
         check this without running a passwordCommand.

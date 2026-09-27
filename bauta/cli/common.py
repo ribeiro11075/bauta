@@ -9,12 +9,12 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Generator, List, Mapping, Optional, Sequence, Tuple, Union
 
 import yaml
 
-from ..configuration import (Configuration, ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, StorageLocation, TableLocation,
-                             expandEnvironmentVariables)
+from ..configuration import (Configuration, ConfigurationError, ConnectionConfig, DatabaseConfig, DataJobConfig, DataJobsFile, FilesConnection,
+                             StorageLocation, TableLocation, expandEnvironmentVariables)
 from ..database import Database
 from ..log import Log
 from ..masking import MaskingError
@@ -189,6 +189,9 @@ def _loadDataJobs(arguments: argparse.Namespace) -> Tuple[DataJobsFile, Dict[str
 
     unknown = ['{}: connection "{}" is not a known connection alias'.format(setting, location.connection)
                for setting, location in jobsFile.tableLocations().items() if location.connection not in connectionConfiguration]
+    unknown += ['{}: connection "{}" is a files connection; {} is kept in a database table or a file'.format(setting, location.connection, setting)
+                for setting, location in jobsFile.tableLocations().items()
+                if isinstance(connectionConfiguration.get(location.connection), FilesConnection)]
     if unknown:
         raise ConfigurationError('Invalid configuration in {}:\n'.format(jobsPath) + '\n'.join(unknown))
 
@@ -242,7 +245,7 @@ class _Connections:
 
 
     @contextlib.contextmanager
-    def use(self, alias: str) -> Iterator[Database]:
+    def use(self, alias: str) -> Generator[Database, None, None]:
 
         database = self._open.get(alias)
         if database is None:
@@ -373,3 +376,17 @@ def _requireAlias(connectionConfiguration: Dict[str, ConnectionConfig], alias: s
 
     if alias not in connectionConfiguration:
         raise UsageError('no connection alias {!r}. Known aliases: {}'.format(alias, ', '.join(sorted(connectionConfiguration))))
+
+
+def _requireDatabase(connectionConfiguration: Dict[str, ConnectionConfig], alias: str) -> DatabaseConfig:
+    """The alias's settings, which must be a database's: the commands that
+    read catalogs or generate tables have nothing to ask of a directory.
+    """
+
+    _requireAlias(connectionConfiguration, alias)
+    settings = connectionConfiguration[alias]
+    if isinstance(settings, FilesConnection):
+        raise UsageError('{} is a files connection; this command works with databases. A job writing to it names it as its '
+                         'targetConnection, with insertStrategy append or overwrite'.format(alias))
+
+    return settings

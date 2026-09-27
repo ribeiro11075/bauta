@@ -4,22 +4,31 @@ models in `models` that the rest of the package takes.
 """
 from .environment import ConfigurationError, PasswordCommandError, expandEnvironmentVariables, runPasswordCommand
 from .models import (EMBEDDED_TYPES, IDENTIFIER, WATERMARK_PLACEHOLDER, BaseJobConfig, Configuration, ConnectionConfig, DatabaseType, DataJobConfig,
-                     DataJobsFile, DiscoveryRulesFile, DuckDBConnection, InsertStrategy, MariaDBConnection, MaskingConfig, MSSQLConnection,
+                     DatabaseConfig, DataJobsFile, DiscoveryRulesFile, DuckDBConnection, FILE_STRATEGIES, FileCompression, FileFormat,
+                     FilesConnection, InsertStrategy, MariaDBConnection, MaskingConfig, MSSQLConnection,
                      MySQLConnection, NameRuleConfig, OracleConnection, PostgreSQLConnection, SQLiteConnection, StorageLocation, TableLocation,
-                     ValueRuleConfig, connectionConfig, findCycle)
+                     StoreType, ValueRuleConfig, connectionConfig, filePathProblem, findCycle, targetMismatch)
+from .fileTypes import ColumnType, parseColumnType
 
 __all__ = [
     'BaseJobConfig',
     'Configuration',
     'ConfigurationError',
     'connectionConfig',
+    'ColumnType',
     'ConnectionConfig',
+    'DatabaseConfig',
     'DatabaseType',
     'DataJobConfig',
     'DataJobsFile',
     'DiscoveryRulesFile',
     'DuckDBConnection',
     'expandEnvironmentVariables',
+    'FILE_STRATEGIES',
+    'FileCompression',
+    'FileFormat',
+    'filePathProblem',
+    'FilesConnection',
     'findCycle',
     'EMBEDDED_TYPES',
     'IDENTIFIER',
@@ -30,12 +39,15 @@ __all__ = [
     'MySQLConnection',
     'NameRuleConfig',
     'OracleConnection',
+    'parseColumnType',
     'PasswordCommandError',
     'PostgreSQLConnection',
     'runPasswordCommand',
     'SQLiteConnection',
     'StorageLocation',
+    'StoreType',
     'TableLocation',
+    'targetMismatch',
     'ValueRuleConfig',
     'WATERMARK_PLACEHOLDER',
     ]

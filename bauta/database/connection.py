@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Ty
 
 from .driver import Connection, Cursor
 from .values import WANTS_COLUMN_TYPES, prepareParameters, prepareValues
-from ..configuration import WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseType
+from ..configuration import WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseConfig, DatabaseType, FilesConnection
 from .dialects import ColumnDefinition, DatabaseDialect, DuckDBDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
     SQLiteDialect, catalogName, quoteFoldedTable, quoteIdentifier, splitTableName, suffixedName, tooLongName
 
@@ -34,6 +34,9 @@ class RowStream:
         self._chunkSize = chunkSize
         self._pending: Optional[List[Tuple[Any, ...]]] = firstChunk
         self.closed = False
+        # The query's cursor.description, for what the driver says of each
+        # column beyond its name.
+        self.description: Optional[Sequence[Sequence[Any]]] = None
 
 
     def __iter__(self) -> 'RowStream':
@@ -96,8 +99,16 @@ class RowStream:
 class Database:
 
     def __init__(self, connectionSettings: ConnectionConfig) -> None:
-        self.connectionSettings = connectionSettings
-        self.type = connectionSettings.type
+
+        if isinstance(connectionSettings, FilesConnection):
+            # A job writes files through bauta.files; anything else that asks
+            # for a connection -- discover, coverage, run state -- asks for a
+            # database.
+            raise ConfigurationError('{} is a files connection, not a database: jobs can write to it, but nothing reads from it'.format(
+                connectionSettings.describeTarget()))
+
+        self.connectionSettings: DatabaseConfig = connectionSettings
+        self.type: DatabaseType = connectionSettings.type
         self.dialect = DIALECTS[self.type]
         self.primaryKeyCache: Dict[str, List[str]] = {}
         self.columnNameCache: Dict[str, List[str]] = {}
@@ -184,6 +195,7 @@ class Database:
                 cursor.execute(query, prepareParameters(self.type, parameters))
 
             stream._pending = list(cursor.fetchmany(chunkSize))
+            stream.description = list(cursor.description)
             columns = [row[0] for row in cursor.description]
         except BaseException:
             stream.close()

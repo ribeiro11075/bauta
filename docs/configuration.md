@@ -5,6 +5,7 @@ The field reference. For *why* things behave as they do, see [design.md](design.
 - [Where configuration is found](#where-configuration-is-found)
 - [Credentials](#credentials)
 - [`connections.yaml`](#connectionsyaml)
+  - [Files](#files)
   - [Driver options and TLS](#driver-options-and-tls)
 - [`jobs.yaml` — data jobs](#jobsyaml--data-jobs)
 - [Validation](#validation)
@@ -73,7 +74,7 @@ Each type takes only the settings that apply to it. A setting that belongs to an
 
 | Setting | Types | Required or default | Meaning |
 | --- | --- | --- | --- |
-| `type` | all | required | `postgresql`, `mysql`, `mariadb`, `mssql`, `oracle`, `sqlite` or `duckdb` |
+| `type` | all | required | `postgresql`, `mysql`, `mariadb`, `mssql`, `oracle`, `sqlite` or `duckdb`, or `files` for tables of files in a directory or an S3 bucket; see [files](#files) for its settings |
 | `database` | postgresql, mysql, mariadb, mssql | required | The database name. |
 | `path` | sqlite, duckdb | required | The database file, or `:memory:`. SQLite connections enforce declared foreign keys, as every other database does; SQLite itself leaves them off unless asked. See [DuckDB](#duckdb) for what differs there. |
 | `host`, `user` | the five server types | required | |
@@ -84,7 +85,7 @@ Each type takes only the settings that apply to it. A setting that belongs to an
 | `currentSchema` | postgresql, oracle, duckdb | optional | The schema unqualified table names, and every key and column lookup, resolve in. PostgreSQL sets `search_path` to this schema alone; Oracle sets `CURRENT_SCHEMA`; DuckDB sets `schema`. On the other databases, qualify names as `schema.table` instead. |
 | `maxConcurrentJobs` | all | optional, no limit | The most jobs that may use this connection at once, however many `workers` there are. A job that would pass it waits for one on this connection to finish, while jobs on other connections start. For a server that can take only so many loads at a time. Always 1 for `duckdb`; a higher value is refused. |
 | `requireMasking` | all | optional, `false` | No job may read from or write to this connection without a masking policy. See [requiring masking](#requiring-masking). |
-| `options` | all | optional | Extra keyword arguments for the driver's `connect()`, for anything the settings above don't cover; for `duckdb`, DuckDB's own settings, such as `memory_limit` and `threads`. See below. |
+| `options` | the seven databases | optional | Extra keyword arguments for the driver's `connect()`, for anything the settings above don't cover; for `duckdb`, DuckDB's own settings, such as `memory_limit` and `threads`. See below. |
 
 Any other setting is an error, so a misspelled one stops `validate` rather than leaving the connection to behave in some way nobody configured.
 
@@ -104,6 +105,37 @@ Install it with `pip install "bauta[duckdb]"`, which brings pyarrow for fast loa
 - **One job at a time per file.** DuckDB lets one process open a file, and every job runs in a process of its own, so the run starts one job at a time on a DuckDB connection (its `maxConcurrentJobs` is always 1). `workers` still runs jobs on other connections alongside. Two aliases for one file are refused, since each would count its jobs apart. Anything else holding the file open -- another run, a program reading it -- makes a job wait up to a minute, then fail saying why.
 - **No run state in DuckDB.** The run holds its run-state connection for as long as it lasts, so `memory` can't be a DuckDB table. `history` and `manifest` can, since each is written once a cycle ends.
 - **No swap of a table in a foreign key, or with an index.** DuckDB won't rename a table with an index or one another references, and renaming one that references another corrupts its catalog. A `swap` job whose target or stage is either fails before renaming anything; use `upsert` for it. A primary key is fine. `clear` empties such tables one transaction per table, since DuckDB checks a foreign key against what is committed: a clear stopped part-way leaves the tables it reached empty, and running it again finishes it.
+
+### Files
+
+```yaml
+lake:
+  type: files
+  root: s3://acme-lake/masked      # or a directory: /srv/lake/masked
+  format: parquet
+  requireMasking: true
+```
+
+A directory, on this machine or in an S3 bucket, that jobs write tables of files into, for a data lake or a handoff. Install it with `pip install "bauta[files]"`, which brings pyarrow; S3 needs nothing more. It is a target only: a job naming it as `sourceConnection`, and `discover`, `subset`, `schema`, `synthesize`, `coverage` and `clear`, are refused, and so is keeping run state, history or a manifest in it. A job writing to it takes `insertStrategy: append` or `overwrite` ([load](#load)); [files as a target](design.md#files-as-a-target) describes what a run leaves where.
+
+| Setting | Required or default | Meaning |
+| --- | --- | --- |
+| `root` | required | Where the tables go: a directory, created if missing, or `s3://bucket` or `s3://bucket/prefix`, whose bucket must exist. Each job's `targetTableFinal` is a path under it. Other URLs, such as `gs://`, are refused for now rather than read as a directory named `gs:`. |
+| `format` | `parquet` | `parquet`, `csv` or `ndjson` (JSON Lines: one JSON object per line). See [formats](design.md#formats) for how each type is spelled in the two text formats. |
+| `compression` | `zstd` for Parquet, `gzip` for text | Parquet: `zstd`, `snappy` (for older readers), `gzip` or `none`. CSV and JSON Lines: `gzip` or `none`, the whole file compressed, and named `.gz` so readers know. |
+| `delimiter` | `,` | CSV's alone: one character, not a quote or a line break. |
+| `fileSize` | `256MB` | Where a part is closed and the next begun, measured as written, compressed. Bytes, or text such as `256MB` or `256MiB`. Snowflake loads best from files of 100 to 250 MB compressed, and Athena and Spark read one file per worker. At most `5GiB` on S3, which publishes a part by copying it. |
+| `rowGroupSize` | `128MB` | How much of a table is held in memory, before compression, and written at once: one Parquet row group. Larger compresses better and lets engines skip more; smaller holds less. |
+| `keepSnapshots` | `2` | How many complete snapshots of an `overwrite` job's table stay, the newest included. |
+| `region` | S3 only; the bucket's, asked of S3 | The bucket's AWS region. |
+| `endpoint` | S3 only | Another service that speaks S3 -- MinIO, Cloudflare R2, Ceph -- as a URL, `https://...` or `http://...`. |
+| `accessKeyId`, `secretAccessKey` | S3 only; both or neither | Keys to sign with. The secret is held as `password` is. Without them, the AWS default chain finds credentials as the AWS CLI does: the environment's `AWS_ACCESS_KEY_ID` and friends, a profile, SSO, an EC2 instance role, an ECS task role, IRSA on Kubernetes. Prefer those: nothing to rotate in a file. |
+| `sessionToken` | S3 only | With temporary keys. |
+| `roleArn` | S3 only | A role to assume, with whichever credentials the rest find: for a bucket in another account. |
+
+`requireMasking` and `maxConcurrentJobs` apply as to any connection. Two connections may share a root, to write some tables as Parquet and others as CSV.
+
+**What the credentials need on S3**, on the root's prefix: `s3:PutObject`, `s3:GetObject` (a part is published by copying it), `s3:DeleteObject`, `s3:ListBucket`, and `s3:AbortMultipartUpload`. `bauta run --dry-run` writes, lists and deletes an object under the root to check. Give the bucket a lifecycle rule aborting incomplete multipart uploads after a day or so: a process killed mid-upload leaves parts that S3 bills for and nothing lists.
 
 ### Requiring masking
 
@@ -301,7 +333,7 @@ history:
 | `watermarkColumn` | optional | Makes the job incremental. See [incremental loads](design.md#incremental-loads). Refused by `validate` on a column the masking policy masks, by name or through `defaultStrategy`: the watermark is read before masking and kept in run state, logs and `bauta jobs`, so it would leak the unmasked value. |
 | `watermarkInitial` | required with `watermarkColumn` | The value bound on the first run, before anything is stored. Bound as the type YAML read: write a timestamp unquoted, or PostgreSQL and Oracle refuse the [lookback](design.md#why-the-lookback-window) arithmetic around it. |
 
-A job with `watermarkColumn` must also put a `{{ watermark }}` placeholder in `sourceQuery` and use `insertStrategy: upsert`. Validation enforces all three.
+A job with `watermarkColumn` must also put a `{{ watermark }}` placeholder in `sourceQuery` and use `insertStrategy: upsert`, or `append` into a files connection. Validation enforces all three.
 
 ### Transform
 
@@ -361,14 +393,20 @@ Transforms apply to **`sourceQuery`'s own result columns**, not the target's. Na
 | Field | Required or default | Meaning |
 | --- | --- | --- |
 | `targetConnection` | required | An alias from `connections.yaml`. |
-| `targetTableFinal` | required | The table to load: `table`, or `schema.table` for one outside the connection's current schema. |
-| `insertStrategy` | required | `swap` or `upsert` — below. |
+| `targetTableFinal` | required | The table to load: `table`, or `schema.table` for one outside the connection's current schema. For a files connection, the table's directory under `root`, such as `crm/customers`: no absolute path, no `..`, and no part beginning with `_` or `.`, which engines reading a directory tree skip, and bauta keeps for its staging. |
+| `insertStrategy` | required | `swap` or `upsert` into a database; `append` or `overwrite` into a files connection — below. |
 | `targetTableStage` | required for `swap` | A staging table with the same shape, emptied before each load, so it must be a different table from `targetTableFinal` (compared ignoring case). For `swap`, it must be in the same schema as `targetTableFinal`. |
 | `targetColumns` | optional | Target column names matching `sourceQuery`'s SELECT list **by position**. |
 | `preTargetAdhocQueries` | optional | SQL run on the target before any write, the stage load included. |
 | `postTargetAdhocQueries` | optional | SQL run on the target after the load. |
+| `targetColumnTypes` | optional, files only | Column → type, for a column whose values don't settle its type, or settle it as something else: `string`, `binary`, `bool`, `int8` to `int64`, `uint8` to `uint64`, `float32`, `float64`, `decimal(precision,scale)` up to 38 digits, `date`, `time`, `timestamp` (without a time zone) or `timestamptz` (an instant, written in UTC). See [column types](design.md#column-types). |
+| `singleFile` | optional, `false`; files only | Write an `overwrite` job's table as one file, `<targetTableFinal>.parquet`, replaced whole each run, rather than a directory of parts. For small tables and handoffs to something that wants one file. |
+
+`targetTableStage` and the adhoc queries are for a table in a database; `targetColumnTypes` and `singleFile` for a files connection. Each given to the other kind is an error.
 
 - **`swap`** loads `targetTableStage`, then swaps it with `targetTableFinal` by renaming the two. The target is replaced wholesale. See [how the swap works](design.md#how-a-swap-works) for what renaming means for views and on Oracle.
+- **`append`** (files) adds the run's parts to the table's directory, beside those already there. With a watermark it is an incremental export, and like any append-only table it can hold a row twice: see [duplicates](design.md#appends-and-duplicate-rows).
+- **`overwrite`** (files) publishes the whole table as a new snapshot, `snapshot=<run>/` in the table's directory, and keeps the newest `keepSnapshots`. Readers pick the newest complete one; see [reading a snapshot](design.md#reading-an-overwrite-jobs-table).
 - **`upsert`** inserts or updates by the target's declared primary key — from `targetTableStage` if set, otherwise straight from the extract. UNIQUE constraints aren't part of the match. A target without a primary key fails the job before anything is written; `bauta run --dry-run` checks for one too.
 
 ### Mask
@@ -399,6 +437,8 @@ A job with no `masking` block copies every column as it stands, which `bauta aud
 `unmasked: true` says the job was reviewed and copies as it stands, the way `keep` says it of a single column. The warning then goes, the audit report shows the job as `not masked, declared with \`unmasked\``, and a column that still looks like personal data is reported as a warning rather than an error.
 
 ### Load details
+
+**Into a files connection, `targetColumns` names the columns** the query's result is written as, in its order. Without it they are the query's own names. Two names differing only in case are refused, since several engines can't tell them apart.
 
 **`targetColumns` is purely positional.** Left unset, `sourceQuery` must select every column of `targetTableFinal` in that table's own order. Real column names in the wrong order load data into the wrong columns *without any error*, since both sides are valid; a wrong count fails at the database.
 

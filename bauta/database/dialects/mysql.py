@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from ..driver import Connection, Cursor, native
-from ...configuration import ConnectionConfig, DatabaseType, MariaDBConnection, MySQLConnection
+from ...configuration import DatabaseConfig, DatabaseType, MariaDBConnection, MySQLConnection
 from .base import ColumnCategory, DatabaseDialect
 
 
@@ -17,7 +17,7 @@ class MySQLDialect(DatabaseDialect):
     _DATE_TYPES = {'DATETIME', 'TIMESTAMP', 'DATE'}
     _TEXT_TYPES = {'TEXT', 'VARCHAR', 'CHAR'}
 
-    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
 
         if not isinstance(settings, (MySQLConnection, MariaDBConnection)):
             raise TypeError("{} settings reached the dialect for MySQL and MariaDB".format(settings.type.value))
@@ -26,14 +26,14 @@ class MySQLDialect(DatabaseDialect):
                 'port': settings.port}
 
 
-    def openConnection(self, settings: ConnectionConfig) -> Any:
+    def openConnection(self, settings: DatabaseConfig) -> Any:
 
         import mysql.connector
 
         return mysql.connector.connect(**self.connectArguments(settings))
 
 
-    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Any:
+    def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
 
         return native(connection).cursor(buffered=True)
 

@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..driver import Connection, Cursor, native
-from ...configuration import ConnectionConfig, DatabaseType, OracleConnection
+from ...configuration import DatabaseConfig, DatabaseType, OracleConnection
 from ...log import LOGGER_NAME
 from .base import ColumnCategory, DatabaseDialect, _mergeUpdateInsertClause, _renameInThreeSteps, _renameSteps, _renameStatement, settingsOf
 
@@ -75,14 +75,14 @@ class OracleDialect(DatabaseDialect):
                        "NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF' "
                        "NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'")
 
-    def openConnection(self, settings: ConnectionConfig) -> Any:
+    def openConnection(self, settings: DatabaseConfig) -> Any:
 
         import oracledb
 
         return oracledb.connect(**self.connectArguments(settings))
 
 
-    def prepareSession(self, connection: Connection, settings: ConnectionConfig) -> Any:
+    def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
 
         native(connection).outputtypehandler = _oracleValues
         native(connection).inputtypehandler = _oracleDatetimesAsTimestamps
@@ -96,7 +96,7 @@ class OracleDialect(DatabaseDialect):
         return cursor
 
 
-    def _ownConnectArguments(self, settings: ConnectionConfig, password: Optional[str]) -> Dict[str, Any]:
+    def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
 
         settings = settingsOf(settings, OracleConnection)
 
