@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.1 — 2026-09-27
 
 Jobs can write Iceberg tables, through a Glue, REST or SQL catalog, in any of the three clouds: a run is one commit, `upsert` merges by key, and old snapshots' files go with them. **Read Breaking before upgrading: pyarrow and DuckDB need newer versions.** No mask changes.
 
