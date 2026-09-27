@@ -61,9 +61,9 @@ def test_a_cloud_root_names_its_bucket_or_container_and_account(root, bucketPath
 
 
 @pytest.mark.parametrize('setting, message', [
-    ({'root': 'gs://bucket', 'region': 'eu-west-1'}, 'region is for a root on S3, and root is on Google Cloud Storage'),
-    ({'root': 's3://bucket', 'accountName': 'acct'}, 'accountName is for a root on Azure, and root is on S3'),
-    ({'root': 'lake', 'endpoint': 'http://x'}, 'endpoint is for a root on S3, and root is a directory on this machine'),
+    ({'root': 'gs://bucket', 'region': 'eu-west-1'}, 'region is for S3, and root is on Google Cloud Storage'),
+    ({'root': 's3://bucket', 'accountName': 'acct'}, 'accountName is for Azure, and root is on S3'),
+    ({'root': 'lake', 'endpoint': 'http://x'}, 'endpoint is for S3, and root is a directory on this machine'),
     ({'root': 'az://container'}, 'an az:// root needs accountName'),
     ({'root': 'abfss://container@acct.blob.core.windows.net/lake'}, 'is not an Azure location'),
     ({'root': 'abfss://c@acct.dfs.core.windows.net', 'accountName': 'other'}, 'accountName other is not the account root names, acct'),
@@ -79,7 +79,7 @@ def test_a_cloud_root_refuses_settings_that_could_not_work(setting, message):
 
 @pytest.mark.parametrize('setting, message', [
     ({'root': 's3://'}, 'names no bucket'),
-    ({'root': 'lake', 'region': 'eu-west-1'}, 'region is for a root on S3'),
+    ({'root': 'lake', 'region': 'eu-west-1'}, 'region is for S3'),
     ({'accessKeyId': 'AKIA'}, 'set accessKeyId and secretAccessKey together'),
     ({'sessionToken': 't'}, 'sessionToken goes with accessKeyId and secretAccessKey'),
     ({'fileSize': '6GiB'}, 'fileSize can be at most 5GiB on S3'),
@@ -124,7 +124,7 @@ def test_a_files_connection_refuses_what_it_does_not_take(setting, message):
 def test_a_file_job_validates_with_the_files_connection():
     job = _validate(targetColumnTypes={'balance': 'decimal(12,2)'})
 
-    assert job.writesFiles()
+    assert job.insertStrategy.value == 'overwrite'
     assert parseColumnType(job.targetColumnTypes['balance']) == ('decimal', 12, 2)
 
 
@@ -139,7 +139,7 @@ def test_a_database_strategy_into_a_files_connection_is_refused(job, message):
 
 
 def test_a_file_strategy_into_a_database_is_refused():
-    with pytest.raises(ConfigurationError, match='is a sqlite database, and insertStrategy: append writes files'):
+    with pytest.raises(ConfigurationError, match='is a sqlite database, which takes insertStrategy swap or upsert, not append'):
         _validate(insertStrategy='append', targetConnection='staging')
 
 
@@ -165,11 +165,13 @@ def test_a_file_job_refuses_settings_that_would_be_ignored_or_are_wrong(job, mes
         Configuration.validateJobConfiguration({'jobs': {'j': _job(**job)}}, DataJobsFile)
 
 
-@pytest.mark.parametrize('job', [{'targetColumnTypes': {'id': 'int64'}}, {'singleFile': True}])
-def test_file_settings_on_a_database_job_are_refused(job):
-    with pytest.raises(ConfigurationError, match='for a file target'):
-        Configuration.validateJobConfiguration({'jobs': {'j': _job(insertStrategy='upsert', targetTableFinal='customers', **job)}},
-                                               DataJobsFile)
+@pytest.mark.parametrize('job, message', [
+    ({'targetColumnTypes': {'id': 'int64'}}, 'targetColumnTypes is for a files connection or an Iceberg connection, and it is a database'),
+    ({'targetKey': ['id']}, 'targetKey is for an Iceberg connection, and it is a database'),
+    ])
+def test_lake_settings_on_a_database_job_are_refused(job, message):
+    with pytest.raises(ConfigurationError, match=message):
+        _validate(insertStrategy='upsert', targetConnection='staging', targetTableFinal='customers', **job)
 
 
 @pytest.mark.parametrize('path, message', [
@@ -184,7 +186,7 @@ def test_a_file_tables_path_must_stay_under_the_root_and_be_visible(path, messag
     as bauta's own staging is meant to be.
     """
     with pytest.raises(ConfigurationError, match=message):
-        Configuration.validateJobConfiguration({'jobs': {'j': _job(targetTableFinal=path)}}, DataJobsFile)
+        _validate(targetTableFinal=path)
 
 
 def test_a_files_connection_that_requires_masking_refuses_an_unmasked_job():

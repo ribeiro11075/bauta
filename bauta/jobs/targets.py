@@ -66,6 +66,9 @@ class LoadTarget:
     def abort(self) -> None:
         """Best-effort cleanup after a failure; must not raise."""
 
+    def close(self) -> None:
+        """Lets go of what the target holds open, after finish() or abort()."""
+
 
 class TableTarget(LoadTarget):
     """A table in a database, the Database already open. Each chunk commits on

@@ -9,6 +9,7 @@ psycopg==3.2.10
 oracledb==2.5.0
 pymssql==2.3.5
 cryptography==42.0.0
-duckdb==1.2.0
-pyarrow==18.0.0
+duckdb==1.4.0
+pyarrow==21.0.0
 pytz==2024.1
+pyiceberg==0.12.0

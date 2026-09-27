@@ -1,6 +1,7 @@
-"""How a part is spelled in each format a files connection writes: Parquet,
-CSV and JSON Lines. Each writer takes Arrow tables of the part's one schema,
-a row group at a time, and writes them to a stream it closes.
+"""How a run's parts are written: Parts rolls from one to the next at
+fileSize, and a writer per format -- Parquet, CSV and JSON Lines -- takes
+Arrow tables of the part's one schema, a row group at a time, and writes them
+to a stream it closes.
 
 CSV and JSON Lines hold text, so each type is spelled one way in both:
 
@@ -22,9 +23,10 @@ from __future__ import annotations
 import base64
 import json
 import math
-from typing import Any, Callable, List, Optional, Set
+import posixpath
+from typing import AbstractSet, Any, Callable, List, NamedTuple, Optional, Protocol, Tuple
 
-from ..configuration import FileCompression, FileFormat, FilesConnection
+from ..configuration import ConfigurationError, FileCompression, FileFormat
 
 _TIMESTAMP = '%Y-%m-%d %H:%M:%S.%f'
 
@@ -32,10 +34,23 @@ _TIMESTAMP = '%Y-%m-%d %H:%M:%S.%f'
 _NOT_FINITE = {'nan': '"NaN"', 'inf': '"Infinity"', '-inf': '"-Infinity"'}
 
 
-def extension(settings: FilesConnection) -> str:
+class PartSettings(NamedTuple):
+    """How a target writes its parts: a files connection as it says, an
+    Iceberg table as Parquet.
+    """
+
+    format: FileFormat
+    compression: FileCompression
+    # Where a part is closed and the next begun.
+    fileSize: int
+    # CSV's; a comma when None.
+    delimiter: Optional[str] = None
+
+
+def extension(settings: PartSettings) -> str:
     """What a part's name ends in. Engines reading text tell gzip by `.gz`."""
 
-    compressed = '.gz' if settings.format != FileFormat.PARQUET and settings.effectiveCompression() == FileCompression.GZIP else ''
+    compressed = '.gz' if settings.format != FileFormat.PARQUET and settings.compression == FileCompression.GZIP else ''
 
     return {FileFormat.PARQUET: '.parquet', FileFormat.CSV: '.csv', FileFormat.NDJSON: '.ndjson'}[settings.format] + compressed
 
@@ -45,7 +60,7 @@ class PartWriter:
     finishes the file and closes `stream`.
     """
 
-    def __init__(self, stream: Any, schema: Any, settings: FilesConnection, jsonColumns: Set[str]) -> None:
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
         self.stream = stream
         self.schema = schema
         self.settings = settings
@@ -60,7 +75,7 @@ class PartWriter:
         raise NotImplementedError
 
 
-def partWriter(stream: Any, schema: Any, settings: FilesConnection, jsonColumns: Set[str]) -> PartWriter:
+def partWriter(stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> PartWriter:
 
     writer = {FileFormat.PARQUET: _Parquet, FileFormat.CSV: _Csv, FileFormat.NDJSON: _JsonLines}[settings.format]
 
@@ -70,11 +85,11 @@ def partWriter(stream: Any, schema: Any, settings: FilesConnection, jsonColumns:
 class _Parquet(PartWriter):
     """Each table written is one row group."""
 
-    def __init__(self, stream: Any, schema: Any, settings: FilesConnection, jsonColumns: Set[str]) -> None:
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
         super().__init__(stream, schema, settings, jsonColumns)
         import pyarrow.parquet
 
-        compression = settings.effectiveCompression()
+        compression = settings.compression
         self._writer = pyarrow.parquet.ParquetWriter(stream, schema, compression=None if compression == FileCompression.NONE else compression.value)
 
     def write(self, table: Any) -> None:
@@ -92,11 +107,11 @@ class _Text(PartWriter):
     measured as the part's size by the stream beneath it.
     """
 
-    def __init__(self, stream: Any, schema: Any, settings: FilesConnection, jsonColumns: Set[str]) -> None:
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
         super().__init__(stream, schema, settings, jsonColumns)
         import pyarrow
 
-        self.output = pyarrow.CompressedOutputStream(stream, 'gzip') if settings.effectiveCompression() == FileCompression.GZIP else stream
+        self.output = pyarrow.CompressedOutputStream(stream, 'gzip') if settings.compression == FileCompression.GZIP else stream
 
     def close(self) -> None:
 
@@ -114,7 +129,7 @@ def _base64(values: List[Optional[bytes]]) -> List[Optional[str]]:
 class _Csv(_Text):
     """With a header in every part, so each file reads on its own."""
 
-    def __init__(self, stream: Any, schema: Any, settings: FilesConnection, jsonColumns: Set[str]) -> None:
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
         super().__init__(stream, schema, settings, jsonColumns)
         import pyarrow
         import pyarrow.csv
@@ -201,7 +216,7 @@ class _JsonLines(_Text):
     # times its size in memory.
     BATCH_ROWS = 4096
 
-    def __init__(self, stream: Any, schema: Any, settings: FilesConnection, jsonColumns: Set[str]) -> None:
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
         super().__init__(stream, schema, settings, jsonColumns)
 
         self._keys = [_jsonText(field.name) + ':' for field in schema]
@@ -216,3 +231,108 @@ class _JsonLines(_Text):
                 fields = [key + ('null' if value is None else encode(value)) for (key, encode), value in zip(columns, row)]
                 lines.append('{' + ','.join(fields) + '}\n')
             self.output.write(''.join(lines).encode('utf-8'))
+
+
+class PartOutput(Protocol):
+    """Where Parts writes: a files connection's Store, or an Iceberg table's
+    FileIO.
+    """
+
+    def openOutput(self, path: str) -> Any: ...
+
+    def largestMove(self) -> Optional[int]:
+        """The largest file publishing can move there, or None for any size."""
+
+
+class Parts:
+    """The parts of one run, written into `directory`, each closed at the
+    settings' fileSize and the next begun -- unless the table is one file.
+    """
+
+    def __init__(self, output: PartOutput, directory: str, runId: str, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str] = frozenset(),
+                 singleFile: bool = False) -> None:
+        self.output = output
+        self.directory = directory
+        self.runId = runId
+        self.schema = schema
+        self.settings = settings
+        self.jsonColumns = jsonColumns
+        self.singleFile = singleFile
+        self.written: List[Tuple[str, int]] = []
+        self._path: Optional[str] = None
+        self._stream: Any = None
+        self._writer: Optional[PartWriter] = None
+        self._rows = 0
+
+
+    def _open(self) -> None:
+
+        name = 'part-{}-{:05d}{}'.format(self.runId, len(self.written) + 1, extension(self.settings))
+        self._path = posixpath.join(self.directory, name)
+        self._stream = self.output.openOutput(self._path)
+        self._writer = partWriter(self._stream, self.schema, self.settings, self.jsonColumns)
+        self._rows = 0
+
+
+    def write(self, table: Any) -> None:
+        """Writes `table` at once -- one Parquet row group -- and closes the
+        part if that took it to its size. The size is what reached the
+        stream: compressed, and for a text format short of what gzip still
+        holds.
+        """
+
+        if self._writer is None:
+            self._open()
+        assert self._writer is not None
+
+        self._writer.write(table)
+        self._rows += table.num_rows
+        written = self._stream.tell()
+
+        largest = self.output.largestMove()
+        if self.singleFile and largest is not None and written > largest:
+            raise ConfigurationError('the table is past {} MiB, the largest file this store can publish, by copying it in one request; '
+                                     'write it in parts, without singleFile'.format(largest // 2 ** 20))
+        if not self.singleFile and written >= self.settings.fileSize:
+            self._close()
+
+
+    def _close(self) -> None:
+
+        if self._writer is None:
+            return
+        assert self._path is not None
+        self._writer.close()
+        self.written.append((self._path, self._rows))
+        self._writer = self._stream = None
+        self._path = None
+
+
+    def close(self) -> List[Tuple[str, int]]:
+        """Every part written, and its rows. An empty table still gets one part,
+        so its columns are written down.
+        """
+
+        if self._writer is None and not self.written:
+            self.write(self.schema.empty_table())
+        self._close()
+
+        return self.written
+
+
+    def discard(self) -> List[str]:
+        """Closes what is open, best-effort, and returns every part's path, the
+        one being written included. A cloud completes an upload that is
+        closed, so what was written still has to be deleted.
+        """
+
+        paths = [path for path, _ in self.written] + ([self._path] if self._path else [])
+        for closing in (self._writer, self._stream):
+            if closing is not None:
+                try:
+                    closing.close()
+                except Exception:
+                    pass
+        self._writer = self._stream = None
+
+        return paths

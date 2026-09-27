@@ -64,12 +64,17 @@ sqlite = []
 # pyarrow is how a chunk reaches DuckDB in one statement: its executemany
 # runs once per row, and took 13 seconds for 50,000. pytz is what DuckDB
 # needs to return a TIMESTAMP WITH TIME ZONE, and doesn't install itself
-duckdb = ["duckdb>=1.2", "pyarrow>=18", "pytz>=2024.1"]
-# Parquet for a files connection, written through pyarrow
-files = ["pyarrow>=18"]
+duckdb = ["duckdb>=1.4", "pyarrow>=21", "pytz>=2024.1"]
+# Parquet, CSV and JSON Lines for a files connection, written through pyarrow:
+# 21 is the first with every Azure credential (a SAS token, a service
+# principal) and a copy of any size there
+files = ["pyarrow>=21"]
+# Iceberg tables through a Glue, REST or SQL catalog; boto3 for Glue and
+# SQLAlchemy for a SQL catalog come with pyiceberg's extras
+iceberg = ["pyiceberg[pyarrow,glue,sql-sqlite]>=0.12", "pyarrow>=21"]
 # The fpe masking strategy's AES; oracledb already depends on it
 fpe = ["cryptography>=42"]
-all = ["bauta[mysql,postgresql,oracle,mssql,mariadb,sqlite,duckdb,files,fpe]"]
+all = ["bauta[mysql,postgresql,oracle,mssql,mariadb,sqlite,duckdb,files,iceberg,fpe]"]
 # The native masker, pinned to this exact version rather than a range: the two
 # must compute identical masks, and masking.py ignores any other version. Left
 # out of `all`, which would otherwise need Rust wherever no wheel is published.

@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..configuration import ConfigurationError, ConnectionConfig, DataJobsFile, FilesConnection, InsertStrategy
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobsFile, FilesConnection, IcebergConnection, InsertStrategy, isLake
 from ..database import DIALECTS
 from ..jobs.dependencyGraph import DependencyGraph
 from ..log import Log
@@ -255,8 +255,9 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
                     problems.append('{}: {} -> {}'.format(name, column, error))
 
     for alias, settings in sorted(connectionConfiguration.items()):
-        if isinstance(settings, FilesConnection):
+        if isLake(settings):
             continue
+        assert not isinstance(settings, (FilesConnection, IcebergConnection))
         try:
             DIALECTS[settings.type].connectArguments(settings, resolvePassword=False)
         except ConfigurationError as error:
@@ -316,7 +317,7 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, C
 
         for alias in aliases:
             settings = connectionConfiguration[alias]
-            if isinstance(settings, FilesConnection):
+            if isLake(settings):
                 from ..files import checkWritable
 
                 try:
@@ -338,7 +339,7 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, C
         for name, job in jobsFile.jobs.items():
             if job.targetConnection in unreachable:
                 continue
-            if job.writesFiles():
+            if isLake(connectionConfiguration[job.targetConnection]):
                 # A file target has no table to read yet: it takes the
                 # columns the query returns.
                 if job.sourceConnection in unreachable:

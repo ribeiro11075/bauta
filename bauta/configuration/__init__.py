@@ -1,13 +1,15 @@
 """Reading and validating jobs.yaml, connections.yaml and discovery.yaml: what
 `environment` resolves from outside the files first, then the pydantic
-models in `models` that the rest of the package takes.
+models the rest of the package takes: the connections in `connections`, and
+the jobs and discovery rules in `models`.
 """
 from .environment import ConfigurationError, PasswordCommandError, expandEnvironmentVariables, runPasswordCommand
-from .models import (EMBEDDED_TYPES, IDENTIFIER, WATERMARK_PLACEHOLDER, BaseJobConfig, Configuration, ConnectionConfig, DatabaseType, DataJobConfig,
-                     DatabaseConfig, DataJobsFile, DiscoveryRulesFile, DuckDBConnection, FILE_STRATEGIES, FileCompression, FileFormat,
-                     FilesConnection, InsertStrategy, MariaDBConnection, MaskingConfig, MSSQLConnection,
-                     MySQLConnection, NameRuleConfig, OracleConnection, PostgreSQLConnection, SQLiteConnection, StorageLocation, TableLocation,
-                     StoreType, ValueRuleConfig, connectionConfig, filePathProblem, findCycle, targetMismatch)
+from .connections import (EMBEDDED_TYPES, IDENTIFIER, S3_LARGEST_COPY, ConnectionConfig, DatabaseConfig, DatabaseType, DuckDBConnection,
+                          FileCompression, FileFormat, FilesConnection, FileStore, IcebergCatalog, IcebergConnection, LakeConfig, MariaDBConnection,
+                          MSSQLConnection, MySQLConnection, OracleConnection, PostgreSQLConnection, SQLiteConnection, StoreType)
+from .models import (FILE_STRATEGIES, WATERMARK_PLACEHOLDER, BaseJobConfig, Configuration, DataJobConfig, DataJobsFile, DiscoveryRulesFile,
+                     InsertStrategy, MaskingConfig, NameRuleConfig, StorageLocation, TableLocation, ValueRuleConfig, connectionConfig, filePathProblem,
+                     findCycle, isLake, targetKind, targetProblems)
 from .fileTypes import ColumnType, parseColumnType
 
 __all__ = [
@@ -29,6 +31,11 @@ __all__ = [
     'FileFormat',
     'filePathProblem',
     'FilesConnection',
+    'FileStore',
+    'IcebergCatalog',
+    'IcebergConnection',
+    'isLake',
+    'LakeConfig',
     'findCycle',
     'EMBEDDED_TYPES',
     'IDENTIFIER',
@@ -43,11 +50,13 @@ __all__ = [
     'PasswordCommandError',
     'PostgreSQLConnection',
     'runPasswordCommand',
+    'S3_LARGEST_COPY',
     'SQLiteConnection',
     'StorageLocation',
     'StoreType',
     'TableLocation',
-    'targetMismatch',
+    'targetKind',
+    'targetProblems',
     'ValueRuleConfig',
     'WATERMARK_PLACEHOLDER',
     ]

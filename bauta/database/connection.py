@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Ty
 
 from .driver import Connection, Cursor
 from .values import WANTS_COLUMN_TYPES, prepareParameters, prepareValues
-from ..configuration import WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseConfig, DatabaseType, FilesConnection
+from ..configuration import WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseConfig, DatabaseType, FilesConnection, IcebergConnection
 from .dialects import ColumnDefinition, DatabaseDialect, DuckDBDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
     SQLiteDialect, catalogName, quoteFoldedTable, quoteIdentifier, splitTableName, suffixedName, tooLongName
 
@@ -100,12 +100,12 @@ class Database:
 
     def __init__(self, connectionSettings: ConnectionConfig) -> None:
 
-        if isinstance(connectionSettings, FilesConnection):
+        if isinstance(connectionSettings, (FilesConnection, IcebergConnection)):
             # A job writes files through bauta.files; anything else that asks
             # for a connection -- discover, coverage, run state -- asks for a
             # database.
-            raise ConfigurationError('{} is a files connection, not a database: jobs can write to it, but nothing reads from it'.format(
-                connectionSettings.describeTarget()))
+            raise ConfigurationError('{} is a {} connection, not a database: jobs can write to it, but nothing reads from it'.format(
+                connectionSettings.describeTarget(), connectionSettings.type.value))
 
         self.connectionSettings: DatabaseConfig = connectionSettings
         self.type: DatabaseType = connectionSettings.type

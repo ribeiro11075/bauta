@@ -7,7 +7,8 @@ reader sees happen at once, and so is one in an Azure account with a
 hierarchical namespace. Elsewhere it is a copy within the bucket and a
 delete, and each object appears whole when its copy completes: pyarrow
 copies on S3 and GCS itself, and on Azure's flat namespace, which it can't
-move in, this does.
+move in, this does. S3 copies at most 5 GiB in one request, which bounds a
+part; GCS and Azure copy any size.
 
 An object store has no directories, so nothing here creates one there --
 though pyarrow, deleting the last object under a prefix, may leave an empty
@@ -19,16 +20,7 @@ from __future__ import annotations
 import posixpath
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..configuration import ConfigurationError, FilesConnection
-from ..configuration.models import S3_LARGEST_COPY, FileStore
-
-# pyarrow before 19 copies an Azure blob with the request that takes 256 MiB
-# at most; from 19 with the one that takes any size.
-AZURE_OLD_LARGEST_COPY = 256 * 2 ** 20
-
-# The pyarrow each Azure setting needs, where it is newer than the files extra's.
-AZURE_SETTING_VERSIONS = {'sasToken': (20, 0), 'clientId': (21, 0)}
-
+from ..configuration import S3_LARGEST_COPY, ConfigurationError, FilesConnection, FileStore
 
 def requirePyarrow() -> Any:
 
@@ -41,15 +33,6 @@ def requirePyarrow() -> Any:
     return pyarrow
 
 
-def pyarrowVersion() -> Tuple[int, int]:
-
-    import pyarrow
-
-    major, minor = pyarrow.__version__.split('.')[:2]
-
-    return int(major), int(minor)
-
-
 class Store:
     """A files connection's root, opened. Paths are the filesystem's own --
     `bucket/prefix/...` in a cloud -- and location() spells one for a person.
@@ -60,7 +43,9 @@ class Store:
         import pyarrow.fs
 
         self.settings = settings
-        self.kind = settings.store()
+        kind = settings.store()
+        assert kind is not None
+        self.kind = kind
         self.objectStore = self.kind != FileStore.LOCAL
         self._copiesToMove: Optional[bool] = None
 
@@ -88,12 +73,7 @@ class Store:
         a move copying it in one request.
         """
 
-        if self.kind == FileStore.S3:
-            return S3_LARGEST_COPY
-        if self.kind == FileStore.AZURE and pyarrowVersion() < (19, 0):
-            return AZURE_OLD_LARGEST_COPY
-
-        return None
+        return S3_LARGEST_COPY if self.kind == FileStore.S3 else None
 
 
     def ensureDirectory(self, path: str) -> None:
@@ -278,11 +258,6 @@ def _azure(settings: FilesConnection) -> Any:
     """
 
     import pyarrow.fs
-
-    for setting, version in AZURE_SETTING_VERSIONS.items():
-        if getattr(settings, setting) is not None and pyarrowVersion() < version:
-            raise ConfigurationError('{} needs pyarrow {}.{} or newer, and {}.{} is installed: pip install "pyarrow>={}.{}"'.format(
-                setting, *version, *pyarrowVersion(), *version))
 
     scheme, authority = _endpoint(settings)
     arguments = {

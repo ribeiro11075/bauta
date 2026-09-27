@@ -103,3 +103,21 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+
+  # An Iceberg REST catalog -- the Apache Iceberg project's own, for testing
+  # -- keeping its tables' files in the s3 service's bucket iceberg-rest.
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    environment:
+      CATALOG_WAREHOUSE: s3://iceberg-rest/warehouse
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://s3:5000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+    ports:
+      - "8181:8181"
+    depends_on:
+      s3:
+        condition: service_healthy

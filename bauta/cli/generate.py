@@ -7,6 +7,7 @@ import argparse
 import datetime
 from typing import Dict, List, Sequence, Tuple
 
+from ..configuration import isLake
 from ..database import Database
 from ..database.dialects import catalogTable, quoteIdentifier, quoteTableName
 from ..log import Log
@@ -296,9 +297,10 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
         raise UsageError('refusing to clear the targets of incremental job(s) {}: their stored watermark would make the next run '
                          'load only new rows. Leave them out with --job'.format(', '.join(incremental)))
 
-    writingFiles = sorted(name for name, job in jobs.items() if job.writesFiles())
-    if writingFiles:
-        raise UsageError('clear empties tables in databases, and job(s) {} write files. Leave them out with --job'.format(', '.join(writingFiles)))
+    writingLakes = sorted(name for name, job in jobs.items() if isLake(connectionConfiguration.get(job.targetConnection)))
+    if writingLakes:
+        raise UsageError('clear empties tables in databases, and job(s) {} write files or Iceberg tables. Leave them out with '
+                         '--job'.format(', '.join(writingLakes)))
 
     tablesByDatabase: Dict[str, List[str]] = {}
     for job in jobs.values():

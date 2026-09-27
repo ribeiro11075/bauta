@@ -1395,7 +1395,7 @@ def test_run_state_cannot_be_kept_in_a_files_connection(lakeWorkspace, caplog):
     (lakeWorkspace / 'configuration' / 'jobs.yaml').write_text(yaml.safe_dump(jobs))
 
     assert main(['validate', '--quiet']) == EXIT_BAD_CONFIGURATION
-    assert 'memory: connection "lake" is a files connection' in caplog.text
+    assert 'memory: connection "lake" is a files or Iceberg connection' in caplog.text
 
 
 def test_audit_reads_a_file_jobs_columns_from_its_query(lakeWorkspace, capsys):

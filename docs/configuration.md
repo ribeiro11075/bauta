@@ -6,6 +6,7 @@ The field reference. For *why* things behave as they do, see [design.md](design.
 - [Credentials](#credentials)
 - [`connections.yaml`](#connectionsyaml)
   - [Files](#files)
+  - [Iceberg](#iceberg)
   - [Driver options and TLS](#driver-options-and-tls)
 - [`jobs.yaml` — data jobs](#jobsyaml--data-jobs)
 - [Validation](#validation)
@@ -74,7 +75,7 @@ Each type takes only the settings that apply to it. A setting that belongs to an
 
 | Setting | Types | Required or default | Meaning |
 | --- | --- | --- | --- |
-| `type` | all | required | `postgresql`, `mysql`, `mariadb`, `mssql`, `oracle`, `sqlite` or `duckdb`, or `files` for tables of files in a directory or a cloud bucket; see [files](#files) for its settings |
+| `type` | all | required | `postgresql`, `mysql`, `mariadb`, `mssql`, `oracle`, `sqlite` or `duckdb`, `files` for tables of files in a directory or a cloud bucket, or `iceberg` for Iceberg tables; see [files](#files) and [Iceberg](#iceberg) for their settings |
 | `database` | postgresql, mysql, mariadb, mssql | required | The database name. |
 | `path` | sqlite, duckdb | required | The database file, or `:memory:`. SQLite connections enforce declared foreign keys, as every other database does; SQLite itself leaves them off unless asked. See [DuckDB](#duckdb) for what differs there. |
 | `host`, `user` | the five server types | required | |
@@ -142,6 +143,34 @@ A directory -- on this machine, or in Amazon S3, Google Cloud Storage or Azure B
 Secrets -- `secretAccessKey`, `sessionToken`, `accountKey`, `sasToken`, `clientSecret` -- are held as `password` is, never in a log line; give them as `${VARIABLES}`.
 
 **What the credentials need**, on the root's prefix: to write, read (a part is published by copying it), delete and list objects -- on S3 `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:ListBucket` and `s3:AbortMultipartUpload`; on GCS the role `roles/storage.objectAdmin`; on Azure `Storage Blob Data Contributor`. `bauta run --dry-run` writes, lists and deletes an object under the root to check. On S3, give the bucket a lifecycle rule aborting incomplete multipart uploads after a day or so: a process killed mid-upload leaves parts that S3 bills for and nothing lists.
+
+### Iceberg
+
+```yaml
+lake:
+  type: iceberg
+  catalog: glue
+  warehouse: s3://acme-lake/warehouse
+  namespace: masked
+  requireMasking: true
+```
+
+Iceberg tables, found through a catalog, which Athena, Snowflake, Databricks, BigQuery, Trino and Spark all read: a run's rows land as one commit, so a reader sees all of a run or none of it, and `upsert` works as it does against a database. Install it with `pip install "bauta[iceberg]"`, which brings pyiceberg and pyarrow. Like a files connection it is a target only. A job writing to it names `namespace.table`, or `table` in the connection's `namespace`, as its `targetTableFinal`, and takes `insertStrategy: append`, `overwrite` or `upsert` ([load](#load)); [Iceberg tables](design.md#iceberg-tables) says what a run does.
+
+| Setting | Required or default | Meaning |
+| --- | --- | --- |
+| `catalog` | required | `glue` (AWS), `rest` -- the Iceberg REST protocol: BigLake on GCP, Databricks Unity Catalog, Snowflake Open Catalog (Polaris), S3 Tables, Lakekeeper, Nessie -- or `sql`, a catalog kept in a database of your own, SQLite or PostgreSQL, for a setup with no catalog service. |
+| `uri` | required for `rest` and `sql` | The REST catalog's URL, or the SQL catalog's database as SQLAlchemy names it: `sqlite:////srv/lake/catalog.db`, `postgresql+psycopg://user:password@host/catalog`. |
+| `warehouse` | required for `glue` and `sql` | Where a table the catalog creates keeps its files: a directory, `s3://`, `gs://`, `az://` (with `accountName`) or `abfss://`. For a REST catalog, what that catalog calls its warehouse, often a name. |
+| `namespace` | optional | The namespace -- Glue's database -- a table named without one is in. Created if missing. |
+| `credential`, `token` | `rest` only | The REST catalog's sign-in: `credential` as `clientId:clientSecret` for its OAuth2, or a bearer `token`. Held as secrets. |
+| `properties` | optional | Anything more for pyiceberg's catalog, as it names it -- `glue.id` for another account's Glue, `header.X-Iceberg-Access-Delegation: vended-credentials` for a REST catalog that hands out storage credentials -- over what bauta sets. |
+| `keepSnapshots` | `5` | How many of a table's snapshots stay after a run, the newest included. The files only older ones referenced are deleted with them. |
+| `evolveSchema` | `false` | Lets a run add a column the table lacks, rather than refusing the job. |
+| `compression`, `fileSize`, `rowGroupSize` | `zstd`, `256MB`, `128MB` | As for a [files connection](#files), for the table's Parquet data files. |
+| `endpoint` and each cloud's credentials | optional | As for a [files connection](#files), for the warehouse's files; a REST catalog that vends credentials needs none. On Google Cloud Storage, pyiceberg takes Application Default Credentials only, so `anonymous` and `serviceAccount` are refused. |
+
+`requireMasking` and `maxConcurrentJobs` apply as to any connection.
 
 ### Requiring masking
 
@@ -400,19 +429,21 @@ Transforms apply to **`sourceQuery`'s own result columns**, not the target's. Na
 | --- | --- | --- |
 | `targetConnection` | required | An alias from `connections.yaml`. |
 | `targetTableFinal` | required | The table to load: `table`, or `schema.table` for one outside the connection's current schema. For a files connection, the table's directory under `root`, such as `crm/customers`: no absolute path, no `..`, and no part beginning with `_` or `.`, which engines reading a directory tree skip, and bauta keeps for its staging. |
-| `insertStrategy` | required | `swap` or `upsert` into a database; `append` or `overwrite` into a files connection — below. |
+| `insertStrategy` | required | `swap` or `upsert` into a database; `append` or `overwrite` into a files connection; `append`, `overwrite` or `upsert` into Iceberg — below. |
 | `targetTableStage` | required for `swap` | A staging table with the same shape, emptied before each load, so it must be a different table from `targetTableFinal` (compared ignoring case). For `swap`, it must be in the same schema as `targetTableFinal`. |
 | `targetColumns` | optional | Target column names matching `sourceQuery`'s SELECT list **by position**. |
 | `preTargetAdhocQueries` | optional | SQL run on the target before any write, the stage load included. |
 | `postTargetAdhocQueries` | optional | SQL run on the target after the load. |
-| `targetColumnTypes` | optional, files only | Column → type, for a column whose values don't settle its type, or settle it as something else: `string`, `binary`, `bool`, `int8` to `int64`, `uint8` to `uint64`, `float32`, `float64`, `decimal(precision,scale)` up to 38 digits, `date`, `time`, `timestamp` (without a time zone) or `timestamptz` (an instant, written in UTC). See [column types](design.md#column-types). |
+| `targetColumnTypes` | optional; files and Iceberg only | Column → type, for a column whose values don't settle its type, or settle it as something else: `string`, `binary`, `bool`, `int8` to `int64`, `uint8` to `uint64`, `float32`, `float64`, `decimal(precision,scale)` up to 38 digits, `date`, `time`, `timestamp` (without a time zone) or `timestamptz` (an instant, written in UTC). See [column types](design.md#column-types). |
+| `targetKey` | optional; Iceberg only | The columns an `upsert` matches rows by, which a table bauta creates is given as its identifier fields. An existing table's own identifier fields serve without it; given both, they must agree. |
 | `singleFile` | optional, `false`; files only | Write an `overwrite` job's table as one file, `<targetTableFinal>.parquet`, replaced whole each run, rather than a directory of parts. For small tables and handoffs to something that wants one file. |
 
-`targetTableStage` and the adhoc queries are for a table in a database; `targetColumnTypes` and `singleFile` for a files connection. Each given to the other kind is an error.
+`targetTableStage` and the adhoc queries are for a table in a database; `targetColumnTypes` for files and Iceberg; `singleFile` for files; `targetKey` for Iceberg. Each given to another kind of target is an error.
 
 - **`swap`** loads `targetTableStage`, then swaps it with `targetTableFinal` by renaming the two. The target is replaced wholesale. See [how the swap works](design.md#how-a-swap-works) for what renaming means for views and on Oracle.
 - **`append`** (files) adds the run's parts to the table's directory, beside those already there. With a watermark it is an incremental export, and like any append-only table it can hold a row twice: see [duplicates](design.md#appends-and-duplicate-rows).
 - **`overwrite`** (files) publishes the whole table as a new snapshot, `snapshot=<run>/` in the table's directory, and keeps the newest `keepSnapshots`. Readers pick the newest complete one; see [reading a snapshot](design.md#reading-an-overwrite-jobs-table).
+- **Into Iceberg**, `append` adds the run's rows and `overwrite` replaces the table's, each in one commit, and `upsert` merges them by `targetKey` or the table's identifier fields, a commit per row group. See [Iceberg tables](design.md#iceberg-tables).
 - **`upsert`** inserts or updates by the target's declared primary key — from `targetTableStage` if set, otherwise straight from the extract. UNIQUE constraints aren't part of the match. A target without a primary key fails the job before anything is written; `bauta run --dry-run` checks for one too.
 
 ### Mask

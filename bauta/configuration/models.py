@@ -1,17 +1,20 @@
-"""The configuration's pydantic models -- connection aliases, jobs, discovery
-rules -- and the validation that turns loaded YAML into them.
+"""The configuration's pydantic models -- jobs, discovery rules, and the
+jobs file that holds them -- and the validation that turns loaded YAML into
+them and the connections of connections.py.
 """
 from __future__ import annotations
 
 import os
 import re
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple, Type, TypeVar, Union, cast
+from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple, Type, TypeVar, Union
 
-from pydantic import BaseModel, BeforeValidator, ByteSize, ConfigDict, Field, SecretStr, TypeAdapter, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 
 from ..masking import changesValues, policyFor, validateColumnPolicy, validateKey
-from .environment import ConfigurationError, runPasswordCommand, splitPasswordCommand
+from .connections import (_CONNECTION_ADAPTER, CONNECTION_TYPES, CleanedListMapping, CleanedMapping, CleanedStringList, ConnectionConfig,
+                          DuckDBConnection, FilesConnection, IcebergConnection, _listed)
+from .environment import ConfigurationError
 from .fileTypes import parseColumnType
 
 # A job's rows per batch when it names none. What `discover` and `subset`
@@ -43,55 +46,6 @@ def _withoutAnchorKeys(value: Any) -> Any:
     return value
 
 
-def _dropNoneListItems(value: Any) -> Any:
-    """YAML's "key:\\n-\\n" idiom (an empty list item) parses to [None] -- treat
-    that, and a bare `~`/omitted key, as an empty list rather than a validation error.
-    """
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [item for item in value if item is not None]
-
-    return value
-
-
-def _dropNoneMappingEntries(value: Any) -> Any:
-    if value is None:
-        return {}
-    if isinstance(value, dict):
-        return {key: item for key, item in value.items() if item is not None}
-
-    return value
-
-
-def _dropNoneMappingListItems(value: Any) -> Any:
-    cleaned = _dropNoneMappingEntries(value)
-
-    if isinstance(cleaned, dict):
-        return {key: (_dropNoneListItems(item) if isinstance(item, list) else item) for key, item in cleaned.items()}
-
-    return cleaned
-
-
-CleanedStringList = Annotated[List[str], BeforeValidator(_dropNoneListItems)]
-CleanedMapping = Annotated[Dict[str, Any], BeforeValidator(_dropNoneMappingEntries)]
-CleanedListMapping = Annotated[Dict[str, List[str]], BeforeValidator(_dropNoneMappingListItems)]
-
-
-class DatabaseType(str, Enum):
-    ORACLE = 'oracle'
-    MYSQL = 'mysql'
-    POSTGRESQL = 'postgresql'
-    MSSQL = 'mssql'
-    SQLITE = 'sqlite'
-    MARIADB = 'mariadb'
-    DUCKDB = 'duckdb'
-
-
-# The databases that run in this process, from a file, with no server or login.
-EMBEDDED_TYPES = frozenset({DatabaseType.SQLITE, DatabaseType.DUCKDB})
-
-
 WATERMARK_PLACEHOLDER = re.compile(r'\{\{\s*watermark\s*\}\}')
 
 
@@ -106,512 +60,6 @@ class InsertStrategy(str, Enum):
 
 # The strategies that write files, and the only ones a files connection takes.
 FILE_STRATEGIES = frozenset({InsertStrategy.APPEND, InsertStrategy.OVERWRITE})
-
-
-class StoreType(str, Enum):
-    """The connections that aren't databases."""
-
-    FILES = 'files'
-
-
-# Every value a connection's `type` may take.
-CONNECTION_TYPES = tuple(connectionType.value for connectionType in DatabaseType) + tuple(storeType.value for storeType in StoreType)
-
-
-# A plain SQL identifier -- what currentSchema is written into a session
-# statement as, so nothing else may get through.
-IDENTIFIER = re.compile(r'^[A-Za-z_][A-Za-z0-9_$#]*$')
-
-
-
-class _BaseConnection(BaseModel):
-    """What every connection has, whatever it connects to.
-
-    Each type is a model of its own, taking only the settings that type has,
-    so a setting given to the wrong type is refused rather than ignored. See
-    ConnectionConfig.
-    """
-
-    model_config = ConfigDict(extra='forbid')
-
-    # No job may read from or write to this connection without masking. The
-    # line a reviewer signs: "this copy can only ever hold masked data." Unlike
-    # a job's own `unmasked`, nothing overrides it.
-    requireMasking: bool = False
-    # The most jobs that may use this connection at once, whatever `workers`
-    # allows. None is no limit. See jobLimit.
-    maxConcurrentJobs: Optional[int] = Field(default=None, ge=1)
-
-    @model_validator(mode='before')
-    @classmethod
-    def _refuseAnotherTypesSetting(cls, value: Any) -> Any:
-        """A setting that belongs to other types is named with the types it
-        belongs to, rather than as an unknown setting.
-        """
-
-        if not isinstance(value, Mapping):
-            return value
-
-        connectionType = getattr(value.get('type'), 'value', value.get('type'))
-        problems = []
-        for name in sorted(set(value) - set(cls.model_fields)):
-            owners = sorted(owner.value for owner, model in _CONNECTION_MODELS.items() if name in model.model_fields)
-            if owners:
-                hint = '; a {} connection names its file with path'.format(connectionType) if name == 'database' and 'path' in cls.model_fields else ''
-                problems.append('{} is a setting of {} connections, not {}{}'.format(name, _listed(owners), connectionType, hint))
-
-        if problems:
-            raise ValueError('; '.join(problems))
-
-        return value
-
-    def jobLimit(self) -> Optional[int]:
-        """How many jobs may use this connection at once, or None for as many
-        as `workers` allows.
-        """
-
-        return self.maxConcurrentJobs
-
-    def plainPassword(self) -> Optional[str]:
-        """The password to connect with. Only a server connection has one."""
-
-        return None
-
-    def describeTarget(self) -> str:
-        """What this connection points at, for an error that has to say so --
-        a driver's own message names nothing. Never a password, and never
-        `options`, which can carry one.
-        """
-
-        raise NotImplementedError
-
-
-class _Connection(_BaseConnection):
-    """A database. `options` -- extra driver arguments, TLS above all -- are
-    left out of the repr, since they can hold secrets.
-    """
-
-    type: DatabaseType
-    options: CleanedMapping = Field(default_factory=dict, repr=False)
-
-
-class _CurrentSchema(BaseModel):
-    """The schema unqualified names resolve in, for the types that can set
-    one per session. Written into a session statement, so it must be a plain
-    identifier.
-    """
-
-    currentSchema: Optional[str] = None
-
-    @field_validator('currentSchema')
-    @classmethod
-    def _plainIdentifier(cls, currentSchema: Optional[str]) -> Optional[str]:
-
-        if currentSchema is not None and not IDENTIFIER.match(currentSchema):
-            raise ValueError('currentSchema must be a plain identifier, got {!r}'.format(currentSchema))
-
-        return currentSchema
-
-
-class _ServerConnection(_Connection):
-    """A database on a server, reached with a login. `password` is a
-    SecretStr; `passwordCommand` runs at every connect, for expiring
-    credentials such as IAM tokens. Exactly one of the two.
-    """
-
-    host: str
-    port: Optional[int] = None
-    user: str
-    password: Optional[SecretStr] = None
-    passwordCommand: Optional[Union[str, List[str]]] = None
-
-    @model_validator(mode='after')
-    def _requireOnePassword(self) -> '_ServerConnection':
-
-        if self.password is not None and self.passwordCommand is not None:
-            raise ValueError('set password or passwordCommand, not both')
-        if self.password is None and not self.passwordCommand:
-            raise ValueError('{} connections need a password or a passwordCommand'.format(self.type.value))
-        if self.passwordCommand is not None:
-            splitPasswordCommand(self.passwordCommand)
-
-        return self
-
-    def plainPassword(self) -> Optional[str]:
-        """Runs passwordCommand, if that's how it is configured, so call it
-        only when about to connect.
-        """
-
-        if self.passwordCommand:
-            return runPasswordCommand(self.passwordCommand)
-
-        return None if self.password is None else self.password.get_secret_value()
-
-    def _name(self) -> str:
-
-        return getattr(self, 'database')
-
-    def describeTarget(self) -> str:
-
-        where = self.host if not self.port else '{}:{}'.format(self.host, self.port)
-
-        return '{} {} on {}'.format(self.type.value, self._name(), where)
-
-
-class PostgreSQLConnection(_ServerConnection, _CurrentSchema):
-
-    type: Literal[DatabaseType.POSTGRESQL] = DatabaseType.POSTGRESQL
-    database: str
-
-
-class MySQLConnection(_ServerConnection):
-
-    type: Literal[DatabaseType.MYSQL] = DatabaseType.MYSQL
-    database: str
-
-
-class MariaDBConnection(_ServerConnection):
-
-    type: Literal[DatabaseType.MARIADB] = DatabaseType.MARIADB
-    database: str
-
-
-class MSSQLConnection(_ServerConnection):
-    """SQL Server takes the default schema from the login, so it has no
-    currentSchema; qualify names as schema.table instead.
-    """
-
-    type: Literal[DatabaseType.MSSQL] = DatabaseType.MSSQL
-    database: str
-
-
-class OracleConnection(_ServerConnection, _CurrentSchema):
-    """Reached by service name or SID, exactly one of them; Oracle has no
-    database name to give.
-    """
-
-    type: Literal[DatabaseType.ORACLE] = DatabaseType.ORACLE
-    serviceName: Optional[str] = None
-    sid: Optional[str] = None
-
-    @model_validator(mode='after')
-    def _requireOneIdentifier(self) -> 'OracleConnection':
-
-        if not (bool(self.serviceName) ^ bool(self.sid)):
-            raise ValueError('oracle connections require exactly one of serviceName or sid')
-
-        return self
-
-    def _name(self) -> str:
-
-        return self.serviceName or self.sid or '?'
-
-
-class _FileConnection(_Connection):
-    """A database in a file this process opens, with no server or login.
-    `path` is the file, or `:memory:`.
-    """
-
-    path: str
-
-    def describeTarget(self) -> str:
-        """The absolute path: a driver's own "unable to open database file"
-        leaves a relative path and the directory it resolved against unsaid,
-        which is the hard part of the failure.
-        """
-
-        if self.path == ':memory:':
-            return '{} :memory:'.format(self.type.value)
-
-        return '{} file {}'.format(self.type.value, os.path.abspath(self.path))
-
-
-class SQLiteConnection(_FileConnection):
-    """SQLite has no schema separate from the file, so no currentSchema."""
-
-    type: Literal[DatabaseType.SQLITE] = DatabaseType.SQLITE
-
-
-class DuckDBConnection(_FileConnection, _CurrentSchema):
-    """DuckDB lets one process at a time open a file, and every job is a
-    process of its own, so one job at a time uses it.
-    """
-
-    type: Literal[DatabaseType.DUCKDB] = DatabaseType.DUCKDB
-
-    @model_validator(mode='after')
-    def _refuseConcurrentJobs(self) -> 'DuckDBConnection':
-
-        if self.maxConcurrentJobs is not None and self.maxConcurrentJobs > 1:
-            raise ValueError('maxConcurrentJobs cannot be above 1 for duckdb: DuckDB lets one process at a time open a file, and every job '
-                             'runs in a process of its own')
-
-        return self
-
-    def jobLimit(self) -> Optional[int]:
-
-        return 1
-
-
-# What a file target writes in, and how. Sizes are bytes, or text such as
-# 256MB (decimal) or 256MiB (binary). 256MB is what Snowflake suggests a file
-# to load be at most, and a size Athena and Spark split well.
-DEFAULT_FILE_SIZE = 256 * 10 ** 6
-DEFAULT_ROW_GROUP_SIZE = 128 * 10 ** 6
-DEFAULT_KEEP_SNAPSHOTS = 2
-
-
-class FileFormat(str, Enum):
-    PARQUET = 'parquet'
-    CSV = 'csv'
-    # JSON Lines: one JSON object per line.
-    NDJSON = 'ndjson'
-
-
-class FileCompression(str, Enum):
-    ZSTD = 'zstd'
-    SNAPPY = 'snappy'
-    GZIP = 'gzip'
-    NONE = 'none'
-
-
-# What each format may be compressed with, the default first. Parquet
-# compresses inside the file; text is compressed whole, and gzip is what
-# every engine reading text reads.
-FORMAT_COMPRESSIONS = {
-    FileFormat.PARQUET: (FileCompression.ZSTD, FileCompression.SNAPPY, FileCompression.GZIP, FileCompression.NONE),
-    FileFormat.CSV: (FileCompression.GZIP, FileCompression.NONE),
-    FileFormat.NDJSON: (FileCompression.GZIP, FileCompression.NONE),
-    }
-
-class FileStore(str, Enum):
-    """Where a files connection's root is: told from its URL."""
-
-    LOCAL = 'local'
-    S3 = 's3'
-    GCS = 'gcs'
-    AZURE = 'azure'
-
-
-S3_SCHEME = 's3://'
-
-# Each URL a root may begin with. Azure's abfss:// is what Databricks and
-# Synapse write, and names the account in the host.
-ROOT_SCHEMES = {S3_SCHEME: FileStore.S3, 'gs://': FileStore.GCS, 'az://': FileStore.AZURE, 'abfss://': FileStore.AZURE, 'abfs://': FileStore.AZURE}
-
-_ABFS = re.compile(r'^abfss?://([^@/]+)@([^./]+)\.dfs\.core\.windows\.net(/.*)?$')
-
-# A part is published by copying it within the bucket, and S3 copies an
-# object of at most 5 GiB in one request.
-S3_LARGEST_COPY = 5 * 2 ** 30
-
-# The settings only a root in each store takes; `endpoint` is every cloud's.
-STORE_SETTINGS = {
-    FileStore.S3: ('region', 'endpoint', 'accessKeyId', 'secretAccessKey', 'sessionToken', 'roleArn'),
-    FileStore.GCS: ('endpoint', 'anonymous', 'serviceAccount'),
-    FileStore.AZURE: ('endpoint', 'accountName', 'accountKey', 'sasToken', 'clientId', 'clientSecret', 'tenantId'),
-    }
-
-_STORE_NAMES = {FileStore.S3: 'S3', FileStore.GCS: 'Google Cloud Storage', FileStore.AZURE: 'Azure'}
-
-
-class FilesConnection(_BaseConnection):
-    """A directory -- on this machine, or in S3, Google Cloud Storage or
-    Azure Blob Storage -- that jobs write tables of files into, one directory
-    per table: `targetTableFinal` is its path under `root`. Written, never
-    read: a files connection is a target only. See "Files as a target" in
-    docs/design.md.
-
-    `fileSize` is where a part is closed and the next begun; `rowGroupSize`
-    is how much of a table is held in memory, before compression, and written
-    at once -- one Parquet row group. `keepSnapshots` is how many of an
-    overwrite job's complete snapshots stay, the newest included.
-
-    In each cloud, credentials come from its own default chain -- what its
-    command-line tool would find: the environment, a profile or login, the
-    machine's or the pod's identity -- unless settings give them. `endpoint`
-    points at another service speaking the same API, such as MinIO or R2.
-    """
-
-    type: Literal[StoreType.FILES] = StoreType.FILES
-    root: str = Field(min_length=1)
-    format: FileFormat = FileFormat.PARQUET
-    # None is the format's default: FORMAT_COMPRESSIONS.
-    compression: Optional[FileCompression] = None
-    # CSV's alone; a comma when not given.
-    delimiter: Optional[str] = None
-    fileSize: ByteSize = ByteSize(DEFAULT_FILE_SIZE)
-    rowGroupSize: ByteSize = ByteSize(DEFAULT_ROW_GROUP_SIZE)
-    keepSnapshots: int = Field(default=DEFAULT_KEEP_SNAPSHOTS, ge=1)
-    endpoint: Optional[str] = None
-    # S3.
-    region: Optional[str] = None
-    accessKeyId: Optional[str] = None
-    secretAccessKey: Optional[SecretStr] = None
-    sessionToken: Optional[SecretStr] = None
-    roleArn: Optional[str] = None
-    # Google Cloud Storage.
-    anonymous: Optional[bool] = None
-    serviceAccount: Optional[str] = None
-    # Azure.
-    accountName: Optional[str] = None
-    accountKey: Optional[SecretStr] = None
-    sasToken: Optional[SecretStr] = None
-    clientId: Optional[str] = None
-    clientSecret: Optional[SecretStr] = None
-    tenantId: Optional[str] = None
-
-    @field_validator('fileSize', 'rowGroupSize')
-    @classmethod
-    def _positiveSize(cls, size: ByteSize) -> ByteSize:
-        """Checked here rather than with Field(gt=0): whether pydantic can apply
-        a constraint to ByteSize has differed between the versions this allows.
-        """
-
-        if size <= 0:
-            raise ValueError('must be more than 0 bytes')
-
-        return size
-
-    @field_validator('root')
-    @classmethod
-    def _supportedRoot(cls, root: str) -> str:
-        """A directory on this machine, or a bucket or container, with a
-        prefix or without. Any other URL is refused rather than read as a
-        relative directory named `hdfs:`.
-        """
-
-        scheme = next((scheme for scheme in ROOT_SCHEMES if root.startswith(scheme)), None)
-
-        if scheme is None:
-            if '://' in root:
-                raise ValueError('root must be a directory, or begin with {}; {} is not supported'.format(
-                    ', '.join(sorted(ROOT_SCHEMES)), root.split('://', 1)[0] + '://'))
-            return root
-
-        if scheme.startswith('abfs'):
-            if not _ABFS.match(root):
-                raise ValueError('root {!r} is not an Azure location; write abfss://container@account.dfs.core.windows.net/prefix, or '
-                                 'az://container/prefix with accountName'.format(root))
-        elif not root[len(scheme):].split('/', 1)[0]:
-            raise ValueError('root {!r} names no {}; write {}name or {}name/prefix'.format(
-                root, 'container' if scheme == 'az://' else 'bucket', scheme, scheme))
-
-        return root.rstrip('/')
-
-    @model_validator(mode='after')
-    def _coherentSettings(self) -> 'FilesConnection':
-
-        store = self.store()
-        for other, names in STORE_SETTINGS.items():
-            given = [name for name in names if getattr(self, name) is not None and name not in STORE_SETTINGS.get(store, ())]
-            if given:
-                where = 'a directory on this machine' if store == FileStore.LOCAL else 'on {}'.format(_STORE_NAMES[store])
-                raise ValueError('{} {} for a root on {}, and root is {}'.format(
-                    _listed(given), 'is' if len(given) == 1 else 'are', _STORE_NAMES[other], where))
-
-        if store == FileStore.S3:
-            if (self.accessKeyId is None) != (self.secretAccessKey is None):
-                raise ValueError('set accessKeyId and secretAccessKey together, or neither to use the AWS default credential chain')
-            if self.sessionToken is not None and self.accessKeyId is None:
-                raise ValueError('sessionToken goes with accessKeyId and secretAccessKey')
-            if self.fileSize > S3_LARGEST_COPY:
-                raise ValueError('fileSize can be at most 5GiB on S3, which copies no larger an object in one request, and a part is '
-                                 'published by copying it')
-
-        if store == FileStore.GCS and self.anonymous and self.serviceAccount is not None:
-            raise ValueError('anonymous and serviceAccount say two different things; set one')
-
-        if store == FileStore.AZURE:
-            match = _ABFS.match(self.root)
-            if match and self.accountName is not None and self.accountName != match.group(2):
-                raise ValueError('accountName {} is not the account root names, {}'.format(self.accountName, match.group(2)))
-            if not match and self.accountName is None:
-                raise ValueError('an az:// root needs accountName, the storage account the container is in')
-            principal = [name for name in ('clientId', 'clientSecret', 'tenantId') if getattr(self, name) is not None]
-            if principal and len(principal) != 3:
-                raise ValueError('a service principal needs clientId, clientSecret and tenantId together')
-            ways = [name for name in ('accountKey', 'sasToken') if getattr(self, name) is not None] + (['a service principal'] if principal else [])
-            if len(ways) > 1:
-                raise ValueError('{} are each a way to sign in; set one, or none to use the Azure default credential chain'.format(_listed(ways)))
-
-        allowed = FORMAT_COMPRESSIONS[self.format]
-        if self.compression is not None and self.compression not in allowed:
-            raise ValueError('compression {} is not one for {}; choose from {}'.format(
-                self.compression.value, self.format.value, ', '.join(compression.value for compression in allowed)))
-
-        if self.delimiter is not None:
-            if self.format != FileFormat.CSV:
-                raise ValueError('delimiter is for format: csv')
-            if len(self.delimiter) != 1 or self.delimiter in '"\r\n':
-                raise ValueError('delimiter must be one character, other than a quote or a line break, got {!r}'.format(self.delimiter))
-
-        return self
-
-    def store(self) -> FileStore:
-
-        return next((store for scheme, store in ROOT_SCHEMES.items() if self.root.startswith(scheme)), FileStore.LOCAL)
-
-    def isObjectStore(self) -> bool:
-
-        return self.store() != FileStore.LOCAL
-
-    def bucketPath(self) -> str:
-        """The root as its store's filesystem names it: `bucket/prefix`, or
-        `container/prefix` on Azure.
-        """
-
-        match = _ABFS.match(self.root)
-        if match:
-            return match.group(1) + (match.group(3) or '').rstrip('/')
-
-        return self.root.split('://', 1)[1].rstrip('/')
-
-    def azureAccount(self) -> Optional[str]:
-
-        match = _ABFS.match(self.root)
-
-        return match.group(2) if match else self.accountName
-
-    def effectiveCompression(self) -> FileCompression:
-
-        return self.compression or FORMAT_COMPRESSIONS[self.format][0]
-
-    def location(self) -> str:
-        """The root as a person would write it: the URL, or the absolute
-        directory -- a driver's own message leaves a relative one unresolved.
-        """
-
-        if self.isObjectStore():
-            return self.root
-
-        return os.path.abspath(os.path.expanduser(self.root))
-
-    def describeTarget(self) -> str:
-
-        return 'files in {}'.format(self.location())
-
-
-_CONNECTION_MODELS: Dict[Union[DatabaseType, StoreType], Type[_BaseConnection]] = {
-    DatabaseType.POSTGRESQL: PostgreSQLConnection, DatabaseType.MYSQL: MySQLConnection, DatabaseType.MARIADB: MariaDBConnection,
-    DatabaseType.MSSQL: MSSQLConnection, DatabaseType.ORACLE: OracleConnection, DatabaseType.SQLITE: SQLiteConnection,
-    DatabaseType.DUCKDB: DuckDBConnection, StoreType.FILES: FilesConnection,
-    }
-
-# One database in connections.yaml.
-DatabaseConfig = Union[PostgreSQLConnection, MySQLConnection, MariaDBConnection, MSSQLConnection, OracleConnection, SQLiteConnection, DuckDBConnection]
-
-# One connection in connections.yaml: the model its `type` names.
-ConnectionConfig = Annotated[Union[PostgreSQLConnection, MySQLConnection, MariaDBConnection, MSSQLConnection, OracleConnection,
-                                   SQLiteConnection, DuckDBConnection, FilesConnection], Field(discriminator='type')]
-
-# Cast, since pydantic's stubs before 2.7 take a class here and not a union.
-_CONNECTION_ADAPTER: 'TypeAdapter[ConnectionConfig]' = TypeAdapter(cast(Any, ConnectionConfig))
-
-
-def _listed(names: Sequence[str]) -> str:
-
-    return names[0] if len(names) == 1 else '{} and {}'.format(', '.join(names[:-1]), names[-1])
 
 
 def connectionConfig(**settings: Any) -> ConnectionConfig:
@@ -732,6 +180,10 @@ class DataJobConfig(BaseJobConfig):
     # one file, <targetTableFinal>.parquet, replaced whole each run.
     targetColumnTypes: CleanedMapping = Field(default_factory=dict)
     singleFile: bool = False
+    # An Iceberg target's alone: the columns an upsert matches rows by, and
+    # the identifier fields of a table the job creates. An existing table's
+    # own identifier fields serve without it.
+    targetKey: CleanedStringList = Field(default_factory=list)
 
     @field_validator('targetColumnTypes')
     @classmethod
@@ -758,26 +210,17 @@ class DataJobConfig(BaseJobConfig):
 
 
     @model_validator(mode='after')
-    def _fileSettingsNeedAFileStrategy(self) -> 'DataJobConfig':
-        """What only a file target has, or what only a table has, given to the
-        other kind is an error rather than ignored.
+    def _lakeSettingsFitTheStrategy(self) -> 'DataJobConfig':
+        """What the strategy alone rules out. Append and overwrite write a lake,
+        which has no stage table and runs no SQL; which settings fit the target
+        otherwise is for targetProblems, once the connection is known.
         """
 
-        writesFiles = self.insertStrategy in FILE_STRATEGIES
-
-        if writesFiles:
+        if self.insertStrategy in FILE_STRATEGIES:
             tableOnly = [name for name in ('targetTableStage', 'preTargetAdhocQueries', 'postTargetAdhocQueries') if getattr(self, name)]
             if tableOnly:
-                raise ValueError('{} {} for a table in a database; insertStrategy: {} writes files'.format(
+                raise ValueError('{} {} for a table in a database; insertStrategy: {} writes to files or Iceberg'.format(
                     _listed(tableOnly), 'is' if len(tableOnly) == 1 else 'are', self.insertStrategy.value))
-            problem = filePathProblem(self.targetTableFinal)
-            if problem:
-                raise ValueError('targetTableFinal {!r} {}'.format(self.targetTableFinal, problem))
-        else:
-            fileOnly = [name for name in ('targetColumnTypes', 'singleFile') if getattr(self, name)]
-            if fileOnly:
-                raise ValueError('{} {} for a file target, with insertStrategy append or overwrite'.format(
-                    _listed(fileOnly), 'is' if len(fileOnly) == 1 else 'are'))
 
         if self.singleFile and self.insertStrategy != InsertStrategy.OVERWRITE:
             raise ValueError('singleFile needs insertStrategy: overwrite -- a file can be replaced, not added to')
@@ -899,11 +342,6 @@ class DataJobConfig(BaseJobConfig):
         return self
 
 
-    def writesFiles(self) -> bool:
-
-        return self.insertStrategy in FILE_STRATEGIES
-
-
 def filePathProblem(path: str) -> Optional[str]:
     """What is wrong with `path` as a table's directory under a files
     connection's root, or None.
@@ -926,18 +364,83 @@ def filePathProblem(path: str) -> Optional[str]:
     return None
 
 
-def targetMismatch(job: DataJobConfig, connection: Any) -> Optional[str]:
-    """Why `job` can't write to `connection`, or None: files take append and
-    overwrite, and a database the rest.
+# A plain identifier: an Iceberg table's name or namespace, or a key column.
+_ICEBERG_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+_STRATEGIES = {
+    'database': (InsertStrategy.SWAP, InsertStrategy.UPSERT),
+    'files': (InsertStrategy.APPEND, InsertStrategy.OVERWRITE),
+    'iceberg': (InsertStrategy.APPEND, InsertStrategy.OVERWRITE, InsertStrategy.UPSERT),
+    }
+
+# The settings only some kinds of target take.
+_TARGET_SETTINGS = {
+    'targetColumnTypes': ('files', 'iceberg'),
+    'singleFile': ('files',),
+    'targetKey': ('iceberg',),
+    'targetTableStage': ('database',),
+    'preTargetAdhocQueries': ('database',),
+    'postTargetAdhocQueries': ('database',),
+    }
+
+_TARGET_NAMES = {'database': 'a database', 'files': 'a files connection', 'iceberg': 'an Iceberg connection'}
+
+
+def targetKind(connection: Any) -> str:
+
+    if isinstance(connection, FilesConnection):
+        return 'files'
+    if isinstance(connection, IcebergConnection):
+        return 'iceberg'
+
+    return 'database'
+
+
+def isLake(connection: Any) -> bool:
+    """Whether `connection` is written as tables of files -- a files or an
+    Iceberg connection -- rather than a database.
     """
 
-    if isinstance(connection, FilesConnection) and not job.writesFiles():
-        return 'is a files connection, which takes insertStrategy append or overwrite, not {}'.format(job.insertStrategy.value)
-    if not isinstance(connection, FilesConnection) and job.writesFiles():
-        return 'is a {} database, and insertStrategy: {} writes files -- use swap or upsert, or a files connection'.format(
-            connection.type.value, job.insertStrategy.value)
+    return isinstance(connection, (FilesConnection, IcebergConnection))
 
-    return None
+
+def targetProblems(job: DataJobConfig, connection: Any) -> List[str]:
+    """Why `job` can't write to `connection`: a strategy or a setting the
+    connection's kind of target doesn't take, or a table it can't name.
+    """
+
+    kind = targetKind(connection)
+    problems = []
+
+    if job.insertStrategy not in _STRATEGIES[kind]:
+        what = 'a {} database'.format(connection.type.value) if kind == 'database' else _TARGET_NAMES[kind]
+        problems.append('is {}, which takes insertStrategy {}, not {}'.format(
+            what, _listed([strategy.value for strategy in _STRATEGIES[kind]]).replace(' and ', ' or '), job.insertStrategy.value))
+
+    for setting, kinds in _TARGET_SETTINGS.items():
+        if getattr(job, setting) and kind not in kinds:
+            problems.append('{} is for {}, and it is {}'.format(
+                setting, ' or '.join(_TARGET_NAMES[other] for other in kinds), _TARGET_NAMES[kind]))
+
+    if kind == 'files':
+        problem = filePathProblem(job.targetTableFinal)
+        if problem:
+            problems.append('targetTableFinal {!r} {}'.format(job.targetTableFinal, problem))
+
+    if kind == 'iceberg':
+        try:
+            namespace, name = connection.tableIdentifier(job.targetTableFinal)
+        except ConfigurationError as error:
+            problems.append(str(error))
+        else:
+            bad = [part for part in namespace.split('.') + [name] if not _ICEBERG_NAME.match(part)]
+            if bad:
+                problems.append('targetTableFinal {!r} is not namespace.table, each a plain identifier'.format(job.targetTableFinal))
+        badKeys = [column for column in job.targetKey if not _ICEBERG_NAME.match(column)]
+        if badKeys:
+            problems.append('targetKey names {}, which is not a plain identifier'.format(', '.join(badKeys)))
+
+    return problems
 
 
 class NameRuleConfig(BaseModel):
@@ -1308,11 +811,11 @@ class Configuration:
 
             if connections is not None and isinstance(job, DataJobConfig):
                 source, target = connections.get(job.sourceConnection), connections.get(job.targetConnection)
-                if isinstance(source, FilesConnection):
-                    problems.append('{}: sourceConnection "{}" is a files connection, which can only be written to'.format(jobName, job.sourceConnection))
-                mismatch = None if target is None else targetMismatch(job, target)
-                if mismatch:
-                    problems.append('{}: targetConnection "{}" {}'.format(jobName, job.targetConnection, mismatch))
+                if isLake(source):
+                    problems.append('{}: sourceConnection "{}" is {}, which can only be written to'.format(
+                        jobName, job.sourceConnection, _TARGET_NAMES[targetKind(source)]))
+                for problem in ([] if target is None else targetProblems(job, target)):
+                    problems.append('{}: targetConnection "{}" {}'.format(jobName, job.targetConnection, problem))
 
             if connectionAliases is not None and isinstance(job, DataJobConfig):
                 if job.sourceConnection not in connectionAliases:

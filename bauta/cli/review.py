@@ -7,7 +7,7 @@ import argparse
 import json
 from typing import Any, Dict, List, Mapping, Optional
 
-from ..configuration import EMBEDDED_TYPES, FilesConnection
+from ..configuration import EMBEDDED_TYPES, isLake
 from ..database import Database
 from ..database.dialects import ForeignKey, bareName, unqualifiedName
 from ..log import Log
@@ -40,7 +40,7 @@ def _commandVerifyReferences(arguments: argparse.Namespace, log: Log) -> int:
             log.logging.warning('{}: could not read foreign keys, so only the target\'s own are checked -- {}'.format(alias, describeError(error)))
 
     results = []
-    for target in sorted({job.targetConnection for job in jobs.values() if not job.writesFiles()}):
+    for target in sorted({job.targetConnection for job in jobs.values() if not isLake(connectionConfiguration[job.targetConnection])}):
         targetJobs = [job for job in jobs.values() if job.targetConnection == target]
         # Keyed bare, as the catalogs report names: a job naming a reserved
         # word writes it quoted, and a quoted key would match nothing.
@@ -143,14 +143,15 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
                 try:
                     returnedColumns[name] = _sourceQueryColumns(job, connections)
                     if job.masking is not None:
-                        # A file target writes the columns the query returns.
-                        targetColumns[name] = job.targetColumns or (returnedColumns[name] if job.writesFiles() else _targetColumns(job, connections))
+                        # A file or Iceberg target writes the columns the query returns.
+                        writesLake = isLake(connectionConfiguration[job.targetConnection])
+                        targetColumns[name] = job.targetColumns or (returnedColumns[name] if writesLake else _targetColumns(job, connections))
                 except Exception as error:
                     unreachable[name] = describeError(error)
 
             for alias in sorted({job.sourceConnection for job in jobs.values()} | {job.targetConnection for job in jobs.values()}):
-                if isinstance(connectionConfiguration[alias], FilesConnection):
-                    # A directory on this machine: no connection to encrypt,
+                if isLake(connectionConfiguration[alias]):
+                    # Files or Iceberg: no connection to ask of encryption,
                     # and no foreign keys.
                     continue
                 isLocal = connectionConfiguration[alias].type in EMBEDDED_TYPES

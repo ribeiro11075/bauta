@@ -14,7 +14,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Deque, Dict, Generator, Iterable, List, Optional, Sequence, Tuple
 
-from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, FilesConnection, targetMismatch
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, FilesConnection, IcebergConnection, targetProblems
 from ..database import Database
 from ..log import LOGGER_NAME
 from ..log.scrubbing import describeError
@@ -60,29 +60,32 @@ def _bindMasking(job: str, jobConfig: DataJobConfig, columns: List[str]) -> Opti
 
 @contextlib.contextmanager
 def _openTarget(job: str, jobConfig: DataJobConfig, settings: ConnectionConfig) -> Generator[LoadTarget, None, None]:
-    """The job's target, open for as long as the job runs. abort() is called on
-    the way out of a failure, before the target's connection closes.
+    """The job's target, open for as long as the job runs. On the way out of a
+    failure abort() is called first, then whatever the target holds open --
+    a database connection, an Iceberg catalog -- is closed.
     """
 
-    mismatch = targetMismatch(jobConfig, settings)
-    if mismatch:
+    problems = targetProblems(jobConfig, settings)
+    if problems:
         # Validation says so against connections.yaml; asked again here for a
         # caller that built the job without it.
-        raise ConfigurationError('targetConnection "{}" {}'.format(jobConfig.targetConnection, mismatch))
+        raise ConfigurationError('targetConnection "{}" {}'.format(jobConfig.targetConnection, '; '.join(problems)))
 
-    if isinstance(settings, FilesConnection):
-        from ..files import FileTarget
+    with contextlib.ExitStack() as held:
+        target: LoadTarget
+        if isinstance(settings, FilesConnection):
+            from ..files import FileTarget
 
-        fileTarget = FileTarget(job, jobConfig, settings)
-        try:
-            yield fileTarget
-        except BaseException:
-            fileTarget.abort()
-            raise
-        return
+            target = FileTarget(job, jobConfig, settings)
+            held.callback(target.close)
+        elif isinstance(settings, IcebergConnection):
+            from ..files.iceberg import IcebergTarget
 
-    with Database(connectionSettings=settings) as database:
-        target = TableTarget(database, jobConfig)
+            target = IcebergTarget(job, jobConfig, settings)
+            held.callback(target.close)
+        else:
+            target = TableTarget(held.enter_context(Database(connectionSettings=settings)), jobConfig)
+
         try:
             yield target
         except BaseException:

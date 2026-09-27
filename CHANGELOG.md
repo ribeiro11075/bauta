@@ -5,6 +5,20 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## Unreleased
+
+Jobs can write Iceberg tables, through a Glue, REST or SQL catalog, in any of the three clouds: a run is one commit, `upsert` merges by key, and old snapshots' files go with them. **Read Breaking before upgrading: pyarrow and DuckDB need newer versions.** No mask changes.
+
+### Breaking
+- **pyarrow 21 or newer, for the `files` and `duckdb` extras**, and **DuckDB 1.4 or newer**. pyarrow 21 is the first with every Azure credential and a copy of any size there, so the checks and limits for older ones are gone. DuckDB before 1.4 describes a DECIMAL column without its precision, so a decimal copied from it into files or Iceberg was typed `decimal(38,10)` rather than as declared.
+- From Python: the connection models are in `bauta.configuration.connections` (`bauta.configuration` still exports them all), and `DataJobConfig.writesFiles()` and `targetMismatch()` are replaced by `targetProblems(job, connection)`, `targetKind()` and `isLake()`: whether a job writes a lake depends on its connection now, since Iceberg takes `upsert` too.
+
+### Added
+- **An `iceberg` connection** (`type: iceberg`, `pip install "bauta[iceberg]"`) writes Iceberg tables through pyiceberg -- no JVM -- with a `glue`, `rest` or `sql` catalog, the REST one covering BigLake, Unity Catalog, Snowflake Open Catalog, S3 Tables and the rest. `append` and `overwrite` write their Parquet with the files writer, a row group at a time, and commit the run once, an overwrite deleting the old rows in the same commit; `upsert` merges by `targetKey` or the table's identifier fields, a commit per row group. A table that isn't there is created by the run; one that is decides each column's type, and refuses a column it lacks unless `evolveSchema`. Each run keeps `keepSnapshots` snapshots and deletes the files only older ones referenced, which pyiceberg leaves. See [Iceberg](docs/configuration.md#iceberg) and [Iceberg tables](docs/design.md#iceberg-tables).
+- `run --dry-run` checks an Iceberg connection's catalog answers and its warehouse can be written.
+- Iceberg on Azure works through pyarrow, which pyiceberg 0.12 alone can't: it hands pyarrow an Azure path as `container@account.../path`, which Azure refuses, and reads no `az://` location. bauta writes through a FileIO spelling the path as pyarrow reads it, and gives an `az://` warehouse as its `abfss://` URL.
+
+
 ## 0.2.0 — 2026-09-26
 
 Jobs can write files: a `files` connection is a directory, or a bucket in S3, Google Cloud Storage or Azure, of tables in Parquet, CSV or JSON Lines, for a data lake or a handoff. No mask changes, and nothing existing changes behaviour.

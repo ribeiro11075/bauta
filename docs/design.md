@@ -13,6 +13,7 @@ The behaviour behind the fields in [configuration.md](configuration.md), and the
 - [Masking](#masking)
 - [Moving values between drivers](#moving-values-between-drivers)
 - [Files as a target](#files-as-a-target)
+- [Iceberg tables](#iceberg-tables)
 
 
 ## How a data job moves rows
@@ -379,3 +380,30 @@ A timestamp has a space where ISO 8601 has a `T`: it is what Hive, Athena and Sp
 CSV quotes every text value, doubles a quote within one, and writes a header in every part, so each part reads on its own. JSON Lines writes every column in every line, in the table's order.
 
 A JSON document is nested only in a column that has held one -- a dictionary or list from the driver, such as PostgreSQL's `jsonb` -- and only where its text is a JSON object or array; anything else there, and every other text column, is written as a string.
+
+
+## Iceberg tables
+
+An `iceberg` connection writes Iceberg tables through a catalog, with pyiceberg: no JVM and no Spark. The rows go through the same pipeline and the same [column types](#column-types) as a files connection; only the commit differs.
+
+### One commit a run
+
+`append` and `overwrite` write the run's Parquet parts straight into the table's data directory, a row group at a time, with the writer a files connection uses, and register them all in one commit at the end -- `overwrite` deleting the table's rows in that same commit. A reader sees the run whole or not at all, and never the table empty between the delete and the add. A table that isn't there is created by that commit, so a failed first run leaves no table either.
+
+Nothing needs staging, as files do: a data file no commit names is never read. A run that fails deletes the parts it wrote on its way out. A process killed outright leaves them: never read, but taking room until a tool that removes a table's orphan files -- Spark's `remove_orphan_files`, a catalog's maintenance -- deletes them.
+
+`upsert` is the exception. pyiceberg merges a table held in memory, so a run merges -- and commits -- a row group at a time, keeping the last row of a key that repeats within one. A run that fails part-way leaves the row groups it merged, as a stage-less upsert into a database does; the next run, from the same watermark, merges them again, harmlessly.
+
+### The table's schema
+
+A table that exists decides how each column is written: its own types, spelled as it spells them, whatever the query's values would settle. A declared `targetColumnTypes` it disagrees with, a column it requires that the query doesn't return, and a column the query returns that it lacks are each refused before a row is written -- the last unless the connection says `evolveSchema`, which adds it.
+
+A table bauta creates takes the columns' settled types, with the integers Iceberg has no type for written as the nearest it has: `int8` and `int16` as `int`, `uint32` as `long`, `uint64` as `decimal(20,0)`. Its identifier fields are `targetKey`, and a key column can't be null. It deletes its oldest metadata files as it commits (`write.metadata.delete-after-commit.enabled`), which pyiceberg otherwise keeps forever.
+
+### Old snapshots
+
+After each run the table keeps its newest `keepSnapshots` snapshots and expires the rest -- and bauta deletes the data files only the expired ones referenced, which pyiceberg leaves behind. Without that, a row deleted or overwritten would stay readable in them: someone's data a request asked to remove, or a value masked under a key since rotated. A query still reading an expired snapshot fails, so `keepSnapshots` is also how long a slow reader has.
+
+### Catalogs and storage
+
+Glue, REST and SQL catalogs are loaded with pyiceberg's own; the connection's cloud settings reach them under pyiceberg's names, and `properties` pass anything else through. Files are written with pyarrow's filesystems, as a files connection's are, for every cloud: pyiceberg would otherwise reach for fsspec's for Azure, which needs another package, and hands pyarrow an Azure path it can't read -- `bauta.files.icebergio` corrects that one spelling. An `az://` warehouse is given to pyiceberg as the `abfss://` URL it stands for.

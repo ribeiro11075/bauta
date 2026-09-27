@@ -13,7 +13,7 @@ from typing import Any, Dict, Generator, List, Mapping, Optional, Sequence, Tupl
 
 import yaml
 
-from ..configuration import (Configuration, ConfigurationError, ConnectionConfig, DatabaseConfig, DataJobConfig, DataJobsFile, FilesConnection,
+from ..configuration import (Configuration, ConfigurationError, ConnectionConfig, DatabaseConfig, DataJobConfig, DataJobsFile, FilesConnection, IcebergConnection, isLake,
                              StorageLocation, TableLocation, expandEnvironmentVariables)
 from ..database import Database
 from ..log import Log
@@ -189,9 +189,9 @@ def _loadDataJobs(arguments: argparse.Namespace) -> Tuple[DataJobsFile, Dict[str
 
     unknown = ['{}: connection "{}" is not a known connection alias'.format(setting, location.connection)
                for setting, location in jobsFile.tableLocations().items() if location.connection not in connectionConfiguration]
-    unknown += ['{}: connection "{}" is a files connection; {} is kept in a database table or a file'.format(setting, location.connection, setting)
-                for setting, location in jobsFile.tableLocations().items()
-                if isinstance(connectionConfiguration.get(location.connection), FilesConnection)]
+    unknown += ['{}: connection "{}" is a files or Iceberg connection; {} is kept in a database table or a file'.format(
+                    setting, location.connection, setting)
+                for setting, location in jobsFile.tableLocations().items() if isLake(connectionConfiguration.get(location.connection))]
     if unknown:
         raise ConfigurationError('Invalid configuration in {}:\n'.format(jobsPath) + '\n'.join(unknown))
 
@@ -385,8 +385,9 @@ def _requireDatabase(connectionConfiguration: Dict[str, ConnectionConfig], alias
 
     _requireAlias(connectionConfiguration, alias)
     settings = connectionConfiguration[alias]
-    if isinstance(settings, FilesConnection):
-        raise UsageError('{} is a files connection; this command works with databases. A job writing to it names it as its '
-                         'targetConnection, with insertStrategy append or overwrite'.format(alias))
+    if isLake(settings):
+        raise UsageError('{} is a {} connection; this command works with databases. A job writing to it names it as its '
+                         'targetConnection'.format(alias, settings.type.value))
+    assert not isinstance(settings, (FilesConnection, IcebergConnection))
 
     return settings
