@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.2 — 2026-09-27
 
 Jobs are faster, most of all wide masked tables and anything written to files or Iceberg: a million rows of 25 masked columns on ten cores went from 78,900 rows a second to 106,100 into SQLite with `maskingThreads: auto`, on half as many threads, and from 22.2 to 10.2 seconds into Parquet files. `auto` now takes half the cores rather than all of them. No mask changes, and nothing is written differently.
 
