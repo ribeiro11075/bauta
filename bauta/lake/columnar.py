@@ -7,12 +7,13 @@ from __future__ import annotations
 import datetime
 import logging
 import secrets
+from operator import itemgetter
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..configuration import ColumnType, ConfigurationError, DataJobConfig, parseColumnType
 from ..jobs.targets import LoadTarget
 from ..log import LOGGER_NAME
-from .columns import arrowType, inferType, normalized, reportedDecimal, toArrow
+from .columns import PLAIN_KINDS, arrowType, inferType, normalized, reportedDecimal, toArrow
 
 logger = logging.getLogger(LOGGER_NAME)
 
@@ -113,10 +114,16 @@ class ColumnarTarget(LoadTarget):
 
         arrays = []
         for index, column in enumerate(self.columns):
-            raw = [row[index] for row in rows]
-            if not column.documents and any(isinstance(value, (dict, list)) for value in raw):
-                column.documents = True
-            values = [normalized(value) for value in raw]
+            raw = list(map(itemgetter(index), rows))
+            kinds = set(map(type, raw))
+            exactKinds = kinds if kinds <= PLAIN_KINDS else None
+            if exactKinds is not None:
+                # Nothing a file holds differently, and no documents.
+                values = raw
+            else:
+                if not column.documents and any(isinstance(value, (dict, list)) for value in raw):
+                    column.documents = True
+                values = [normalized(value) for value in raw]
             if column.type is None:
                 inferred = inferType(column.name, values, column.reported)
                 column.type = None if inferred is None else self._settled(inferred)
@@ -126,7 +133,7 @@ class ColumnarTarget(LoadTarget):
             if column.type is None:
                 arrays.append(pyarrow.nulls(len(values)))
             else:
-                arrays.append(toArrow(column.name, values, column.type, column.lenient))
+                arrays.append(toArrow(column.name, values, column.type, column.lenient, exactKinds))
 
         self._buffered.append(arrays)
         self._bufferedBytes += sum(array.nbytes for array in arrays)

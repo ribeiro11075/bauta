@@ -17,7 +17,7 @@ run, masked, through the same pipeline `bauta run` uses. It prints:
         five key columns, one hash
 
     The second policy under each masker (docs/masking.md, "The native
-    masker"): Python, then Rust in turn, overlapped, and on every core.
+    masker"): Python, then Rust in turn, overlapped, and with maskingThreads: auto.
 
 Each run is a process of its own, since which masker is used, whether the
 pipeline overlaps, and how many threads mask are each decided once per
@@ -66,7 +66,7 @@ MASKERS = [
     ('Python', '0', '0', '1'),
     ('Rust, one thread, in turn', '1', '0', '1'),
     ('Rust, one thread, overlapped (the default)', '1', '1', '1'),
-    ('Rust, all cores', '1', '1', 'auto'),
+    ('Rust, maskingThreads: auto', '1', '1', 'auto'),
     ]
 
 

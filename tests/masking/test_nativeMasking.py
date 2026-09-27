@@ -311,21 +311,118 @@ def test_the_cache_is_bounded_and_keeps_answering_past_its_bound(maskingThreads)
     assert len(set(first)) == len(values)
 
 
-def test_auto_shares_the_cores_between_the_jobs_that_run_at_once(monkeypatch):
+# A chunk in one call -------------------------------------------------------------
+
+# One column of each kind a chunk mixes: the extension's, one kept, and one
+# Python masks.
+CHUNK_POLICY = {'id': 'keep', 'reference': 'key', 'hexReference': {'strategy': 'key', 'charset': 'hex'}, 'token': 'fpe', 'secret': 'hash',
+                'email': 'email', 'phone': {'strategy': 'digits', 'keepTrailing': 2}, 'amount': {'strategy': 'number', 'decimals': 2},
+                'name': 'fakeName', 'day': 'dateShift'}
+
+
+def _bound(key=KEY, policy=None, native=True):
+    """The policy bound to its columns; masked by the extension a chunk at a
+    time, or with native False as before: by it column by column, or with
+    native None in Python alone.
+    """
+    from bauta.masking import MaskingPlan
+
+    policy = policy or CHUNK_POLICY
+    bound = MaskingPlan(key=key, columns=policy).bind(list(policy))
+    if native is not True:
+        bound._chunkNatively = False
+    if native is None:
+        for strategy in bound.strategies:
+            strategy._native = None
+
+    return bound
+
+
+def _chunkRows():
+    """Rows past the size a call is split across threads at, each column's
+    values those its strategy masks -- the ones Python finishes included."""
+    random.seed(20260927)
+    bound = _bound()
+    columns = []
+    for index, strategy in enumerate(bound.strategies):
+        if index == 0:
+            columns.append(list(range(3000)))
+        elif strategy.NAME == 'dateShift':
+            columns.append([None, datetime.date(2020, 2, 29), datetime.datetime(2021, 6, 1, 8, 30), '2019-12-31'])
+        else:
+            columns.append([value for value in VALUES if outcome(strategy, [value])[0][0] == 'ok'])
+
+    return [(number,) + tuple(random.choice(column) for column in columns[1:]) for number in range(3000)]
+
+
+def _applied(bound, rows):
+    try:
+        return ('ok', [exactly(row) for row in bound.apply(rows, chunkIndex=0)])
+    except MaskingError as error:
+        return ('error', str(error))
+
+
+@native
+def test_a_chunk_masks_as_its_columns_do(maskingThreads):
+    """One call for the chunk must give what the extension gives column by
+    column and what Python gives, whatever the rows are and however many
+    threads mask them.
+    """
+    rows = _chunkRows()
+    columnByColumn = _applied(_bound(native=False), rows)
+
+    assert columnByColumn[0] == 'ok'
+    assert _applied(_bound(native=None), rows) == columnByColumn
+    assert _applied(_bound(), rows) == columnByColumn
+    assert _applied(_bound(), [list(row) for row in rows]) == columnByColumn
+    assert _applied(_bound(), tuple(rows)) == columnByColumn
+    maskingThreads(8)
+    assert _applied(_bound(), rows) == columnByColumn
+
+
+@native
+@pytest.mark.parametrize('bad', [{'reference': [5]}, {'day': [1]}, {'reference': [5], 'day': [1]}, {'phone': [7], 'reference': [9]},
+                                 {'email': [4], 'amount': [2]}], ids=str)
+def test_the_first_bad_value_raises_as_it_would_column_by_column(bad):
+    """Columns are finished in read order, each in row order, so the error a
+    chunk raises is the one it raised column by column -- here refusals by
+    the extension (a bool for key and digits), by Python for a value the
+    extension hands back (an integer for email, text for number), and by a
+    column Python masks (dateShift), in columns before and after one another.
+    """
+    refused = {'reference': True, 'phone': True, 'email': 17, 'amount': 'x', 'day': 17}
+    policy = list(CHUNK_POLICY)
+    rows = [list(row) for row in _chunkRows()[:400]]
+    for column, positions in bad.items():
+        for position in positions:
+            rows[position][policy.index(column)] = refused[column]
+
+    expected = _applied(_bound(native=False), rows)
+
+    assert expected[0] == 'error'
+    assert _applied(_bound(), rows) == expected
+    assert _applied(_bound(native=None), rows) == expected
+
+
+def test_auto_shares_half_the_cores_between_the_jobs_that_run_at_once(monkeypatch):
     import bauta.masking.core as masking
 
     monkeypatch.delenv(masking.MASKING_THREADS_VARIABLE, raising=False)
     monkeypatch.setattr(masking, 'availableCores', lambda: 8)
 
-    assert masking.maskingThreadsFor('auto', 1) == 8
-    assert masking.maskingThreadsFor('auto', 3) == 2
+    assert masking.maskingThreadsFor('auto', 1) == 4
+    assert masking.maskingThreadsFor('auto', 3) == 1
     assert masking.maskingThreadsFor('auto', 16) == 1
     assert masking.maskingThreadsFor(3, 4) == 3
+
+    monkeypatch.setattr(masking, 'availableCores', lambda: 1)
+    assert masking.maskingThreadsFor('auto', 1) == 1
+    monkeypatch.setattr(masking, 'availableCores', lambda: 8)
 
     monkeypatch.setenv(masking.MASKING_THREADS_VARIABLE, '5')
     assert masking.maskingThreadsFor('auto', 1) == 5
     monkeypatch.setenv(masking.MASKING_THREADS_VARIABLE, 'auto')
-    assert masking.maskingThreadsFor(2, 2) == 4
+    assert masking.maskingThreadsFor(2, 2) == 2
 
 
 @pytest.mark.parametrize('setting,valid', [('auto', True), (1, True), (12, True), (0, False), (-1, False), ('many', False)])

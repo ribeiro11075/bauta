@@ -3,11 +3,14 @@ returns, and what a settled column refuses.
 """
 import datetime
 import decimal
+import enum
+import random
+import uuid
 
 import pytest
 
 from bauta.configuration import ColumnType, parseColumnType
-from bauta.lake.columns import FileTypeError, inferType, reportedDecimal, toArrow
+from bauta.lake.columns import PLAIN_KINDS, FileTypeError, inferType, reportedDecimal, toArrow
 
 UTC = datetime.timezone.utc
 
@@ -108,3 +111,74 @@ def test_an_instant_is_written_in_utc_and_a_date_in_a_timestamp_column_as_its_mi
 @pytest.mark.parametrize('declared, arrowName', [('float32', 'float'), ('uint64', 'uint64'), ('time', 'time64[us]'), ('binary', 'binary')])
 def test_each_declared_type_is_the_arrow_type_of_its_name(arrow, declared, arrowName):
     assert str(toArrow('c', [None], parseColumnType(declared), lenient=False).type) == arrowName
+
+
+# One or more values of each kind a column's fast path takes, at the edges that
+# refuse: the integer ranges, signed and not, a zoned and a naive time, and
+# numbers a narrow decimal can't hold.
+PLAIN_VALUES = {
+    bool: [True, False],
+    int: [0, 1, -1, 127, 128, -129, 255, 256, 2 ** 31, -2 ** 31 - 1, 2 ** 63 - 1, 2 ** 63, -2 ** 63, 2 ** 64],
+    float: [0.1, 1.5, -2.0, 1e20],
+    decimal.Decimal: [decimal.Decimal('1.50'), decimal.Decimal('-3'), decimal.Decimal('12345678.123456789')],
+    str: ['a', '', 'text'],
+    bytes: [b'', b'\x00'],
+    datetime.datetime: [datetime.datetime(2026, 1, 2, 3, 4, 5, 6), datetime.datetime(2026, 1, 2, tzinfo=datetime.timezone(datetime.timedelta(hours=-5)))],
+    datetime.date: [datetime.date(2026, 1, 2)],
+    datetime.time: [datetime.time(12, 30, 1, 5)],
+    type(None): [None],
+    }
+
+DECLARED = ['bool', 'int8', 'int32', 'int64', 'uint8', 'uint64', 'float64', 'decimal(38,10)', 'decimal(6,2)', 'string', 'binary', 'date',
+            'timestamp', 'timestamptz', 'time']
+
+
+def _outcome(call):
+    try:
+        array = call()
+    except FileTypeError as error:
+        return ('refused', str(error))
+    return ('written', array)
+
+
+def test_the_plain_kinds_are_exactly_what_needs_no_normalizing():
+    """A value of one of these exact types is left as it is and named as
+    itself; the fast path rests on it.
+    """
+    from bauta.lake.columns import _kind, normalized
+
+    for kind, values in PLAIN_VALUES.items():
+        assert kind in PLAIN_KINDS
+        for value in values:
+            assert normalized(value) is value and (value is None or _kind(value) is kind)
+
+    class Status(enum.IntEnum):
+        OPEN = 1
+
+    for value in (Status.OPEN, uuid.UUID(int=1), {'k': 1}, [1], datetime.timedelta(1), bytearray(b'x')):
+        assert type(value) not in PLAIN_KINDS
+
+
+@pytest.mark.parametrize('declared', DECLARED)
+@pytest.mark.parametrize('lenient', [False, True])
+def test_a_column_of_plain_kinds_is_written_as_value_by_value(arrow, declared, lenient):
+    """Knowing a column's exact types, toArrow skips telling each value's
+    kind; the array it writes, or the refusal and its message, must be the
+    same.
+    """
+    from bauta.lake.columns import _accepts
+
+    random.seed('{}{}'.format(declared, lenient))
+    columnType = parseColumnType(declared)
+    kinds = list(PLAIN_VALUES)
+    # Half the columns hold only kinds the type takes, so most of those are written.
+    taken = [kind for kind in kinds if kind in _accepts(columnType, lenient)] + [type(None)]
+
+    for attempt in range(300):
+        chosen = random.sample(taken if attempt % 2 else kinds, random.randint(1, min(3, len(taken))))
+        values = [random.choice(PLAIN_VALUES[random.choice(chosen)]) for _ in range(random.randint(1, 12))]
+        slow = _outcome(lambda: toArrow('c', list(values), columnType, lenient))
+        fast = _outcome(lambda: toArrow('c', list(values), columnType, lenient, set(map(type, values))))
+
+        assert fast[0] == slow[0], values
+        assert fast[1] == slow[1] if fast[0] == 'refused' else fast[1].equals(slow[1]), values

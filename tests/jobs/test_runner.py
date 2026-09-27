@@ -1686,8 +1686,9 @@ def _infoFromThePackage() -> Generator[List[str], None, None]:
 
 @pytest.mark.skipif(__import__('bauta.masking', fromlist=['nativeVersion']).nativeVersion() is None, reason='needs the native masker')
 def test_each_job_shares_the_cores_with_the_jobs_running_alongside_it(tmp_path, sqliteDatabase, monkeypatch):
-    """Decided as each job starts, not once a cycle: two jobs side by side take
-    half the cores each, and the one after them, running alone, takes them all.
+    """Decided as each job starts, not once a cycle: two jobs side by side
+    share auto's half of the cores, and the one after them, running alone,
+    takes all of it.
     """
     import bauta.masking.core as masking
     import bauta.jobs.runner as runner
@@ -1711,9 +1712,9 @@ def test_each_job_shares_the_cores_with_the_jobs_running_alongside_it(tmp_path, 
         assert _runJobs(jobs, sqliteDatabase, tmp_path, workers=2).succeeded
 
     started = {message.split(':')[0]: message for message in messages if ': masking with ' in message}
-    assert 'masking with 4 thread(s) (2 job(s) running' in started['first']
-    assert 'masking with 4 thread(s) (2 job(s) running' in started['second']
-    assert 'masking with 8 thread(s) (1 job(s) running' in started['after']
+    assert 'masking with 2 thread(s) (2 job(s) running' in started['first']
+    assert 'masking with 2 thread(s) (2 job(s) running' in started['second']
+    assert 'masking with 4 thread(s) (1 job(s) running' in started['after']
 
 
 def test_masking_threads_default_to_one_and_refuse_more_than_the_cores(tmp_path, sqliteDatabase, monkeypatch):

@@ -4,7 +4,7 @@ from types import TracebackType
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type
 
 from .driver import Connection, Cursor
-from .values import WANTS_COLUMN_TYPES, prepareParameters, prepareValues
+from .values import WANTS_COLUMN_TYPES, ValuePreparer, prepareParameters
 from ..configuration import WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseConfig, DatabaseType, FilesConnection, IcebergConnection
 from .dialects import ColumnDefinition, DatabaseDialect, DuckDBDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
     SQLiteDialect, catalogName, quoteFoldedTable, quoteIdentifier, splitTableName, suffixedName, tooLongName
@@ -113,6 +113,8 @@ class Database:
         self.primaryKeyCache: Dict[str, List[str]] = {}
         self.columnNameCache: Dict[str, List[str]] = {}
         self.columnTypeCache: Dict[str, Dict[str, Any]] = {}
+        # One per table loaded, so each learns from its table's chunks.
+        self._preparers: Dict[str, ValuePreparer] = {}
         self._streams: Set[RowStream] = set()
         self.connect()
 
@@ -480,6 +482,14 @@ class Database:
             yield data[index:index + chunkSize]
 
 
+    def _preparer(self, table: str) -> ValuePreparer:
+
+        if table not in self._preparers:
+            self._preparers[table] = ValuePreparer(self.type)
+
+        return self._preparers[table]
+
+
     def insert(self, table: str, data: List[Tuple[Any, ...]], chunkSize: int = 100, columns: Optional[List[str]] = None) -> None:
         """`columns` defaults to all of the table's, in its order; `data` must
         match. Each batch uses the dialect's bulk path where it has one, and
@@ -493,8 +503,9 @@ class Database:
         query = 'INSERT INTO {} ({}) VALUES ({})'.format(
             statementTable, ', '.join(resolvedColumns), ', '.join(self.dialect.placeholders(len(resolvedColumns))))
 
+        preparer = self._preparer(table)
         for batch in self._batches(data, chunkSize):
-            batch = prepareValues(self.type, batch, columnTypes)
+            batch = preparer.prepare(batch, columnTypes)
             if not self.dialect.bulkInsert(self.cursor, statementTable, resolvedColumns, batch):
                 self.cursor.executemany(query, batch)
             self.connection.commit()
@@ -510,15 +521,18 @@ class Database:
 
         normalizedColumns = [column.upper() for column in allColumns]
         keyIndexes = [normalizedColumns.index(column.upper()) for column in primaryKeyColumns if column.upper() in normalizedColumns]
-        canCollapse = len(keyIndexes) == len(primaryKeyColumns)
+        # Only a dialect with a bulk path loads the collapsed batch; for the
+        # rest, collapsing it was work thrown away.
+        canCollapse = len(keyIndexes) == len(primaryKeyColumns) and type(self.dialect).bulkUpsert is not DatabaseDialect.bulkUpsert
 
         allColumns, primaryKeyColumns, nonPrimaryKeyColumns = self.quoted(allColumns), self.quoted(primaryKeyColumns), self.quoted(nonPrimaryKeyColumns)
         statementTable = self.statementName(table)
         query = self.dialect.upsertQuery(table=statementTable, allColumns=allColumns, primaryKeyColumns=primaryKeyColumns,
                                          nonPrimaryKeyColumns=nonPrimaryKeyColumns)
 
+        preparer = self._preparer(table)
         for batch in self._batches(data, chunkSize):
-            batch = prepareValues(self.type, batch, columnTypes)
+            batch = preparer.prepare(batch, columnTypes)
             loaded = False
             if canCollapse:
                 lastPerKey = list({tuple(row[index] for index in keyIndexes): row for row in batch}.values())

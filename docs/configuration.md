@@ -275,7 +275,7 @@ jobs:
 | `memory` | optional, `memory.yaml` | Where `run` keeps run state: last runs, watermarks and key fingerprints. A file, or a [table](#tables). `--memory FILE` or `--memory-connection ALIAS` overrides it. See [run state](operations.md#run-state). |
 | `history` | optional | Where `run` records each job's outcome after every cycle, for `bauta history`. A JSON-lines file, or a [table](#tables). Not recorded when unset. `--history FILE` or `--history-connection ALIAS` overrides it. See [run history](operations.md#run-history). |
 | `manifest` | optional | Where `run` writes its [masking manifest](masking.md#the-manifest), for `bauta verify-manifest`. A file, replaced each run, or a [table](#tables), which keeps every run's. Not written when unset. `--manifest FILE` or `--manifest-connection ALIAS` overrides it. |
-| `maskingThreads` | optional, `1` | Threads the [native masker](masking.md#the-native-masker) masks each job with: `1`, a number up to the cores available, or `auto` to divide the cores between the jobs running. Results are the same for any count. `BAUTA_MASKING_THREADS` overrides it. See [masking threads](masking.md#masking-threads). |
+| `maskingThreads` | optional, `1` | Threads the [native masker](masking.md#the-native-masker) masks each job with: `1`, a number up to the cores available, or `auto` to divide half the cores between the jobs running. Results are the same for any count. `BAUTA_MASKING_THREADS` overrides it. See [masking threads](masking.md#masking-threads). |
 | `defaults` | optional | Settings every job takes unless it names its own. See [defaults](#defaults). |
 | `acknowledged` | optional | Tables no job copies, on purpose: connection alias, then table, then why. What [`bauta coverage`](masking.md#coverage-what-the-jobs-do-not-cover) reads. |
 | `jobs` | required | A map of job name to job definition. |
@@ -364,7 +364,7 @@ history:
 | --- | --- | --- |
 | `sourceConnection` | required | An alias from `connections.yaml`. |
 | `sourceQuery` | required | The query to extract with. |
-| `chunkSize` | required, at least 1 | Rows per batch. Extracts stream, so this is the **memory dial**: peak memory is about `chunkSize` × row width however large the source is — three times that where the [native masker](masking.md#the-native-masker) overlaps reading, masking and writing. |
+| `chunkSize` | required, at least 1 | Rows per batch. Extracts stream, so this is the **memory dial**: peak memory is about `chunkSize` × row width however large the source is — four times that where the [native masker](masking.md#the-native-masker) overlaps reading, masking and writing. |
 | `watermarkColumn` | optional | Makes the job incremental. See [incremental loads](design.md#incremental-loads). Refused by `validate` on a column the masking policy masks, by name or through `defaultStrategy`: the watermark is read before masking and kept in run state, logs and `bauta jobs`, so it would leak the unmasked value. |
 | `watermarkInitial` | required with `watermarkColumn` | The value bound on the first run, before anything is stored. Bound as the type YAML read: write a timestamp unquoted, or PostgreSQL and Oracle refuse the [lookback](design.md#why-the-lookback-window) arithmetic around it. |
 

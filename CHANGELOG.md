@@ -5,6 +5,18 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## Unreleased
+
+Jobs are faster, most of all wide masked tables and anything written to files or Iceberg: a million rows of 25 masked columns on ten cores went from 78,900 rows a second to 106,100 into SQLite with `maskingThreads: auto`, on half as many threads, and from 22.2 to 10.2 seconds into Parquet files. `auto` now takes half the cores rather than all of them. No mask changes, and nothing is written differently.
+
+### Changed
+- **`maskingThreads: auto` masks on half the cores available**, shared between the jobs running as before, rather than on all of them. Masking only has to keep up with a job's reading and writing, which need cores of their own: on ten cores, a wide table copied as fast with four masking threads as with six or eight, and slower with all ten. A job running alone on ten cores now masks on five, and two side by side on eight cores on two each. A number still sets exactly that many threads, up to every core. See [masking threads](docs/masking.md#masking-threads).
+- **The native masker takes a chunk in one call** and masks its columns at once, rather than being called column by column: each column's own bookkeeping ran on one thread while the other cores waited, and the GIL changed hands after every column. The strings it allocates are freed without holding the GIL, which freeing them had been a quarter of the time it held. Columns Python masks, and values the extension hands back to it, are finished as before, column by column and each in row order, so a value that was refused is refused with the same message.
+- **Loading a chunk does less work in Python**, for every database. The values a database's driver takes differently -- an integer past 64 bits for SQLite and DuckDB, a UUID for MySQL, a datetime for SQL Server -- are found from each row's types in one pass, instead of by transposing the chunk and scanning every column, and a column of integers is checked with its smallest and largest. With the native extension installed, each column's types are found in Rust in one pass, which cuts that by half or more; without it, a load learns from each chunk how much of the next to look at. An upsert into SQLite, MySQL, MariaDB or Oracle no longer builds a copy of each batch that only PostgreSQL, SQL Server and DuckDB use.
+- **Writing files and Iceberg tables does a fraction of the work in Python.** A column whose values are all of the plain types a file holds as they are -- text, numbers, bytes, dates and times, and nulls -- goes to Arrow without looking at each value, where each was checked and normalized in turn: that took more than half of a wide table's time. An integer column's range is checked by its smallest and largest. Any other column -- JSON documents, UUIDs, a driver's own types -- is converted as before.
+- **Reading, masking and writing overlap two chunks deep** rather than one, which absorbs a slow chunk on either side. A job with the native masker holds four chunks in memory rather than three.
+
+
 ## 0.2.1 — 2026-09-27
 
 Jobs can write Iceberg tables, through a Glue, REST or SQL catalog, in any of the three clouds: a run is one commit, `upsert` merges by key, and old snapshots' files go with them. **Read Breaking before upgrading: pyarrow and DuckDB need newer versions.** No mask changes.

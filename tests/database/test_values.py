@@ -4,12 +4,13 @@ against the real databases, in test_integration_schema.py's copies.
 """
 import datetime
 import decimal
+import random
 import uuid
 
 import pytest
 
 from bauta.configuration import DatabaseType
-from bauta.database.values import CONVERSIONS, durationText, prepareParameters, prepareValues
+from bauta.database.values import CONVERSIONS, ValuePreparer, conversionFor, durationText, prepareParameters, prepareValues
 
 POSTGRESQL, MYSQL, MARIADB, ORACLE, MSSQL, SQLITE, DUCKDB = (DatabaseType.POSTGRESQL, DatabaseType.MYSQL, DatabaseType.MARIADB, DatabaseType.ORACLE,
                                                              DatabaseType.MSSQL, DatabaseType.SQLITE, DatabaseType.DUCKDB)
@@ -87,6 +88,95 @@ def test_only_the_columns_holding_a_convertible_value_are_rebuilt():
     [first, second] = prepareValues(MSSQL, [(left, MOMENT), (right, MOMENT)])
 
     assert first[0] is left and second[0] is right and first[1] == '2026-01-02 03:04:05.678901'
+
+
+def _oneValueAtATime(database, rows):
+    """What prepareValues must amount to: each value converted on its own."""
+    return [tuple(value if (conversion := conversionFor(database, type(value))) is None else conversion(value, None) for value in row)
+            for row in rows]
+
+
+def _chunks():
+    """A load's chunks, shaped to take every path a ValuePreparer has, in an
+    order that makes it change course: nothing to convert, integers within 64
+    bits and past them, integers beside NULLs, NULLs scattered enough to make
+    most rows' type signatures distinct, and values every database converts
+    differently.
+    """
+    random.seed(20260927)
+    shapes = {
+        'plain': lambda number: (1.5 * number, 'text {}'.format(number), None, b'x'),
+        'ids': lambda number: (number, 'text', 2 ** 40 + number, None),
+        'wide': lambda number: (number, 'text', 2 ** 63 if number == 150 else number, None),
+        'sparse': lambda number: tuple(random.choice([None, number, 'text']) for _ in range(12)),
+        'mixed': lambda number: (number, None if number % 3 else number, MOMENT, DAY, decimal.Decimal('1.50'), KEY, CLOCK, True),
+        }
+
+    return [[tuple(shapes[shape](number)) for number in range(200)]
+            for shape in ('plain', 'ids', 'ids', 'wide', 'plain', 'ids', 'sparse', 'ids', 'mixed', 'sparse', 'plain')]
+
+
+@pytest.fixture(params=['native', 'python'])
+def columnKinds(request, monkeypatch):
+    """Each test twice: with the native extension finding each column's types
+    where it is installed, and with Python finding them.
+    """
+    import bauta.database.values as values
+
+    if request.param == 'python':
+        monkeypatch.setattr(values, '_columnKinds', lambda rows: None)
+    elif values._columnKinds([(1,)]) is None:
+        pytest.skip('the bauta_rs extension is not in use')
+
+    return request.param
+
+
+@pytest.mark.parametrize('database', list(DatabaseType), ids=lambda database: database.value)
+def test_a_load_prepares_every_chunk_as_its_values_one_at_a_time(database, columnKinds):
+    """A ValuePreparer changes how much of the next chunk it looks at from
+    what the last one held; the chunks it returns must not change with it.
+    """
+    preparer = ValuePreparer(database)
+
+    for rows in _chunks():
+        assert preparer.prepare(rows) == _oneValueAtATime(database, rows)
+
+
+def test_a_chunk_with_nothing_to_convert_is_returned_as_it_is_mid_load(columnKinds):
+    """Integers within 64 bits need nothing on SQLite, however the preparer
+    found that out: the chunk comes back whole, and a converted chunk rebuilds
+    only its converted columns.
+    """
+    preparer = ValuePreparer(SQLITE)
+    ids = [(number, 'text', None) for number in range(200)]
+
+    assert preparer.prepare(ids) is ids
+    assert preparer.prepare(ids) is ids
+    rows = [(number, ('kept',), DAY) for number in range(200)]
+    prepared = preparer.prepare(rows)
+    assert prepared[7][1] is rows[7][1] and prepared[7][2] == '2026-01-02'
+
+
+def test_the_extension_finds_the_types_and_ranges_python_would():
+    """columnKinds stands in for Python's type() over each column, and for
+    whether its ints fit in 64 bits; rows it can't read are left to Python.
+    """
+    import bauta.database.values as values
+
+    if values._columnKinds([(1,)]) is None:
+        pytest.skip('the bauta_rs extension is not in use')
+
+    class Flag(int):
+        pass
+
+    for rows in _chunks() + [[(2 ** 63, Flag(1), True, None), (-2 ** 63, 0, 1, 'a')], [(2 ** 63 - 1, -2 ** 63 - 1)]]:
+        kinds, fits = values._columnKinds(rows)
+        columns = list(zip(*rows))
+        assert [set(found) for found in kinds] == [set(map(type, column)) for column in columns]
+        assert fits == [all(-2 ** 63 <= value < 2 ** 63 for value in column if type(value) is int) for column in columns]
+
+    for unread in ([(1,), (1, 2)], [[1]], ((1,),)):
+        assert values._columnKinds(unread) is None
 
 
 def test_a_watermark_is_bound_as_a_loaded_value_would_be():

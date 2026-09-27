@@ -108,6 +108,13 @@ def _kind(value: Any) -> type:
     return type(value)
 
 
+# The exact types a value can have for normalized() to leave it as it is and
+# _kind() to name it as itself. A column holding nothing else -- nearly every
+# column -- needs neither called on each value, which is most of the time a
+# chunk takes to become Arrow; the column's exact types, gathered in C, say so.
+PLAIN_KINDS = frozenset(_KINDS) | {type(None)}
+
+
 def _digits(value: int) -> int:
 
     return len(str(abs(value)))
@@ -255,19 +262,22 @@ def _accepts(columnType: ColumnType, lenient: bool) -> _Accepts:
     raise AssertionError('no kind {}'.format(kind))
 
 
-def toArrow(column: str, values: List[Any], columnType: ColumnType, lenient: bool) -> Any:
+def toArrow(column: str, values: List[Any], columnType: ColumnType, lenient: bool, exactKinds: Optional[Set[type]] = None) -> Any:
     """`values`, normalized, as an Arrow array of the column's type; a
-    FileTypeError naming the column when one doesn't fit.
+    FileTypeError naming the column when one doesn't fit. `exactKinds` is
+    `set(map(type, values))` where that is within PLAIN_KINDS, which saves
+    telling each value's kind.
     """
 
     import pyarrow
 
     accepts = _accepts(columnType, lenient)
-    kinds = {_kind(value) for value in values if value is not None}
-    if columnType.kind == 'timestamp' and any(isinstance(value, datetime.datetime) and value.tzinfo is not None for value in values):
+    kindOf = _kind if exactKinds is None else type
+    kinds = {_kind(value) for value in values if value is not None} if exactKinds is None else exactKinds - {type(None)}
+    if columnType.kind == 'timestamp' and datetime.datetime in kinds and any(isinstance(value, datetime.datetime) and value.tzinfo is not None for value in values):
         raise FileTypeError('column {} is written as timestamp, without a time zone, and a row holds one with; declare it '
                             'timestamptz in targetColumnTypes'.format(column))
-    if columnType.kind == 'timestamptz' and any(isinstance(value, datetime.datetime) and value.tzinfo is None for value in values):
+    if columnType.kind == 'timestamptz' and datetime.datetime in kinds and any(isinstance(value, datetime.datetime) and value.tzinfo is None for value in values):
         raise FileTypeError('column {} is written as timestamptz, and a row holds a time without a time zone, which could be '
                             'any instant; declare it timestamp in targetColumnTypes'.format(column))
     if columnType.kind == 'date' and datetime.datetime in kinds:
@@ -281,12 +291,15 @@ def toArrow(column: str, values: List[Any], columnType: ColumnType, lenient: boo
 
     conversions = {kind: accepts[kind] for kind in kinds if accepts[kind] is not None}
     if conversions:
-        values = [value if value is None or _kind(value) not in conversions else conversions[_kind(value)](value)  # type: ignore[misc]
+        values = [value if value is None or kindOf(value) not in conversions else conversions[kindOf(value)](value)  # type: ignore[misc]
                   for value in values]
 
     if isInteger(columnType):
         low, high = _INTEGER_RANGES[columnType.kind]
-        if any(value is not None and not low <= value < high for value in values):
+        # Bools are ints by now; the smallest and largest, found in C, stand
+        # for the rest.
+        present = values if exactKinds is not None and type(None) not in exactKinds else [value for value in values if value is not None]
+        if present and (min(present) < low or max(present) >= high):
             raise FileTypeError('column {} is written as {}, and a row holds an integer outside its range; declare a wider '
                                 'type in targetColumnTypes, such as int64 or decimal(38,0)'.format(column, columnType))
 

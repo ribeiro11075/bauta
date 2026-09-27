@@ -28,10 +28,11 @@ from .targets import LoadTarget, PostLoadError, TableTarget
 logger = logging.getLogger(LOGGER_NAME)
 
 
-# How many chunks may be masked ahead of the one being written. One already
-# keeps the reader, masker and writer all busy, holding three chunks at once;
-# more buys no overlap and costs a chunk of memory each.
-PIPELINE_DEPTH = 1
+# How many chunks may be masked ahead of the one being written. One keeps the
+# reader, masker and writer all busy on average, holding three chunks at once;
+# a second absorbs a slow chunk on either side when masking and the database
+# take about as long, for one more chunk of memory. More buys nothing further.
+PIPELINE_DEPTH = 2
 
 
 # Caps the doubling backoff, which would otherwise wait 5.7 hours in all over

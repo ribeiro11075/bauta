@@ -175,8 +175,9 @@ def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfigur
 
     `maskingThreads` is shared out as each job starts, between it and the jobs
     that will run alongside it: those already running and those starting with
-    it. So the last job of a cycle, running alone, gets every core. A running
-    job keeps its share; cores freed after it started go to the next to start.
+    it. So the last job of a cycle, running alone, gets the whole of `auto`'s
+    half of the cores. A running job keeps its share; cores freed after it
+    started go to the next to start.
     """
 
     running: List[_JobProcess] = []

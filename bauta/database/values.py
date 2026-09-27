@@ -12,7 +12,8 @@ import decimal
 import itertools
 import json
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from operator import itemgetter
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..configuration import DatabaseType
 
@@ -155,36 +156,138 @@ def conversionFor(databaseType: DatabaseType, kind: type) -> Optional[Conversion
     return _found[key]
 
 
-def prepareValues(databaseType: DatabaseType, rows: List[Tuple[Any, ...]], columnTypes: Optional[Sequence[Any]] = None) -> List[Tuple[Any, ...]]:
-    """`rows` as `databaseType`'s driver must receive them.
+_NONE = type(None)
 
-    Every chunk of every load comes through here, so it does as little as it
-    can: the distinct types in the chunk are gathered in C, and a chunk with
-    none to convert is returned as it is. Otherwise only the columns holding
-    one are converted, and the rest carried through untouched.
+# Rows to each distinct type signature below which finding a chunk's columns
+# by their signatures beats transposing it: NULLs scattered over many columns
+# make most rows' signatures distinct.
+_ROWS_PER_SIGNATURE = 8
+
+
+def _columnKinds(rows: List[Tuple[Any, ...]]) -> Optional[Tuple[List[List[type]], List[bool]]]:
+    """Each column's exact types, and whether its ints all fit in 64 bits,
+    from the native extension in one pass; None without it, or for rows it
+    doesn't read, which the caller then reads in Python.
     """
 
-    if not rows:
-        return rows
+    from ..masking.core import nativeExtension
 
-    if all(conversionFor(databaseType, kind) is None for kind in set(map(type, itertools.chain.from_iterable(rows)))):
-        return rows
+    native = nativeExtension()
 
-    columns = list(zip(*rows))
-    changed = False
-    for index, column in enumerate(columns):
-        conversions = {kind: conversionFor(databaseType, kind) for kind in set(map(type, column))}
-        if not any(conversions.values()):
-            continue
-        columnType = columnTypes[index] if columnTypes is not None and index < len(columnTypes) else None
-        converted = tuple(value if (conversion := conversions[type(value)]) is None else conversion(value, columnType) for value in column)
-        # A conversion may leave every value as it was -- integers, nearly
-        # always within 64 bits -- and the chunk is then kept whole.
-        if any(new is not old for new, old in zip(converted, column)):
-            columns[index] = converted
-            changed = True
+    return native.columnKinds(rows) if native is not None else None
 
-    return list(zip(*columns)) if changed else rows
+
+def _fitIn64Bits(column: Sequence[Any], kinds: Set[type]) -> bool:
+    """Whether a column of ints, and perhaps NULLs, needs no _wideInteger: its
+    smallest and largest, found in C, stand for the rest.
+    """
+
+    values = column if _NONE not in kinds else [value for value in column if value is not None]
+
+    return not values or (min(values) in _BOUND_INTEGERS and max(values) in _BOUND_INTEGERS)
+
+
+class ValuePreparer:
+    """prepareValues for the chunks of one load. What it learns of one chunk
+    changes how much of the next it looks at, never what it returns.
+
+    Which columns hold a value to convert comes from each column's exact
+    types, which the native extension finds in one pass where it is in use.
+    In Python, a chunk usually either holds nothing to convert, which one pass
+    over its values in C finds, or holds the same kinds in the same columns as
+    the chunk before -- an integer id bound for SQLite, say. For those it skips
+    that pass, and finds the columns from the rows' distinct type signatures,
+    another pass in C, rather than by transposing the chunk and scanning every
+    column. Where NULLs make the signatures too many, it transposes, then and
+    for the rest of the load.
+
+    A column of ints within 64 bits, and NULLs, needs nothing on the two
+    databases that convert ints, which is nearly every such column: it is
+    checked whole, not value by value.
+    """
+
+    def __init__(self, databaseType: DatabaseType) -> None:
+        self.databaseType = databaseType
+        # Whether the last chunk held a value a conversion applies to.
+        self._converting = False
+        self._bySignature = True
+
+
+    def _kindsInPython(self, rows: List[Tuple[Any, ...]]) -> Tuple[Optional[List[Set[type]]], Optional[List[Tuple[Any, ...]]]]:
+        """Each column's exact types, and the chunk transposed where that was
+        the way to find them; no types where the chunk holds nothing to
+        convert.
+        """
+
+        if not self._converting and not any(conversionFor(self.databaseType, kind) for kind in set(map(type, itertools.chain.from_iterable(rows)))):
+            return None, None
+
+        if self._bySignature:
+            signatures = set(map(tuple, map(map, itertools.repeat(type), rows)))
+            if len(signatures) * _ROWS_PER_SIGNATURE <= len(rows):
+                return [set(kinds) for kinds in zip(*signatures)], None
+            self._bySignature = False
+
+        columns = list(zip(*rows))
+
+        return [set(map(type, column)) for column in columns], columns
+
+
+    def prepare(self, rows: List[Tuple[Any, ...]], columnTypes: Optional[Sequence[Any]] = None) -> List[Tuple[Any, ...]]:
+
+        if not rows:
+            return rows
+
+        columns: Optional[List[Tuple[Any, ...]]] = None
+        fits: Optional[List[bool]] = None
+        kindsByColumn: Optional[List[Set[type]]]
+        found = _columnKinds(rows)
+        if found is not None:
+            kindsByColumn, fits = [set(kinds) for kinds in found[0]], found[1]
+        else:
+            kindsByColumn, columns = self._kindsInPython(rows)
+            if kindsByColumn is None:
+                return rows
+
+        self._converting = False
+        converted: Dict[int, Tuple[Any, ...]] = {}
+        for index, kinds in enumerate(kindsByColumn):
+            conversions = {kind: conversionFor(self.databaseType, kind) for kind in kinds}
+            applying = {conversion for conversion in conversions.values() if conversion is not None}
+            if not applying:
+                continue
+            self._converting = True
+
+            column = columns[index] if columns is not None else tuple(map(itemgetter(index), rows))
+            if applying == {_wideInteger} and kinds <= {int, _NONE} and (fits[index] if fits is not None else _fitIn64Bits(column, kinds)):
+                continue
+
+            columnType = columnTypes[index] if columnTypes is not None and index < len(columnTypes) else None
+            values = tuple(value if (conversion := conversions[type(value)]) is None else conversion(value, columnType) for value in column)
+            # A conversion may leave every value as it was, and the column is
+            # then kept as it is.
+            if any(new is not old for new, old in zip(values, column)):
+                converted[index] = values
+
+        if not converted:
+            return rows
+
+        if columns is None:
+            columns = list(zip(*rows))
+        for index, values in converted.items():
+            columns[index] = values
+
+        return list(zip(*columns))
+
+
+def prepareValues(databaseType: DatabaseType, rows: List[Tuple[Any, ...]], columnTypes: Optional[Sequence[Any]] = None) -> List[Tuple[Any, ...]]:
+    """`rows` as `databaseType`'s driver must receive them: a chunk with
+    nothing to convert as it is, and otherwise only the columns holding a
+    value to convert converted, the rest carried through untouched. A load of
+    many chunks keeps a ValuePreparer instead.
+    """
+
+    return ValuePreparer(databaseType).prepare(rows, columnTypes)
 
 
 def prepareParameters(databaseType: DatabaseType, parameters: Sequence[Any]) -> Tuple[Any, ...]:

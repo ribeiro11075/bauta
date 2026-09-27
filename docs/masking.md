@@ -181,9 +181,9 @@ If `mask()` depends on nothing but the value, set `CACHEABLE = True` on the clas
 
 | Policy | Rows a second |
 | --- | --- |
-| `email`, two `hash`, three `keep` | 339,000 |
-| two `key` columns, `email`, two `hash`, `digits` | 129,000 |
-| two `fpe` columns, `email`, two `hash`, `digits` | 254,000 |
+| `email`, two `hash`, three `keep` | 333,000 |
+| two `key` columns, `email`, two `hash`, `digits` | 131,000 |
+| two `fpe` columns, `email`, two `hash`, `digits` | 268,000 |
 | five `key` columns, one `hash` | 74,000 |
 
 `key` costs the most because it has to be a *permutation*: a Feistel network per value, about thirty times the work of `hash`'s one digest. Where nothing joins on a column, `hash` hides as much far more cheaply. `fpe` is a permutation too, but FF1's ten AES rounds cost less natively than `key`'s forty-odd digests.
@@ -211,9 +211,9 @@ The second policy above, a million rows, SQLite to SQLite:
 | Masker | Rows a second |
 | --- | --- |
 | Python | 13,600 |
-| Rust, one thread, reading, masking and writing in turn | 101,000 |
-| Rust, one thread, overlapped with the database (the default) | 129,000 |
-| Rust, `maskingThreads: auto` (10 threads) | 326,000 |
+| Rust, one thread, reading, masking and writing in turn | 100,000 |
+| Rust, one thread, overlapped with the database (the default) | 132,000 |
+| Rust, `maskingThreads: auto` (5 threads) | 329,000 |
 
 **The two implementations compute identical masks**, a release requirement: a difference would silently break joins between old and new copies. See [two implementations](security.md#two-implementations). `BAUTA_NATIVE=0` masks in Python even with the extension installed, and the manifest records which one ran as `maskedBy`.
 
@@ -226,19 +226,21 @@ The native masker can spread each chunk over several cores. Every mask depends o
 | --- | --- | --- |
 | `1` (default) | One thread. | You haven't measured a need, or the database shares the machine. |
 | A number, such as `4` | That many threads, every job. | You want a fixed share. It can't exceed the cores available: `validate` and `run` refuse it. |
-| `auto` | The cores available, divided between the jobs running when it starts. | Bauta has the machine to itself, and you want it all used. |
+| `auto` | Half the cores available, divided between the jobs running when it starts. | Bauta has the machine to itself, and you want masking as fast as the job can use it. |
 
-**How `auto` divides the cores.** When a job starts, it gets `cores ÷ jobs running`, counting the jobs already running and those starting with it. A running job keeps its share; cores freed later go to the next job to start. With `workers: 2` on 8 cores, where `a` and `b` run together and `c` waits for both:
+**Why half.** Masking only has to keep up with the job's reading and writing, which need cores of their own, and so may the database. On a wide table on ten cores, four masking threads copied as fast as six or eight, and all ten were slower than any of them: the extra threads took cores the reading and writing needed. The other half is left to them.
+
+**How `auto` divides the cores.** When a job starts, it gets `half the cores ÷ jobs running`, counting the jobs already running and those starting with it, and at least one. A running job keeps its share; cores freed later go to the next job to start. With `workers: 2` on 8 cores, where `a` and `b` run together and `c` waits for both:
 
 | Job | Starts | Jobs running | Threads |
 | --- | --- | --- | --- |
-| `a` | first | 2 | 4 |
-| `b` | with `a` | 2 | 4 |
-| `c` | once `a` and `b` finish | 1 | 8 |
+| `a` | first | 2 | 2 |
+| `b` | with `a` | 2 | 2 |
+| `c` | once `a` and `b` finish | 1 | 4 |
 
 **Cores available** are the ones the process may use: on Linux, a container's CPU limit and CPU affinity, not the host's total; on macOS, the core count.
 
-**A number applies to every job.** It's checked against the cores, not multiplied by `workers`: `workers: 4` with `maskingThreads: 4` on 8 cores runs 16 masking threads at once. Only `auto` shares the cores between jobs.
+**A number applies to every job.** It's checked against the cores, not multiplied by `workers`: `workers: 4` with `maskingThreads: 4` on 8 cores runs 16 masking threads at once. Only `auto` shares the cores between jobs. A number can still use every core, where you have measured that it pays.
 
 **`BAUTA_MASKING_THREADS`** overrides the setting for one environment, as a number or `auto`, and is checked the same way.
 
@@ -247,7 +249,7 @@ The native masker can spread each chunk over several cores. Every mask depends o
 **Seeing what it chose.** `bauta validate` prints the plan:
 
 ```
-masking: bauta-rs 0.1.3, 5 to 10 thread(s) per job (maskingThreads: auto; 10 core(s)): 5 with 2 jobs running, 10 for a job running alone
+masking: bauta-rs 0.2.1, 2 to 5 thread(s) per job (maskingThreads: auto; 10 core(s)): 2 with 2 jobs running, 5 for a job running alone
 ```
 
 and each masked job logs what it got as it starts:
@@ -260,8 +262,8 @@ maskCustomers: masking with 4 thread(s) (2 job(s) running, 8 core(s))
 
 | `maskingThreads` | Rows a second |
 | --- | --- |
-| `1` | 30,000 |
-| `auto` (10 threads) | 79,000 |
+| `1` | 31,000 |
+| `auto` (5 threads) | 106,000 |
 
 A narrow table gains little, since its time goes to writing.
 

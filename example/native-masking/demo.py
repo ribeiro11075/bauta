@@ -15,13 +15,13 @@ masking and writing taking turns or overlapped:
     Rust, overlapped                         BAUTA_PIPELINE=1  BAUTA_MASKING_THREADS=1
 
 A wide table, `wide rows` accounts (1,000,000 by default) of 25 masked
-columns, where masking sets the pace -- in Rust, on one core or on every core
-the machine allows:
+columns, where masking sets the pace -- in Rust, on one core or on the half of
+the cores `auto` takes:
 
     Rust, in turn                            BAUTA_PIPELINE=0  BAUTA_MASKING_THREADS=1
     Rust, overlapped                         BAUTA_PIPELINE=1  BAUTA_MASKING_THREADS=1
-    Rust, in turn, all cores                 BAUTA_PIPELINE=0  BAUTA_MASKING_THREADS=auto
-    Rust, overlapped, all cores              BAUTA_PIPELINE=1  BAUTA_MASKING_THREADS=auto
+    Rust, in turn, auto threads              BAUTA_PIPELINE=0  BAUTA_MASKING_THREADS=auto
+    Rust, overlapped, auto threads           BAUTA_PIPELINE=1  BAUTA_MASKING_THREADS=auto
 
 Rust is the optional bauta-rs extension. By default a job overlaps only with
 Rust, where it pays, and masks on one core unless maskingThreads says more;
@@ -131,8 +131,8 @@ RUNS = (
     ('Rust, overlapped', 'rust-overlapped', 'narrow', True, True, '1'),
     ('Rust, in turn', 'wide-rust-in-turn', 'wide', True, False, '1'),
     ('Rust, overlapped', 'wide-rust-overlapped', 'wide', True, True, '1'),
-    ('Rust, in turn, all cores', 'wide-rust-in-turn-cores', 'wide', True, False, 'auto'),
-    ('Rust, overlapped, all cores', 'wide-rust-overlapped-cores', 'wide', True, True, 'auto'),
+    ('Rust, in turn, auto threads', 'wide-rust-in-turn-cores', 'wide', True, False, 'auto'),
+    ('Rust, overlapped, auto threads', 'wide-rust-overlapped-cores', 'wide', True, True, 'auto'),
     )
 
 
@@ -235,10 +235,10 @@ def report(title: str, runs: List[Any], observed: Dict[str, Any], rows: int, bas
     """Prints one table's runs against its baseline, and whether every copy is identical."""
 
     print('\n{}\n'.format(title))
-    print('{:<29} {:>8} {:>15} {:>12}'.format('', 'seconds', 'rows a second', 'vs first'))
+    print('{:<31} {:>8} {:>15} {:>12}'.format('', 'seconds', 'rows a second', 'vs first'))
     for label, name, *_ in runs:
         seconds = observed['seconds'][name]
-        print('{:<29} {:>8.1f} {:>15,.0f} {:>11.1f}x'.format(label, seconds, rows / seconds, observed['seconds'][baseline] / seconds))
+        print('{:<31} {:>8.1f} {:>15,.0f} {:>11.1f}x'.format(label, seconds, rows / seconds, observed['seconds'][baseline] / seconds))
 
     copies = [maskedRows(workingDirectory / 'staging-{}.db'.format(name), table) for _, name, table, *_ in runs]
     identical = all(copy == copies[0] for copy in copies[1:])
@@ -301,8 +301,9 @@ def _compare(workingDirectory: Path, rows: int, wideRows: int) -> Dict[str, Any]
             print('\nRust is the optional bauta-rs extension, which isn\'t installed. With Rust 1.83 or newer, install it from\n'
                   'the repository root, and run this again for the Rust runs and the wide table:\n\n    pip install ./mask-rs/py')
         else:
-            from bauta.masking import availableCores
-            print('\nRust is the bauta-rs extension, version {}. "All cores" is {} here.'.format(version, availableCores()))
+            from bauta.masking import availableCores, maskingThreadsFor
+            print('\nRust is the bauta-rs extension, version {}. "Auto threads" is {} of the {} cores here.'.format(
+                version, maskingThreadsFor('auto', 1), availableCores()))
     finally:
         for name, value in previous.items():
             if value is None:

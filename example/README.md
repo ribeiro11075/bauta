@@ -87,25 +87,25 @@ A narrow table, six masked columns, where writing to the database sets the pace.
 
 ```
 Narrow table: 100,000 rows, 6 masked columns
-                               seconds   rows a second     vs first
-Python, in turn                    7.2          13,957         1.0x
-Python, overlapped                 7.1          14,037         1.0x
-Rust, in turn                      1.5          66,613         4.8x
-Rust, overlapped                   1.0          96,677         6.9x
+                                 seconds   rows a second     vs first
+Python, in turn                      7.4          13,587         1.0x
+Python, overlapped                   7.4          13,511         1.0x
+Rust, in turn                        1.5          65,919         4.9x
+Rust, overlapped                     1.0          96,077         7.1x
 ```
 
-A wide table, 25 masked columns, where masking sets the pace. Rust masks on one core or on all of them (`BAUTA_MASKING_THREADS`):
+A wide table, 25 masked columns, where masking sets the pace. Rust masks on one core or on the half of them `auto` takes (`BAUTA_MASKING_THREADS`):
 
 ```
 Wide table: 1,000,000 rows, 25 masked columns
-                               seconds   rows a second     vs first
-Rust, in turn                     40.0          24,973         1.0x
-Rust, overlapped                  33.7          29,671         1.2x
-Rust, in turn, all cores          18.1          55,307         2.2x
-Rust, overlapped, all cores       12.7          78,913         3.2x
+                                 seconds   rows a second     vs first
+Rust, in turn                       39.2          25,519         1.0x
+Rust, overlapped                    32.6          30,691         1.2x
+Rust, in turn, auto threads         15.5          64,612         2.5x
+Rust, overlapped, auto threads       9.4         106,080         4.2x
 ```
 
-Ten cores, an M1 Pro. Overlapping gains little for Python, whose masking leaves no wait worth hiding, and more for Rust. The narrow table runs on one core only: its time goes to writing the database, which more cores don't speed up. Against a remote database, where each round trip is a real wait, overlapping gains more still.
+Ten cores, an M1 Pro, where `auto` masks on five. Overlapping gains little for Python, whose masking leaves no wait worth hiding, and more for Rust. The narrow table runs on one core only: its time goes to writing the database, which more cores don't speed up. Against a remote database, where each round trip is a real wait, overlapping gains more still.
 
 The Rust extension is optional. Without it, the demo runs the two Python runs and says how to install it: with Rust 1.83 or newer, `pip install ./mask-rs/py` from the repository root. One run at a time: each empties `transaction/` first, so a second refuses to start while one is running.
 

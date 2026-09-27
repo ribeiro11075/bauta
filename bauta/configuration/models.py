@@ -619,8 +619,8 @@ class DataJobsFile(BaseModel):
     history: Optional[StorageLocation] = None
     manifest: Optional[StorageLocation] = None
     # Threads the native masker spreads each job's chunks over: one by default,
-    # a number up to the cores available, or `auto`, which shares the cores as
-    # each job starts with the jobs running alongside it. See
+    # a number up to the cores available, or `auto`, which shares half the cores
+    # as each job starts with the jobs running alongside it. See
     # masking.maskingThreadsFor and runner._runCycle.
     maskingThreads: Union[Literal['auto'], Annotated[int, Field(ge=1)]] = 1
     # Tables no job copies, on purpose: connection alias -> table -> why. What

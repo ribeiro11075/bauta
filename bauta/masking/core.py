@@ -88,6 +88,14 @@ def _nativeModule() -> Any:
     return bauta_rs
 
 
+def nativeExtension() -> Any:
+    """The native extension where it is in use, as nativeVersion() says, or
+    None: for the rest of the package, which uses it beyond masking.
+    """
+
+    return _nativeModule()
+
+
 def nativeVersion() -> Optional[str]:
     """The native masker's version, or None when masking runs in pure Python."""
 
@@ -143,15 +151,19 @@ def effectiveMaskingThreads(setting: Union[str, int]) -> Union[str, int]:
 
 
 def maskingThreadsFor(setting: Union[str, int], concurrentJobs: int) -> int:
-    """How many threads a job masks with: a number as it is, or for `auto` the
-    cores shared out between `concurrentJobs` -- a starting job and the ones
-    running alongside it. BAUTA_MASKING_THREADS overrides the setting, which is
-    checked by effectiveMaskingThreads.
+    """How many threads a job masks with: a number as it is, or for `auto` half
+    the cores, shared out between `concurrentJobs` -- a starting job and the
+    ones running alongside it. BAUTA_MASKING_THREADS overrides the setting,
+    which is checked by effectiveMaskingThreads.
+
+    Half, because masking only has to keep up with the job's reading and
+    writing, which need cores of their own: a wide table on ten cores copied
+    as fast with four masking threads as with six or eight, and slower with ten.
     """
 
     setting = effectiveMaskingThreads(setting)
     if setting == 'auto':
-        return max(1, availableCores() // max(1, concurrentJobs))
+        return max(1, availableCores() // 2 // max(1, concurrentJobs))
 
     return int(setting)
 
@@ -445,14 +457,20 @@ class Strategy:
         masked, problems = self._native.maskColumn(values)
 
         for index in sorted(problems):
-            problem = problems[index]
-            if problem == _NATIVE_FALLBACK:
-                value = values[index]
-                masked[index] = None if value is None else self.mask(value)
-            else:
-                raise MaskingError(problem[1])
+            masked[index] = self._finishNatively(values[index], problems[index])
 
         return masked
+
+
+    def _finishNatively(self, value: Any, problem: Any) -> Any:
+        """A value the extension handed back: masked here, or refused with the
+        extension's message.
+        """
+
+        if problem == _NATIVE_FALLBACK:
+            return None if value is None else self.mask(value)
+
+        raise MaskingError(problem[1])
 
 
     def _maskRemembered(self, value: Any) -> Any:
@@ -659,6 +677,12 @@ class BoundMasking:
         # and past that once a third or more of them are masked.
         width = len(self.strategies)
         self._transposeToSplice = width <= 20 or 3 * len(self._maskedIndexes) >= width
+        # The extension's masker for each column it masks with the rest of the
+        # chunk, in one call; None for a column kept, or masked in Python. A
+        # strategy that masks its column its own way keeps doing so.
+        self._natives = [strategy._native if not strategy.PASSTHROUGH and type(strategy).maskColumn is Strategy.maskColumn else None
+                         for strategy in self.strategies]
+        self._chunkNatively = any(native is not None for native in self._natives)
 
 
     def _maskColumn(self, index: int, values: Sequence[Any], chunkIndex: int) -> List[Any]:
@@ -689,6 +713,9 @@ class BoundMasking:
             raise MaskingError('the policy covers {} column(s) and these rows have {}; a bound plan is applied to the rows of the '
                                'query it was bound to'.format(len(self.strategies), len(rows[0])))
 
+        if self._chunkNatively:
+            return self._applyNatively(rows, chunkIndex)
+
         if self._transposeToSplice:
             # Rows rebuilt from columns in C, each column masked as the
             # transpose yields it.
@@ -707,6 +734,47 @@ class BoundMasking:
             spliced.append(tuple(values))
 
         return spliced
+
+
+    def _applyNatively(self, rows: Sequence[Tuple[Any, ...]], chunkIndex: int) -> List[Tuple[Any, ...]]:
+        """The chunk through the extension in one call, every column it covers
+        masked at once. Python then goes through the columns in read order,
+        finishing the values the extension handed back and masking the columns
+        it doesn't cover, so the first bad value raises as it would column by
+        column.
+        """
+
+        masked, problems = _nativeModule().maskChunk(self._natives, rows)
+
+        # In row order, so each column's come out in row order too.
+        handedBack: Dict[int, List[Tuple[int, Any]]] = {}
+        for index, position, problem in problems:
+            handedBack.setdefault(index, []).append((position, problem))
+
+        columns: Dict[int, List[Any]] = {}
+        finished: Dict[int, List[Tuple[int, Any]]] = {}
+        for index in self._maskedIndexes:
+            if self._natives[index] is None:
+                columns[index] = self._maskColumn(index, [row[index] for row in rows], chunkIndex)
+                continue
+            for position, problem in handedBack.get(index, ()):
+                try:
+                    value = self.strategies[index]._finishNatively(rows[position][index], problem)
+                except MaskingError as error:
+                    raise MaskingError('column "{}": {}'.format(self.manifest[index].column, error)) from None
+                finished.setdefault(position, []).append((index, value))
+
+        if columns or finished:
+            # Every row when Python masked a column, else only those it finished.
+            for position in (range(len(masked)) if columns else sorted(finished)):
+                values = list(masked[position])
+                for index, column in columns.items():
+                    values[index] = column[position]
+                for index, value in finished.get(position, ()):
+                    values[index] = value
+                masked[position] = tuple(values)
+
+        return masked
 
 
 def buildMaskingManifest(outcomes: Sequence[Any], declared: Mapping[str, Mapping[str, Any]],

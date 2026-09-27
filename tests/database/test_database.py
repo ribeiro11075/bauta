@@ -26,6 +26,7 @@ def _mockedDatabase(dbType: DatabaseType) -> Database:
     database._streams = set()
     database.columnNameCache = {}
     database.columnTypeCache = {}
+    database._preparers = {}
     database.getAllColumnNames = MagicMock(return_value=['id', 'name'])
     database.getPrimaryColumnNames = MagicMock(return_value=['id'])
 

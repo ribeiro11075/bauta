@@ -4,10 +4,13 @@
 //! dependency. Keeping the boundary thin is what lets the constructions be
 //! tested without an interpreter.
 //!
-//! One call per column rather than per value. The interpreter is entered once
-//! for the batch, and the work between the conversions runs with the GIL
-//! released -- which is what lets a masking thread overlap with a reader and a
-//! writer, and spread a chunk's values over several cores (`setThreads`).
+//! One call per chunk rather than per value (`maskChunk`), or per column
+//! (`Masker.maskColumn`). The interpreter is entered once for the batch, and
+//! the work between the conversions runs with the GIL released -- which is
+//! what lets a masking thread overlap with a reader and a writer, and spread a
+//! chunk over several cores (`setThreads`). A chunk's columns are masked at
+//! once: called column by column, each column's own bookkeeping ran on one
+//! thread while the rest waited, and the GIL changed hands after every column.
 //! Every mask depends on its value alone, so neither the thread count nor the
 //! cache changes a result: only how soon it arrives.
 //!
@@ -25,7 +28,7 @@ use rayon::prelude::*;
 use num_bigint::BigInt;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods, PyList, PyListMethods, PyString, PyTuple, PyTupleMethods};
+use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods, PyFloat, PyInt, PyList, PyListMethods, PyString, PyTuple, PyTupleMethods, PyType};
 
 use bauta_core::cheap;
 use bauta_core::{Charset, FakeKind, FakeLists, FakeStrategy, FpeStrategy, KeyStrategy, KeyedHash, MaskError, NumberInput, NumberOutput, NumberStrategy};
@@ -257,8 +260,9 @@ enum Source {
 }
 
 /// One column's masker: the key, the domain and the strategy, built once and
-/// called per chunk.
-#[pyclass]
+/// called per chunk. Frozen, so `maskChunk` can reach it with the GIL
+/// released: nothing in it changes but the cache, behind its own lock.
+#[pyclass(frozen)]
 struct Masker {
     hash: KeyedHash,
     strategy: Strategy,
@@ -404,32 +408,132 @@ impl Masker {
         let masked = PyList::empty(py);
         let problems = PyDict::new(py);
         for (index, output) in outputs.into_iter().enumerate() {
-            match output {
-                Output::Null => masked.append(py.None())?,
-                // Back through the C API where it fits, for the reason convert gives.
-                Output::Int(number) => match i64::try_from(&number) {
-                    Ok(small) => masked.append(small)?,
-                    Err(_) => masked.append(number)?,
-                },
-                Output::Text(text) => masked.append(text)?,
-                Output::Float(number) => masked.append(number)?,
-                Output::Decimal(text) => match decimal {
-                    Some(decimal) => masked.append(decimal.call1((text,))?)?,
-                    None => unreachable!("only a number column returns a Decimal"),
-                },
-                Output::Fallback => {
-                    masked.append(py.None())?;
-                    problems.set_item(index, FALLBACK)?;
-                }
-                Output::Refused(message) => {
-                    masked.append(py.None())?;
-                    problems.set_item(index, (REFUSED, message))?;
-                }
+            match &output {
+                Output::Fallback => problems.set_item(index, FALLBACK)?,
+                Output::Refused(message) => problems.set_item(index, (REFUSED, message))?,
+                _ => {}
             }
+            masked.append(toPython(py, &output, decimal)?)?;
         }
 
         Ok((masked, problems))
     }
+}
+
+/// An output as Python knows it, and None where the Python layer finishes the
+/// position. `decimal` is `decimal.Decimal` for a `number` column.
+fn toPython<'py>(py: Python<'py>, output: &Output, decimal: Option<&Bound<'py, PyAny>>) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match output {
+        // Back through the C API where it fits, for the reason convert gives.
+        Output::Int(number) => match i64::try_from(number) {
+            Ok(small) => small.into_pyobject(py)?.into_any(),
+            Err(_) => number.into_pyobject(py)?.into_any(),
+        },
+        Output::Text(text) => PyString::new(py, text).into_any(),
+        Output::Float(number) => PyFloat::new(py, *number).into_any(),
+        Output::Decimal(text) => match decimal {
+            Some(decimal) => decimal.call1((text.as_str(),))?,
+            None => unreachable!("only a number column returns a Decimal"),
+        },
+        Output::Null | Output::Fallback | Output::Refused(_) => py.None().into_bound(py),
+    })
+}
+
+/// Masks a chunk: `rows` is a sequence of rows, and `maskers` has one entry per
+/// column, None for a column carried through as it is.
+///
+/// Returns `(rows, problems)`: the rows as tuples, and `problems` a list of
+/// `(column, row, FALLBACK or (REFUSED, message))` in row order, each such
+/// position None in `rows`. The caller finishes them column by column, each
+/// column in row order, so the refusal Python would have raised first still
+/// raises first.
+///
+/// The GIL is held to read the rows and to build the result, and released once
+/// between, while every masked column is masked at once across the pool. What
+/// Rust allocated is freed without it: the inputs once masked, the outputs on a
+/// thread of their own once turned into Python objects. Freeing tens of
+/// millions of strings a job is otherwise a quarter of the time the GIL is held.
+#[pyfunction]
+fn maskChunk<'py>(py: Python<'py>, maskers: Vec<Option<Py<Masker>>>, rows: &Bound<'py, PyAny>) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
+    let width = maskers.len();
+    let decimal = py.import("decimal")?.getattr("Decimal")?;
+    let decimals: Vec<Option<&Bound<'py, PyAny>>> = maskers
+        .iter()
+        .map(|masker| match masker {
+            Some(masker) if matches!(masker.get().strategy, Strategy::Number(_)) => Some(&decimal),
+            _ => None,
+        })
+        .collect();
+
+    // Rows as tuples, which the result reuses for the columns carried through;
+    // a row of another kind is copied into one.
+    let mut originals: Vec<Bound<'py, PyTuple>> = Vec::with_capacity(rows.len().unwrap_or(0));
+    let mut inputs: Vec<Vec<Input>> = maskers.iter().map(|_| Vec::with_capacity(originals.capacity())).collect();
+    let mut read = |row: Bound<'py, PyAny>| -> PyResult<()> {
+        let row = match row.cast::<PyTuple>() {
+            Ok(tuple) => tuple.clone(),
+            Err(_) => PyTuple::new(py, row.try_iter()?.collect::<PyResult<Vec<_>>>()?)?,
+        };
+        if row.len() != width {
+            return Err(PyValueError::new_err(format!("the policy covers {width} column(s) and a row has {}", row.len())));
+        }
+        for (index, masker) in maskers.iter().enumerate() {
+            if masker.is_some() {
+                inputs[index].push(convert(&row.get_item(index)?, decimals[index])?);
+            }
+        }
+        originals.push(row);
+        Ok(())
+    };
+    // A list walked by its own iterator, as maskColumn explains.
+    if let Ok(list) = rows.cast::<PyList>() {
+        for row in list.iter() {
+            read(row)?;
+        }
+    } else {
+        for row in rows.try_iter()? {
+            read(row?)?;
+        }
+    }
+
+    let outputs: Vec<Vec<Output>> = py.detach(|| {
+        let mask = |(masker, inputs): (&Option<Py<Masker>>, &Vec<Input>)| match masker {
+            Some(masker) => masker.get().maskInputs(inputs),
+            None => Vec::new(),
+        };
+        let pool = POOL.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let outputs = match pool {
+            // Nested in the pool: each column's own values spread over it too.
+            Some(pool) => pool.install(|| maskers.par_iter().zip(inputs.par_iter()).map(mask).collect()),
+            None => maskers.iter().zip(inputs.iter()).map(mask).collect(),
+        };
+        drop(std::mem::take(&mut inputs));
+        outputs
+    });
+
+    let problems = PyList::empty(py);
+    let mut columns: Vec<std::slice::Iter<Output>> = outputs.iter().map(|column| column.iter()).collect();
+    let mut masked: Vec<Bound<'py, PyTuple>> = Vec::with_capacity(originals.len());
+    let mut values: Vec<Bound<'py, PyAny>> = Vec::with_capacity(width);
+    for (position, row) in originals.iter().enumerate() {
+        for index in 0..width {
+            if maskers[index].is_none() {
+                values.push(row.get_item(index)?);
+                continue;
+            }
+            let output = columns[index].next().expect("one output per input");
+            match output {
+                Output::Fallback => problems.append((index, position, FALLBACK))?,
+                Output::Refused(message) => problems.append((index, position, (REFUSED, message.as_str())))?,
+                _ => {}
+            }
+            values.push(toPython(py, output, decimals[index])?);
+        }
+        masked.push(PyTuple::new(py, values.drain(..))?);
+    }
+    std::thread::spawn(move || drop(outputs));
+
+    Ok((PyList::new(py, masked)?, problems))
 }
 
 impl Masker {
@@ -499,6 +603,53 @@ fn availableCores() -> usize {
     std::thread::available_parallelism().map(|cores| cores.get()).unwrap_or(1)
 }
 
+/// Each column's exact types, and whether its ints all fit in 64 bits.
+type ColumnKinds<'py> = (Vec<Vec<Bound<'py, PyType>>>, Vec<bool>);
+
+/// What a load needs to know of a chunk before sending it to a database, in
+/// one pass: each column's distinct exact types, in the order first met, and
+/// whether every exact `int` in it fits in 64 bits. None where `rows` isn't a
+/// list of tuples of one width, which the Python layer then reads itself.
+///
+/// Not masking, but the same per-value walk the GIL makes slow in Python:
+/// `bauta.database.values.ValuePreparer` finds the columns a driver takes
+/// differently from these.
+#[pyfunction]
+fn columnKinds<'py>(py: Python<'py>, rows: &Bound<'py, PyAny>) -> PyResult<Option<ColumnKinds<'py>>> {
+    let Ok(rows) = rows.cast::<PyList>() else {
+        return Ok(None);
+    };
+    // Types told apart by address, which costs no reference count; a type is
+    // taken as an object only the first time a column meets it.
+    let int = py.get_type::<PyInt>().as_type_ptr();
+    let mut kinds: Vec<Vec<(*mut pyo3::ffi::PyTypeObject, Bound<'py, PyType>)>> = Vec::new();
+    let mut fits: Vec<bool> = Vec::new();
+
+    for (position, row) in rows.iter().enumerate() {
+        let Ok(row) = row.cast::<PyTuple>() else {
+            return Ok(None);
+        };
+        if position == 0 {
+            kinds = (0..row.len()).map(|_| Vec::new()).collect();
+            fits = vec![true; row.len()];
+        } else if row.len() != kinds.len() {
+            return Ok(None);
+        }
+        for (index, value) in row.iter().enumerate() {
+            let kind = value.get_type_ptr();
+            // Exactly int: a bool, or an IntEnum, is another kind.
+            if fits[index] && kind == int && value.extract::<i64>().is_err() {
+                fits[index] = false;
+            }
+            if !kinds[index].iter().any(|(known, _)| *known == kind) {
+                kinds[index].push((kind, value.get_type()));
+            }
+        }
+    }
+
+    Ok(Some((kinds.into_iter().map(|column| column.into_iter().map(|(_, kind)| kind).collect()).collect(), fits)))
+}
+
 /// How many threads mask a chunk in this process, 1 for the calling thread
 /// alone. Results are the same for any count.
 #[pyfunction]
@@ -533,6 +684,8 @@ fn bauta_rs(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("FALLBACK", FALLBACK)?;
     module.add("REFUSED", REFUSED)?;
     module.add_class::<Masker>()?;
+    module.add_function(wrap_pyfunction!(maskChunk, module)?)?;
+    module.add_function(wrap_pyfunction!(columnKinds, module)?)?;
     module.add_function(wrap_pyfunction!(availableCores, module)?)?;
     module.add_function(wrap_pyfunction!(setThreads, module)?)?;
     module.add_function(wrap_pyfunction!(threads, module)?)?;
