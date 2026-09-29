@@ -1,5 +1,5 @@
 """How a table or column name is read, quoted and folded, the same way on
-all seven databases. See "How names are written" in docs/design.md.
+all seven databases. See "How names are written" in docs/concepts/how-it-works.md.
 """
 from __future__ import annotations
 

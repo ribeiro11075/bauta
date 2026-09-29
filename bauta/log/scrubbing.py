@@ -4,7 +4,7 @@ Drivers quote the values a statement choked on, which may be unmasked
 production values, and those messages reach logs, history and webhooks. Each
 pattern matches a format seen from a real server and replaces only the value,
 keeping which constraint or column failed. Unlisted formats pass through; see
-docs/security.md. Where a server quotes the statement itself, the whole quote
+docs/concepts/security.md. Where a server quotes the statement itself, the whole quote
 goes, since values can't be told from the SQL around them.
 
 SQL Server's messages arrive as the repr of pymssql's (code, bytes) tuple, on

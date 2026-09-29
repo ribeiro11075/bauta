@@ -1,4 +1,4 @@
-"""Keeps benchmarks/masking.py, which docs/masking.md's speed figures come
+"""Keeps benchmarks/masking.py, which docs/guides/make-it-faster.md's speed figures come
 from, from rotting: every policy and every masker on a small table, each
 copy of the second policy required identical.
 """

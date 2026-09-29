@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{#- A label saying what kind of page this is, from the section it's in -#}
+{% block content %}
+  {% set kinds = {"get-started": "Get started", "guides": "Guide", "reference": "Reference", "concepts": "Concept", "project": "Project"} %}
+  {% set section = page.file.src_uri.split("/")[0] %}
+  {% set command = page.file.src_uri.startswith("reference/commands/") and not page.file.src_uri.endswith("index.md") %}
+  {% if section in kinds %}
+    <div class="bauta-kind">
+      <span class="bauta-kind__label bauta-kind__label--{{ section }}">{{ kinds[section] }}</span>
+      {% if command %}
+        <span class="bauta-kind__generated">Options generated from <code>bauta {{ page.file.name }} --help</code></span>
+      {% endif %}
+    </div>
+  {% endif %}
+  {{ super() }}
+{% endblock %}
+
+{#- Shown by mike's version selector on any version but the latest -#}
+{% block outdated %}
+  You're reading the documentation for an older release of bauta.
+  <a href="{{ '../' ~ base_url }}"><strong>Go to the latest release.</strong></a>
+{% endblock %}

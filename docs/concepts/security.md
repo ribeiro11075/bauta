@@ -1,6 +1,6 @@
 # Security model
 
-What Bauta protects, how, and what it does not. Written for the security or privacy reviewer deciding whether masked copies made with it are fit for a purpose. For how to configure masking, see [masking.md](masking.md).
+What Bauta protects, how, and what it does not. Written for the security or privacy reviewer deciding whether masked copies made with it are fit for a purpose. For how to configure masking, see [masking.md](../guides/mask-a-table.md).
 
 - [Summary](#summary)
 - [What is protected, and from whom](#what-is-protected-and-from-whom)
@@ -45,8 +45,8 @@ production --(TLS, if configured)--> job process memory --(masked)--> target sta
 - **In memory only.** A job streams rows a chunk at a time (`chunkSize`), transforms them, masks them, and only then writes them. Unmasked rows are never written to the target, not even to its stage table.
 - **Logs and errors.** Masking errors name the column and the value's type, never the value. Transform errors do the same and drop the transformer's own message, which often quotes the value. Run history, the manifest and notifications carry job names, counts and error text.
 - **Driver errors are scrubbed.** Every server but SQLite quotes data in its error messages: the duplicate key, the text that wasn't a number, the row that broke a constraint, and PostgreSQL's `COPY` context lines. When the failing statement is a `sourceQuery`, those are production values that were never masked. Before an error reaches a log, a traceback, run history, a notification or an `audit` report, each quoted value is replaced with `<redacted>`, keeping the rest of the message (which constraint, which column). The patterns cover the messages PostgreSQL 16, MySQL 8.4, MariaDB 11, Oracle 23ai and SQL Server 2022 were seen to write for constraint, conversion and truncation failures, including values containing quotes and newlines, and the integration suite checks them against those servers. Where a server quotes the statement around an error (PostgreSQL's `LINE 1:`, MySQL's `near '...'`), the whole quote is removed, since drivers write values into statement text. **A message in a format not covered passes through unchanged**, and some drivers can also log through their own loggers, outside the package's.
-- **Process boundaries.** Job processes send log records and outcomes to the main process over private pipes; neither carries row data. [Masking threads](masking.md#masking-threads) run inside the job's own process and share its memory, so masking on several cores moves no data anywhere new.
-- **Transport.** Connections are encrypted only if configured to be (see [driver options and TLS](configuration.md#driver-options-and-tls)). `run --dry-run` and `audit --connect` report what each server says about its connection, and `audit` warns when a masked job reads over an unencrypted one.
+- **Process boundaries.** Job processes send log records and outcomes to the main process over private pipes; neither carries row data. [Masking threads](../guides/make-it-faster.md#masking-threads) run inside the job's own process and share its memory, so masking on several cores moves no data anywhere new.
+- **Transport.** Connections are encrypted only if configured to be (see [driver options and TLS](../reference/connections.md#driver-options-and-tls)). `run --dry-run` and `audit --connect` report what each server says about its connection, and `audit` warns when a masked job reads over an unencrypted one.
 
 
 ## The masking constructions
@@ -78,7 +78,7 @@ expand(m, n, p) = digest(m, p || "#" || counter), counter = 0, 1, ...   truncate
 
 ### Two implementations
 
-The same constructions exist twice: in Python, and in the optional `bauta-rs` extension, which computes them in Rust several times faster (see [the native masker](masking.md#the-native-masker)). Which one ran is recorded in the manifest as `maskedBy`.
+The same constructions exist twice: in Python, and in the optional `bauta-rs` extension, which computes them in Rust several times faster (see [the native masker](../guides/make-it-faster.md#the-native-masker)). Which one ran is recorded in the manifest as `maskedBy`.
 
 **They are required to agree byte for byte.** A difference would not present as a wrong answer. It would present as a changed key: masks that no longer match the ones already in a target, joins that silently stop matching, an incremental job writing rows its earlier rows can't be linked to. The key fingerprint would not change, because the key did not.
 
@@ -121,15 +121,15 @@ Four checks stand between production and an unmasked copy, from the narrowest to
 | --- | --- | --- |
 | **Every column must be covered** | A column the query returns that the policy doesn't name — including one production gained since the policy was written | The job fails before writing anything |
 | **`audit --connect --strict`** | A job with no masking policy, a kept column that looks personal, references that stop matching once masked | Offline in CI, exit 1 |
-| **[`bauta coverage`](masking.md#coverage-what-the-jobs-do-not-cover)** | A table in production that **no job reads at all**, which `audit` cannot see, because a table with no job has nothing to audit | Exit 1 on anything uncovered |
-| **[`requireMasking`](configuration.md#requiring-masking)** | Any job reading from or writing to that database without a masking policy | `bauta validate`, before anything connects |
+| **[`bauta coverage`](../guides/prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover)** | A table in production that **no job reads at all**, which `audit` cannot see, because a table with no job has nothing to audit | Exit 1 on anything uncovered |
+| **[`requireMasking`](../reference/connections.md#requiring-masking)** | Any job reading from or writing to that database without a masking policy | `bauta validate`, before anything connects |
 
 The first three can be argued with; the fourth cannot. `requireMasking: true` on a target alias is the statement that **this database can only ever hold masked data**, and nothing overrides it — not a job's own `unmasked: true`, which records a reviewed decision about one job, and not a declaration in `acknowledged`.
 
 Both of those exist so that a deliberate exception is written down rather than inferred from silence:
 
-- **[`unmasked: true`](configuration.md#copying-without-masking)** on a job says its rows were reviewed and are copied as they stand. Without it, `audit` reports every unmasked job. A column that still looks like personal data is reported either way.
-- **[`acknowledged`](configuration.md#acknowledged)** in `jobs.yaml` says a table is deliberately not copied, and why. `coverage` fails on any table that is neither copied nor declared, and reports a declaration for a table the database no longer has.
+- **[`unmasked: true`](../reference/jobs.md#copying-without-masking)** on a job says its rows were reviewed and are copied as they stand. Without it, `audit` reports every unmasked job. A column that still looks like personal data is reported either way.
+- **[`acknowledged`](../reference/jobs.md#acknowledged)** in `jobs.yaml` says a table is deliberately not copied, and why. `coverage` fails on any table that is neither copied nor declared, and reports a declaration for a table the database no longer has.
 
 **The watermark is not a way around masking.** It is read before masking and kept in run state and logs, so a `watermarkColumn` the policy masks, whether it names the column or leaves it to `defaultStrategy`, is refused by `validate` and again by `run`.
 
@@ -143,7 +143,7 @@ What none of this checks: whether the *strategy* chosen for a column is strong e
 - **Strength.** Keys must be at least 16 characters; that's a floor, not a recommendation. The key is used as HMAC key material directly, with no password-stretching, so **a guessable key can be found offline** by anyone holding one real/masked pair or a key fingerprint. Use a random key of 32 bytes or more: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 - **Fingerprints.** Logs, manifests and `audit` show a key fingerprint: the first 48 bits of `HMAC-SHA256(K, fixed text)`. It identifies which key was used without revealing it, provided the key is strong; it is exactly the kind of known pair that makes a weak key searchable.
 - **Storage.** Read keys from the environment or a mounted file (`${MASKING_KEY}`, `${file:/run/secrets/masking-key}`); never commit them. Keys are held as secrets in the configuration model, so they don't appear in its `repr`, logs or tracebacks.
-- **Rotation.** A new key changes every mask. Masked upsert jobs refuse to run when their key has changed until the change is acknowledged, since their targets would otherwise mix masks from two keys. See [the key](masking.md#the-key).
+- **Rotation.** A new key changes every mask. Masked upsert jobs refuse to run when their key has changed until the change is acknowledged, since their targets would otherwise mix masks from two keys. See [the key](../guides/mask-a-table.md#the-key).
 - **Implementation.** Each masked job also records which implementation masked it; a change is warned about, not refused. See [two implementations](#two-implementations).
 - **Separation.** Use different keys for copies that must not be linkable to each other, and a separate key, never a masking key, to sign manifests.
 
@@ -184,7 +184,7 @@ Keep the configuration directory writable only by the people who may run jobs ag
 - **Access control** on the copies, and their retention and deletion.
 - **Protection from someone who holds the key**, production access, or the machine running the jobs.
 - **Side channels** such as timing, and the security of the database servers and drivers themselves.
-- **Hard deletes** in production reaching incremental copies (see [deletes](design.md#deletes)): a deleted person stays in the copy until it's refreshed in full.
+- **Hard deletes** in production reaching incremental copies (see [deletes](how-it-works.md#deletes)): a deleted person stays in the copy until it's refreshed in full.
 
 
 ## Checklist for a deployment

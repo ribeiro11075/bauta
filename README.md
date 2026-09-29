@@ -17,6 +17,19 @@
 - **No infrastructure:** a `pip install`, some YAML, and a command you run from cron.
 
 
+## Documentation
+
+**[ribeiro11075.github.io/bauta](https://ribeiro11075.github.io/bauta/)**, for the release you have installed, or read it here in [`docs/`](docs):
+
+| Start with | For |
+| --- | --- |
+| [Install](docs/get-started/install.md) and [Quickstart](docs/get-started/quickstart.md) | the drivers, the native masker, and a first run |
+| [Guides](docs/guides/mask-a-table.md) | one task each: masking a table, keeping joins, subsets, proving the copy safe, running it on a schedule |
+| [Reference](docs/reference/configuration.md) | every file, field, strategy and [command](docs/reference/commands/index.md) |
+| [How it works](docs/concepts/how-it-works.md) and the [security model](docs/concepts/security.md) | the design, and what masking protects and what it doesn't |
+| [Changelog](CHANGELOG.md) | what changed in each release, breaking changes first |
+
+
 ## Install
 
 Python 3.10 or newer. Choose the drivers you need as extras; each is loaded only when a connection uses it.
@@ -25,26 +38,12 @@ Python 3.10 or newer. Choose the drivers you need as extras; each is loaded only
 pip install "bauta[postgresql,oracle]"
 ```
 
-| Extra | Installs | Needs besides pip |
-| --- | --- | --- |
-| `mysql`, `mariadb` | mysql-connector-python | nothing |
-| `postgresql` | psycopg 3, with its own libpq | nothing |
-| `oracle` | oracledb, in thin mode | nothing — no Oracle client |
-| `mssql` | pymssql | nothing |
-| `sqlite` | Python's own `sqlite3` | nothing |
-| `duckdb` | duckdb, with pyarrow for fast loads | nothing; one process at a time per file, see [DuckDB](docs/configuration.md#duckdb) |
-| `files` | pyarrow, to write Parquet, CSV and JSON Lines, locally or to S3, GCS or Azure | nothing; see [files](docs/configuration.md#files) |
-| `iceberg` | pyiceberg, with its Glue and SQL catalogs | nothing; see [Iceberg](docs/configuration.md#iceberg) |
-| `fpe` | cryptography, for the `fpe` masking strategy | nothing; `oracle` already brings it |
-| `native` | `bauta-rs`, the native masker (below) | nothing on Linux (x86-64, ARM) or macOS; elsewhere, [Rust](https://rustup.rs) 1.83 or newer |
-| `all` | every driver above | nothing |
-
-**The native masker (optional).** `bauta-rs` masks in Rust: about ten times the throughput on one core, with identical masks. It can also mask on several cores: `jobs.yaml`'s `maskingThreads` is `1` by default, a number up to the cores available, or `auto` to divide half the cores between the jobs running (see [masking threads](docs/masking.md#masking-threads)). `pip install "bauta[postgresql,native]"` installs the version that matches, which is the only one Bauta uses. Without it, everything works, only slower. See [the native masker](docs/masking.md#the-native-masker).
+[Install](docs/get-started/install.md) lists every extra, and the optional native masker, which masks about ten times as fast.
 
 
 ## Quickstart
 
-Start from the configuration in [`example/starter/configuration/`](example/starter/configuration/), from a clone or downloaded from GitHub:
+Start from the configuration in [`example/starter/configuration/`](example/starter/configuration), from a clone or downloaded from GitHub:
 
 ```
 mkdir configuration
@@ -105,108 +104,8 @@ bauta --version          print the version, and which masker it would use
 
 `run` makes one pass and exits, so it fits under cron or a Kubernetes CronJob. A second `run` sharing the same run state refuses to start while the first is still going. `bauta <command> --help` lists every flag.
 
-### Configuration and logging
 
-Every command takes these.
-
-| Flag | Default | Effect |
-| --- | --- | --- |
-| `--config DIR` | `$BAUTA_CONFIG`, else `./configuration` | Read `jobs.yaml` and `connections.yaml` from this directory. |
-| `--log FILE` | none | Also write logs to this file. |
-| `--log-format json` | `text` | Write one JSON object per log line, for a collector. |
-| `--quiet` | off | Don't log to stderr. |
-
-### Running jobs
-
-| Flag | Default | Effect |
-| --- | --- | --- |
-| `--job NAME` | every job | Run only this job, ignoring its `refresh` window. Its predecessors don't run; `run` warns about each. Repeatable. |
-| `--force` | off | Ignore every job's `refresh` window. |
-| `--forever` | off | Keep running cycles instead of exiting after one. For freshness under cron's one-minute floor. |
-| `--dry-run` | off | Check connections, target tables, primary keys and masking coverage, moving no rows. |
-| `--accept-key-change` | off | Run upsert jobs whose masking key changed since their last run. Refused where the policy masks the target's primary key; see [rotating the masking key](docs/operations.md#rotating-the-masking-key). |
-| `--notify-url URL` | `$BAUTA_NOTIFY_URL` | Post a JSON summary to this webhook when a cycle doesn't succeed. |
-
-### Run state, history and the manifest
-
-Each is kept in a file or in a database table, set in [`jobs.yaml`](docs/configuration.md#file-level) or overridden for one run by its flags. A file set in `jobs.yaml` is relative to `jobs.yaml`; a file flag is relative to the working directory.
-
-| What | `jobs.yaml` setting | File | Table | Without either |
-| --- | --- | --- | --- | --- |
-| **Run state**: last runs, watermarks and key fingerprints | `memory` | `--memory FILE` | `--memory-connection ALIAS`, `--memory-table NAME` | `memory.yaml` beside `jobs.yaml` |
-| **History**: one record per job per cycle, for `bauta history` | `history` | `--history FILE` | `--history-connection ALIAS`, `--history-table NAME` | Not recorded. |
-| **Masking manifest**: what was masked and how, sealed, for `bauta verify-manifest` | `manifest` | `--manifest FILE` | `--manifest-connection ALIAS`, `--manifest-table NAME` | Not written. |
-
-Tables default to `bauta_memory`, `bauta_history` and `bauta_manifest`, and must exist first; [operations.md](docs/operations.md#tables) has their definitions. A manifest is signed when `$BAUTA_MANIFEST_KEY` is set.
-
-### Saying less, and saying it once
-
-A `defaults:` block in [`jobs.yaml`](docs/configuration.md#defaults) supplies what every job would otherwise repeat, so a job says only what is particular to it:
-
-```yaml
-defaults:
-  sourceConnection: prod
-  targetConnection: staging
-  insertStrategy: upsert
-  masking:
-    key: ${MASKING_KEY}
-
-jobs:
-  maskCustomers:
-    sourceQuery: select id, email from customers
-    targetTableFinal: customers
-    masking:
-      columns: {id: keep, email: email}
-```
-
-A masking policy's `columns` stays with its job, so what a job does to its data can be read in one place. Any field a file doesn't recognise is an error, so a misspelling stops `bauta validate` rather than being quietly ignored.
-
-### Proving the copy is safe
-
-| What | Where |
-| --- | --- |
-| Every column of every job is covered, and references still match once masked | `bauta audit --connect --strict` |
-| Every table in production is copied, declared, or fails the build | `bauta coverage` |
-| Nothing can ever reach this database unmasked | [`requireMasking`](docs/configuration.md#requiring-masking) on the alias |
-| This job copies as it stands, and somebody decided so | [`unmasked: true`](docs/configuration.md#copying-without-masking) on the job |
-| This table is deliberately not copied, and why | [`acknowledged`](docs/configuration.md#acknowledged) in `jobs.yaml` |
-| What was masked, how, and under which key, sealed | `bauta verify-manifest` |
-| No row in the copy points at a row that isn't there | `bauta verify-references` |
-
-### Proposing and reviewing policies
-
-`discover`, `subset --mask`, `audit` and `synthesize` recognise personal data by built-in rules, and by rules of your own:
-
-| Flag | Default | Effect |
-| --- | --- | --- |
-| `--rules FILE` | `discovery.yaml` in the configuration directory, if there is one | Check these rules before the built-in ones. See [your own rules](docs/masking.md#your-own-rules-discoveryyaml). |
-
-`discover` takes `--all-tables` for a whole database instead of a repeated `--table`, and `discover`/`subset` take `--mask-keys` to mask numeric surrogate keys as well as text ones, in the domain each foreign key already shares.
-
-### Environment variables
-
-The ones you'd set in a deployment; [operations.md](docs/operations.md#environment-variables) also lists two for diagnosis.
-
-| Variable | Effect |
-| --- | --- |
-| `BAUTA_CONFIG` | The configuration directory, when `--config` isn't given. |
-| `BAUTA_NOTIFY_URL` | The webhook, when `--notify-url` isn't given. |
-| `BAUTA_MANIFEST_KEY` | Sign manifests, and verify their signatures. |
-| `BAUTA_MASKING_THREADS` | Threads the native masker uses per job: a number or `auto`. Overrides `jobs.yaml`'s `maskingThreads`; see [masking threads](docs/masking.md#masking-threads). |
-
-
-## Documentation
-
-| Document | Covers |
-| --- | --- |
-| [Configuration](docs/configuration.md) | every field, how credentials are read from the environment, and connection options such as TLS |
-| [Masking](docs/masking.md) | strategies, consistent masks across tables, the key, the manifest, `audit`, `discover`, `subset`, `schema`, `synthesize` and `clear` |
-| [How it works](docs/design.md) | streaming, incremental loads, retries, scheduling, and the masking design |
-| [Operating it](docs/operations.md) | run state, history and notifications |
-| [Security model](docs/security.md) | what masking protects and what it doesn't, the constructions, keys, and a deployment checklist |
-| [Library](docs/library.md) | embedding it in Python, results, memory backends |
-| [Development](docs/development.md) | running the tests, including against real databases; see also [contributing](CONTRIBUTING.md) |
-| [Changelog](CHANGELOG.md) | what changed in each release, breaking changes first |
+Every command and flag is on its own page under [commands](docs/reference/commands/index.md).
 
 
 ## Layout
@@ -225,7 +124,7 @@ The ones you'd set in a deployment; [operations.md](docs/operations.md#environme
 | `mask-rs/` | the optional native masker, in Rust — see [its README](mask-rs/README.md) |
 | `example/` | runnable demos, each with its `configuration/`, and a starter configuration — see [its README](example/README.md) |
 | `docs/` | the documentation above |
-| `tests/` | the test suite, laid out like the package; see [where the tests are](docs/development.md#where-the-tests-are) |
+| `tests/` | the test suite, laid out like the package; see [where the tests are](docs/project/development.md#where-the-tests-are) |
 
 
 ## License

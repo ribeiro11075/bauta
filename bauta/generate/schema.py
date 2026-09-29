@@ -462,7 +462,7 @@ def createStatements(sourceType: DatabaseType, targetType: DatabaseType, tables:
     A stage table cannot carry them: a key follows the table it was declared
     on, so once its parent is swapped the key checks the emptied old table and
     every row is refused, and a key to the parent's own stage table would check
-    the rows that swap displaced. See how a swap works in docs/design.md.
+    the rows that swap displaced. See how a swap works in docs/concepts/how-it-works.md.
     """
 
     order = orderParentsFirst([table.name for table in tables], [foreignKey for table in tables for foreignKey in table.foreignKeys]

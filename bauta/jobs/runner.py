@@ -1,6 +1,6 @@
 """runDataJobs: cycles of jobs, each started as soon as its predecessors
 finish and a worker slot is free, until the cycle is done or a signal
-stops it. See "Single runs, not a daemon" in docs/design.md.
+stops it. See "Single runs, not a daemon" in docs/concepts/how-it-works.md.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ SIGNAL_POLL_SECONDS = 1.0
 @contextlib.contextmanager
 def _terminationHandling() -> Generator[Dict[str, bool], None, None]:
     """Turns SIGINT/SIGTERM into a flag the run loop acts on, restoring the
-    previous handlers on the way out. See "Stopping" in docs/design.md.
+    previous handlers on the way out. See "Stopping" in docs/concepts/how-it-works.md.
 
     The handler only sets the flag: teardown inside it would run on whatever
     frame was executing, possibly inside multiprocessing. Off the main thread,
@@ -231,7 +231,7 @@ def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, Conne
                 onCycle: Optional[Callable[['RunResult'], None]] = None) -> RunResult:
     """Runs data jobs, honoring each job's `refresh` window and `predecessors`:
     one pass, or with runForever until SIGINT or SIGTERM. See "Single runs,
-    not a daemon" in docs/design.md.
+    not a daemon" in docs/concepts/how-it-works.md.
 
     `onCycle` receives each cycle's RunResult, for history or alerts;
     an exception from it is logged, not raised. A masked upsert job whose key

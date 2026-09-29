@@ -136,7 +136,7 @@ def test_a_transformer_that_needs_arguments_is_refused_without_them(name):
 def test_the_documented_list_covers_every_stock_transformer():
     from pathlib import Path
 
-    reference = (Path(__file__).resolve().parents[2] / 'docs' / 'configuration.md').read_text()
+    reference = (Path(__file__).resolve().parents[2] / 'docs' / 'reference' / 'jobs.md').read_text()
 
     assert [name for name in PUBLIC if '`{}'.format(name) not in reference] == []
 

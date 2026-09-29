@@ -8,7 +8,7 @@ jobs:
     targetConnection: demo
     # {{ watermark }} is bound as a parameter, not pasted in as text. A real
     # deployment would subtract a lookback window here -- see "Why the lookback
-    # window" in docs/design.md.
+    # window" in docs/concepts/how-it-works.md.
     sourceQuery: SELECT id, name, updatedAt FROM ordersSource WHERE updatedAt > {{ watermark }} ORDER BY updatedAt
     watermarkColumn: updatedAt
     watermarkInitial: '1970-01-01T00:00:00'

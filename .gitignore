@@ -32,3 +32,6 @@ example/*/transaction.lock
 
 # Rust build artifacts for the optional native masker
 mask-rs/target/
+
+# The documentation site, built by mkdocs
+/site/

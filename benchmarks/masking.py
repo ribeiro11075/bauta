@@ -1,4 +1,4 @@
-"""The benchmark behind docs/masking.md's speed figures.
+"""The benchmark behind docs/guides/make-it-faster.md's speed figures.
 
     python benchmarks/masking.py [--rows 1000000] [--no-python]
 
@@ -9,14 +9,14 @@ and a phone number -- and copies it into a second SQLite database once per
 run, masked, through the same pipeline `bauta run` uses. It prints:
 
     The policies, native masker on one thread, reading, masking and
-    writing overlapped (docs/masking.md, "Speed"):
+    writing overlapped (docs/guides/make-it-faster.md, "What each strategy costs"):
 
         email, two hash, three keep
         two key columns, email, two hash, digits
         two fpe columns, email, two hash, digits
         five key columns, one hash
 
-    The second policy under each masker (docs/masking.md, "The native
+    The second policy under each masker (docs/guides/make-it-faster.md, "The native
     masker"): Python, then Rust in turn, overlapped, and with maskingThreads: auto.
 
 Each run is a process of its own, since which masker is used, whether the

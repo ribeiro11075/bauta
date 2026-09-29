@@ -529,7 +529,7 @@ class FilesConnection(_Lake):
     Azure Blob Storage -- that jobs write tables of files into, one directory
     per table: `targetTableFinal` is its path under `root`. Written, never
     read: a files connection is a target only. See "Files as a target" in
-    docs/design.md.
+    docs/concepts/how-it-works.md.
 
     `fileSize` is where a part is closed and the next begun; `rowGroupSize`
     is how much of a table is held in memory, before compression, and written
@@ -639,7 +639,7 @@ _NAMESPACE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 class IcebergConnection(_Lake):
     """Iceberg tables, found through a catalog. A job's `targetTableFinal` is
     `namespace.table`, or `table` in `namespace`. Written, never read. See
-    "Iceberg tables" in docs/design.md.
+    "Iceberg tables" in docs/concepts/how-it-works.md.
 
     `warehouse` is where a table the catalog creates keeps its files -- for
     a REST catalog, what that catalog calls its warehouse, often a name. The

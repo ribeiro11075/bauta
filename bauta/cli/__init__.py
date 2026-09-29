@@ -47,7 +47,7 @@ def _addCommonArguments(parser: argparse.ArgumentParser, jobs: bool = True, memo
     if jobs and memory:
         parser.add_argument('--memory', help='path to the run-memory file (default: jobs.yaml\'s `memory`, else memory.yaml beside jobs.yaml)')
         parser.add_argument('--memory-connection', metavar='ALIAS',
-                            help='keep run memory in a table of this connection instead of a file (see docs/operations.md)')
+                            help='keep run memory in a table of this connection instead of a file (see docs/guides/run-on-a-schedule.md)')
         parser.add_argument('--memory-table', help='the run-memory table (default: jobs.yaml\'s, else bauta_memory)')
     _addLoggingArguments(parser)
 

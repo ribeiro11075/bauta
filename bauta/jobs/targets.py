@@ -73,7 +73,7 @@ class LoadTarget:
 class TableTarget(LoadTarget):
     """A table in a database, the Database already open. Each chunk commits on
     its own, so abort() has nothing to undo: what a stage-less upsert wrote
-    stays written, as "How a data job moves rows" in docs/design.md says.
+    stays written, as "How a data job moves rows" in docs/concepts/how-it-works.md says.
     """
 
     def __init__(self, database: Database, jobConfig: DataJobConfig) -> None:

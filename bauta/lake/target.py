@@ -1,5 +1,5 @@
 """A table of files -- Parquet, CSV or JSON Lines -- as a data job's target,
-on this machine or in a cloud. See "Files as a target" in docs/design.md.
+on this machine or in a cloud. See "Files as a target" in docs/concepts/how-it-works.md.
 
 A job writes its parts where no reader looks -- `_bauta_staging/<run>/`
 under the connection's root -- and publishes them once every row is

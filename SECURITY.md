@@ -10,7 +10,7 @@ You can expect an acknowledgement within three working days, and a fix or a plan
 
 ## What counts
 
-Anything that breaks a promise in the [security model](docs/security.md). For example:
+Anything that breaks a promise in the [security model](docs/concepts/security.md). For example:
 
 - an unmasked source value reaching a target table, a log line, run state, history, a manifest or an error message
 - a masking policy that `validate` or `run` accepts although it leaves a returned column uncovered

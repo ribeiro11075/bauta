@@ -70,7 +70,7 @@ class OracleDialect(DatabaseDialect):
 
     # ISO 8601 for implicit text-date conversions, so ISO text from other
     # databases, or a watermarkInitial, loads into a DATE. See "Moving values
-    # between drivers" in docs/design.md.
+    # between drivers" in docs/concepts/how-it-works.md.
     SESSION_FORMATS = ("ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS' "
                        "NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF' "
                        "NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'")

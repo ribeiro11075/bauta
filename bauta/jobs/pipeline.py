@@ -1,7 +1,7 @@
 """One data job, run to completion in its own process: rows streamed from
 the source, transformed, masked and loaded a chunk at a time, retried on a
 database error, and its success recorded in the order that keeps a crash
-safe. See "How a data job moves rows" in docs/design.md.
+safe. See "How a data job moves rows" in docs/concepts/how-it-works.md.
 """
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ def _openTarget(job: str, jobConfig: DataJobConfig, settings: ConnectionConfig) 
 
 def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], watermark: Any = None) -> JobOutcome:
     """Runs one data job to completion, raising on failure. See "How a data job
-    moves rows" in docs/design.md.
+    moves rows" in docs/concepts/how-it-works.md.
 
     Transforms and the masking policy are both checked against the query's
     columns before the first write, so a misconfigured job fails with nothing
@@ -283,7 +283,7 @@ def _noteIfMaskedValueDoesNotFit(error: Exception, job: str, table: str) -> None
 
 
 # Deterministic errors, raised by this package, that a retry can't fix.
-# Everything else is retried; see "Retries" in docs/design.md.
+# Everything else is retried; see "Retries" in docs/concepts/how-it-works.md.
 PERMANENT_ERRORS = (ConfigurationError, TransformError, TransformResolutionError, MaskingError)
 
 
@@ -317,7 +317,7 @@ def _executeWithRetries(jobConfig: DataJobConfig, job: str, attempt: Callable[[]
 def _runDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], memory: MemoryBackend) -> JobOutcome:
     """Runs one data job in a worker process, and records its success. The
     order of the records is what makes a crash safe; see "Crash safety" in
-    docs/design.md.
+    docs/concepts/how-it-works.md.
 
     Nothing is recorded for a failed job. A failure to record is logged, not
     raised: the data landed, and the cost is an earlier re-run.

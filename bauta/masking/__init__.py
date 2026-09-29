@@ -1,5 +1,5 @@
-"""Deterministic, keyed masking. See docs/masking.md for the strategies and
-docs/security.md for the constructions.
+"""Deterministic, keyed masking. See docs/reference/strategies.md for the strategies and
+docs/concepts/security.md for the constructions.
 
 `core` holds what every strategy shares -- the keyed hash, the Strategy base,
 the native masker -- and the plans that apply them. `strategies` holds the

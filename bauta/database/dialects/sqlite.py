@@ -164,7 +164,7 @@ class SQLiteDialect(_OnConflictDialect):
         table, to follow it: the swap renames the target out of the way, so
         every view on it would go on reading the stage table -- the old rows,
         emptied by the next run. Renaming the name rather than the table is
-        what a swap means; see "How a swap works" in docs/design.md.
+        what a swap means; see "How a swap works" in docs/concepts/how-it-works.md.
         """
 
         cursor.execute('PRAGMA legacy_alter_table=ON')

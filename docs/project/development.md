@@ -31,7 +31,7 @@ A connection or file left open, by the package or by a test, fails the run: `Res
 
 ## The native masker
 
-`mask-rs/` holds `bauta-rs`, the optional Rust extension: a separate distribution, so this package installs anywhere without a Rust toolchain. It is released at `bauta`'s own version, which the Cargo workspace's `version` must match; `tests/repository/test_packaging.py` checks, along with the `native` extra's pin. See [its README](../mask-rs/README.md) for the layout. Rust 1.83 or newer:
+`mask-rs/` holds `bauta-rs`, the optional Rust extension: a separate distribution, so this package installs anywhere without a Rust toolchain. It is released at `bauta`'s own version, which the Cargo workspace's `version` must match; `tests/repository/test_packaging.py` checks, along with the `native` extra's pin. See [its README](../../mask-rs/README.md) for the layout. Rust 1.83 or newer:
 
 ```
 cd mask-rs
@@ -60,7 +60,7 @@ BAUTA_NATIVE=0 pytest               # without
 
 ## Benchmarks
 
-Every throughput figure in [masking.md](masking.md#speed) and [operations.md](operations.md#throughput) comes from one script, so they can be measured again rather than trusted:
+Every throughput figure in [masking.md](../guides/make-it-faster.md#what-each-strategy-costs) and [operations.md](../guides/make-it-faster.md) comes from one script, so they can be measured again rather than trusted:
 
 ```
 python benchmarks/masking.py                  # a million rows: about four minutes, one of them the pure-Python run
@@ -123,13 +123,32 @@ COVERAGE_FILE=$PWD/.coverage pytest -m "integration or not integration" --cov
 `tests/repository/test_packaging.py` checks that `lowest.txt` matches the lower bounds and that `image.txt` is within the ranges. To raise a lower bound, change both `pyproject.toml` and `lowest.txt`. To move the pinned set to newer versions, edit the direct pins in `image.txt` and regenerate the rest with the command at its top.
 
 
+## The documentation site
+
+The site is `docs/` built with [MkDocs](https://www.mkdocs.org) and Material for MkDocs, configured in [`mkdocs.yml`](../../mkdocs.yml):
+
+```
+pip install -e ".[docs]"
+mkdocs serve             # http://127.0.0.1:8000, rebuilt on every save
+mkdocs build --strict    # what CI runs
+```
+
+- **Pages are Markdown that also reads on GitHub.** Link with relative paths, as anywhere in the repository. [`website/hooks.py`](../../website/hooks.py) turns a link out of `docs/` into a link to that file on GitHub, and shows `CHANGELOG.md`, `CONTRIBUTING.md` and `example/README.md` as pages of the site, so each has one copy.
+- **A new page goes in `mkdocs.yml`'s `nav`**, in the section its folder names: `get-started/`, `guides/` (one task each), `reference/`, `concepts/` or `project/`. A test fails on a page left out.
+- **Command pages are generated.** `docs/reference/commands/` is written from the parser by [`website/commands.py`](../../website/commands.py); after changing a flag or a command's help, run `python website/commands.py`. A test fails while the pages don't match the parser.
+- **Anchors are GitHub's**, so a heading's link is the same on the site and on GitHub. Renaming a heading breaks the links to it, which the tests and `mkdocs build --strict` both report.
+- The theme's overrides and stylesheet are in [`website/overrides/`](../../website/overrides/), and the landing page is `website/overrides/home.html`.
+
+The `docs` extra pins exact versions, like `dev`: MkDocs 2 drops the plugins and theme overrides the site depends on, so moving past 1.6 is a migration rather than an upgrade.
+
+
 ## Continuous integration and releases
 
 `.github/workflows/ci.yml` runs ruff, mypy and the default tests on every supported Python, with the newest dependency versions the ranges allow. It runs the integration suite against the `docker-compose.yml` servers twice: with `image.txt`'s versions on Python 3.14, together with the unit suite and under the coverage floor, and with the lowest versions on Python 3.10.
 
-**Actions are pinned to commits**, with the release each one is in a comment, so a tag moved in an action's repository can't change what the workflows run -- the release workflow publishes to PyPI. `dtolnay/rust-toolchain` names its toolchain with `toolchain: stable`, since it otherwise reads it from the ref, which a commit no longer spells. [Dependabot](../.github/dependabot.yml) proposes updates weekly for the actions, `pyproject.toml` and the Rust crates. It leaves `constraints/` alone: `lowest.txt` must stay at the bottom of each range, and `image.txt` is one resolved set, regenerated whole with the command at its top, which Dependabot's pin-by-pin edits break. It also leaves `bauta-rs`, which must equal bauta's own version, and `num-bigint` below 0.5 until PyO3's `num-bigint` feature moves to it, since the extension's integers cross through PyO3's.
+**Actions are pinned to commits**, with the release each one is in a comment, so a tag moved in an action's repository can't change what the workflows run -- the release workflow publishes to PyPI. `dtolnay/rust-toolchain` names its toolchain with `toolchain: stable`, since it otherwise reads it from the ref, which a commit no longer spells. [Dependabot](../../.github/dependabot.yml) proposes updates weekly for the actions, `pyproject.toml` and the Rust crates. It leaves `constraints/` alone: `lowest.txt` must stay at the bottom of each range, and `image.txt` is one resolved set, regenerated whole with the command at its top, which Dependabot's pin-by-pin edits break. It also leaves `bauta-rs`, which must equal bauta's own version, and `num-bigint` below 0.5 until PyO3's `num-bigint` feature moves to it, since the extension's integers cross through PyO3's.
 
-`.github/workflows/release.yml` publishes a release when a tag matching the version in `pyproject.toml`, and in `mask-rs/Cargo.toml`, is pushed. Bump both, and the `native` extra's pin, together, and add the release to [CHANGELOG.md](../CHANGELOG.md), breaking changes first:
+`.github/workflows/release.yml` publishes a release when a tag matching the version in `pyproject.toml`, and in `mask-rs/Cargo.toml`, is pushed. Bump both, and the `native` extra's pin, together, and add the release to [CHANGELOG.md](../../CHANGELOG.md), breaking changes first:
 
 ```
 git tag v0.1.3 && git push origin v0.1.3      # the version in pyproject.toml
@@ -139,6 +158,8 @@ It builds and checks `bauta`'s sdist and wheel, and `bauta-rs`'s sdist and a whe
 
 1. On PyPI, add a trusted publisher for each of `bauta` and `bauta-rs`: this repository, workflow `release.yml`, environment `pypi`.
 2. In the repository's settings, create an environment named `pypi`. Requiring a reviewer there makes each release wait for approval.
+
+Once both are on PyPI, the documentation for that version is published to GitHub Pages with [mike](https://github.com/jimporter/mike), as a copy of its own beside the earlier ones, with `latest` moved to it. Set it up once: in the repository's settings, under Pages, publish from the `gh-pages` branch, which the first release creates.
 
 If publishing stops partway, re-run the job: files already on PyPI are skipped. `Run workflow` on the Release workflow builds and tests everything without publishing, to try a change to the workflow before tagging.
 
