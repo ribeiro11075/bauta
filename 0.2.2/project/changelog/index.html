@@ -1,0 +1,3623 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Safe, realistic copies of production across databases">
+      
+      
+      
+        <link rel="canonical" href="https://ribeiro11075.github.io/bauta/0.2.2/project/changelog/">
+      
+      
+        <link rel="prev" href="../../concepts/security/">
+      
+      
+        <link rel="next" href="../development/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Changelog - bauta</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Hanken+Grotesk:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Hanken Grotesk";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/bauta.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="bauta" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#changelog" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the documentation for an older release of bauta.
+  <a href="../../.."><strong>Go to the latest release.</strong></a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="bauta" class="md-header__button md-logo" aria-label="bauta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 30"><path fill="currentColor" fill-rule="evenodd" d="M13 1C6.4 1 2 5.6 2 12.2c0 4.6 1.2 8.4 3.2 11.2L4 28.4c3-.6 6-.9 9-.9s6 .3 9 .9l-1.2-5C22.8 20.6 24 16.8 24 12.2 24 5.6 19.6 1 13 1ZM8.6 10.7c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7S6 13.3 6 12.4s1.2-1.7 2.6-1.7Zm8.8 0c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7-2.6-.8-2.6-1.7 1.2-1.7 2.6-1.7Z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            bauta
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Changelog
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="bauta" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Dark"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Light"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ribeiro11075/bauta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ribeiro11075/bauta
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="bauta" class="md-nav__button md-logo" aria-label="bauta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 30"><path fill="currentColor" fill-rule="evenodd" d="M13 1C6.4 1 2 5.6 2 12.2c0 4.6 1.2 8.4 3.2 11.2L4 28.4c3-.6 6-.9 9-.9s6 .3 9 .9l-1.2-5C22.8 20.6 24 16.8 24 12.2 24 5.6 19.6 1 13 1ZM8.6 10.7c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7S6 13.3 6 12.4s1.2-1.7 2.6-1.7Zm8.8 0c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7-2.6-.8-2.6-1.7 1.2-1.7 2.6-1.7Z"/></svg>
+
+    </a>
+    bauta
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ribeiro11075/bauta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ribeiro11075/bauta
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Get started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get-started/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/mask-a-table/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mask a table
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/keep-joins-intact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keep joins intact
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cover-every-column/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cover every column
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/propose-a-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Propose a policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/copy-a-subset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Copy a subset
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/generate-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generate data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/prove-the-copy-is-safe/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prove the copy is safe
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/keep-a-manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keep a masking manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/run-on-a-schedule/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run on a schedule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/watch-what-ran/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Watch what ran
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/rotate-the-key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rotate the masking key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/make-it-faster/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Make it faster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    connections.yaml
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    jobs.yaml
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/strategies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masking strategies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/commands/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commands
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Commands
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/validate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    validate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    jobs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/history/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    history
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/discover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    discover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/subset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    subset
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/synthesize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    synthesize
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/clear/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    clear
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/verify-manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    verify-manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/verify-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    verify-references
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/tables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    State tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/python-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/how-it-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How it works, and why
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Project
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unreleased
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unreleased">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#022--2026-09-27" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.2 — 2026-09-27
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.2.2 — 2026-09-27">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#021--2026-09-27" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.1 — 2026-09-27
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.2.1 — 2026-09-27">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#020--2026-09-26" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.0 — 2026-09-26
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.2.0 — 2026-09-26">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#019--2026-09-26" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.9 — 2026-09-26
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.9 — 2026-09-26">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#018--2026-09-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.8 — 2026-09-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.8 — 2026-09-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#017--2026-09-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.7 — 2026-09-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.7 — 2026-09-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#016--2026-09-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.6 — 2026-09-20
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.6 — 2026-09-20">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Removed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#015--2026-09-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.5 — 2026-09-20
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.5 — 2026-09-20">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#014--2026-09-19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.4 — 2026-09-19
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.4 — 2026-09-19">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#013--2026-09-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.3 — 2026-09-18
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.3 — 2026-09-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#012--2026-09-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.2 — 2026-09-18
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.2 — 2026-09-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#011--2026-09-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.1 — 2026-09-18
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.1 — 2026-09-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#010--2026-09-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.0 — 2026-09-18
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unreleased
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unreleased">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#022--2026-09-27" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.2 — 2026-09-27
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.2.2 — 2026-09-27">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#021--2026-09-27" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.1 — 2026-09-27
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.2.1 — 2026-09-27">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#020--2026-09-26" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.0 — 2026-09-26
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.2.0 — 2026-09-26">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#019--2026-09-26" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.9 — 2026-09-26
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.9 — 2026-09-26">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#018--2026-09-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.8 — 2026-09-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.8 — 2026-09-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#017--2026-09-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.7 — 2026-09-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.7 — 2026-09-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#016--2026-09-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.6 — 2026-09-20
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.6 — 2026-09-20">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Removed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#015--2026-09-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.5 — 2026-09-20
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.5 — 2026-09-20">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#014--2026-09-19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.4 — 2026-09-19
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.4 — 2026-09-19">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#013--2026-09-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.3 — 2026-09-18
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.3 — 2026-09-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#012--2026-09-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.2 — 2026-09-18
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.2 — 2026-09-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#011--2026-09-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.1 — 2026-09-18
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.1.1 — 2026-09-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#010--2026-09-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.0 — 2026-09-18
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="./" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Project
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+  
+  
+  
+  
+    <div class="bauta-kind">
+      <span class="bauta-kind__label bauta-kind__label--project">Project</span>
+      
+    </div>
+  
+  
+                  
+
+
+  
+    <a href="https://github.com/ribeiro11075/bauta/edit/master/CHANGELOG.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">#</a></h1>
+<p>What changed in each release of <code>bauta</code> and <code>bauta-rs</code>, which are always released together at the same version. <strong>Breaking</strong> lists what can stop an existing setup from working after an upgrade; read it before upgrading.</p>
+<p>Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.</p>
+<h2 id="unreleased">Unreleased<a class="headerlink" href="#unreleased" title="Permanent link">#</a></h2>
+<p>The documentation is a website, at <a href="https://ribeiro11075.github.io/bauta/">ribeiro11075.github.io/bauta</a>, one copy per release. No mask changes, and nothing the package does changes.</p>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>The documentation is reorganized by what a reader is doing</strong>: getting started, guides with one task each, reference, and how it works. <code>docs/masking.md</code>, <code>docs/configuration.md</code> and <code>docs/operations.md</code> are split into pages under <code>docs/guides/</code> and <code>docs/reference/</code>, and the other files moved into <code>docs/concepts/</code>, <code>docs/reference/</code> and <code>docs/project/</code>. Their content is unchanged. A link to one of the old files on GitHub no longer resolves.</li>
+<li><strong>Every command has a page</strong>, generated from its own parser, so the flags documented are the ones it takes. The README keeps the list of commands, and the tables of their flags moved to those pages.</li>
+</ul>
+<h2 id="022--2026-09-27">0.2.2 — 2026-09-27<a class="headerlink" href="#022--2026-09-27" title="Permanent link">#</a></h2>
+<p>Jobs are faster, most of all wide masked tables and anything written to files or Iceberg: a million rows of 25 masked columns on ten cores went from 78,900 rows a second to 106,100 into SQLite with <code>maskingThreads: auto</code>, on half as many threads, and from 22.2 to 10.2 seconds into Parquet files. <code>auto</code> now takes half the cores rather than all of them. No mask changes, and nothing is written differently.</p>
+<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">#</a></h3>
+<ul>
+<li><strong><code>maskingThreads: auto</code> masks on half the cores available</strong>, shared between the jobs running as before, rather than on all of them. Masking only has to keep up with a job's reading and writing, which need cores of their own: on ten cores, a wide table copied as fast with four masking threads as with six or eight, and slower with all ten. A job running alone on ten cores now masks on five, and two side by side on eight cores on two each. A number still sets exactly that many threads, up to every core. See <a href="../../guides/make-it-faster/#masking-threads">masking threads</a>.</li>
+<li><strong>The native masker takes a chunk in one call</strong> and masks its columns at once, rather than being called column by column: each column's own bookkeeping ran on one thread while the other cores waited, and the GIL changed hands after every column. The strings it allocates are freed without holding the GIL, which freeing them had been a quarter of the time it held. Columns Python masks, and values the extension hands back to it, are finished as before, column by column and each in row order, so a value that was refused is refused with the same message.</li>
+<li><strong>Loading a chunk does less work in Python</strong>, for every database. The values a database's driver takes differently -- an integer past 64 bits for SQLite and DuckDB, a UUID for MySQL, a datetime for SQL Server -- are found from each row's types in one pass, instead of by transposing the chunk and scanning every column, and a column of integers is checked with its smallest and largest. With the native extension installed, each column's types are found in Rust in one pass, which cuts that by half or more; without it, a load learns from each chunk how much of the next to look at. An upsert into SQLite, MySQL, MariaDB or Oracle no longer builds a copy of each batch that only PostgreSQL, SQL Server and DuckDB use.</li>
+<li><strong>Writing files and Iceberg tables does a fraction of the work in Python.</strong> A column whose values are all of the plain types a file holds as they are -- text, numbers, bytes, dates and times, and nulls -- goes to Arrow without looking at each value, where each was checked and normalized in turn: that took more than half of a wide table's time. An integer column's range is checked by its smallest and largest. Any other column -- JSON documents, UUIDs, a driver's own types -- is converted as before.</li>
+<li><strong>Reading, masking and writing overlap two chunks deep</strong> rather than one, which absorbs a slow chunk on either side. A job with the native masker holds four chunks in memory rather than three.</li>
+</ul>
+<h2 id="021--2026-09-27">0.2.1 — 2026-09-27<a class="headerlink" href="#021--2026-09-27" title="Permanent link">#</a></h2>
+<p>Jobs can write Iceberg tables, through a Glue, REST or SQL catalog, in any of the three clouds: a run is one commit, <code>upsert</code> merges by key, and old snapshots' files go with them. <strong>Read Breaking before upgrading: pyarrow and DuckDB need newer versions.</strong> No mask changes.</p>
+<h3 id="breaking">Breaking<a class="headerlink" href="#breaking" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>pyarrow 21 or newer, for the <code>files</code> and <code>duckdb</code> extras</strong>, and <strong>DuckDB 1.4 or newer</strong>. pyarrow 21 is the first with every Azure credential and a copy of any size there, so the checks and limits for older ones are gone. DuckDB before 1.4 describes a DECIMAL column without its precision, so a decimal copied from it into files or Iceberg was typed <code>decimal(38,10)</code> rather than as declared.</li>
+<li>From Python: <code>bauta.files</code> is now <code>bauta.lake</code>, since it writes Iceberg as well as files, and <code>bauta.configuration.fileTypes</code> is <code>columnTypes</code>. The connection models are in <code>bauta.configuration.connections</code> (<code>bauta.configuration</code> still exports them all), and <code>DataJobConfig.writesFiles()</code> and <code>targetMismatch()</code> are replaced by <code>targetProblems(job, connection)</code>, <code>targetKind()</code> and <code>isLake()</code>: whether a job writes a lake depends on its connection now, since Iceberg takes <code>upsert</code> too.</li>
+</ul>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>An <code>iceberg</code> connection</strong> (<code>type: iceberg</code>, <code>pip install "bauta[iceberg]"</code>) writes Iceberg tables through pyiceberg -- no JVM -- with a <code>glue</code>, <code>rest</code> or <code>sql</code> catalog, the REST one covering BigLake, Unity Catalog, Snowflake Open Catalog, S3 Tables and the rest. <code>append</code> and <code>overwrite</code> write their Parquet with the files writer, a row group at a time, and commit the run once, an overwrite deleting the old rows in the same commit; <code>upsert</code> merges by <code>targetKey</code> or the table's identifier fields, a commit per row group. A table that isn't there is created by the run; one that is decides each column's type, and refuses a column it lacks unless <code>evolveSchema</code>. Each run keeps <code>keepSnapshots</code> snapshots and deletes the files only older ones referenced, which pyiceberg leaves. See <a href="../../reference/connections/#iceberg">Iceberg</a> and <a href="../../concepts/how-it-works/#iceberg-tables">Iceberg tables</a>.</li>
+<li><code>run --dry-run</code> checks an Iceberg connection's catalog answers and its warehouse can be written.</li>
+<li>Iceberg on Azure works through pyarrow, which pyiceberg 0.12 alone can't: it hands pyarrow an Azure path as <code>container@account.../path</code>, which Azure refuses, and reads no <code>az://</code> location. bauta writes through a FileIO spelling the path as pyarrow reads it, and gives an <code>az://</code> warehouse as its <code>abfss://</code> URL.</li>
+</ul>
+<h2 id="020--2026-09-26">0.2.0 — 2026-09-26<a class="headerlink" href="#020--2026-09-26" title="Permanent link">#</a></h2>
+<p>Jobs can write files: a <code>files</code> connection is a directory, or a bucket in S3, Google Cloud Storage or Azure, of tables in Parquet, CSV or JSON Lines, for a data lake or a handoff. No mask changes, and nothing existing changes behaviour.</p>
+<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>A <code>files</code> connection</strong> (<code>type: files</code>, <code>pip install "bauta[files]"</code>) writes each job's rows as a table of files under its <code>root</code>: <code>append</code> adds a run's parts beside the ones already there, for incremental exports with a watermark, and <code>overwrite</code> publishes the whole table as a new <code>snapshot=&lt;run&gt;/</code> directory, keeping the newest <code>keepSnapshots</code>. <code>singleFile: true</code> writes a small table as one file, replaced whole. Parts are written out of sight and published only once every row is written, so a failed job leaves nothing a reader sees. Parts close at <code>fileSize</code> (256 MB) and rows are written in row groups of <code>rowGroupSize</code> (128 MB in memory), so memory stays flat. Masking, transforms, <code>requireMasking</code>, retries, timeouts and <code>audit</code> work as for any job. See <a href="../../reference/connections/#files">files</a> and <a href="../../concepts/how-it-works/#files-as-a-target">files as a target</a>.</li>
+<li><strong>Each column's Parquet type is fixed before the first row group</strong>, declared in <code>targetColumnTypes</code> or settled by the first values it holds, and a later value that doesn't fit fails the job naming the column, rather than being cast: pyarrow alone writes 1.5 into an integer column as 1. A decimal takes the precision and scale PostgreSQL, Oracle and DuckDB report.</li>
+<li><strong>S3</strong> as a files connection's <code>root</code> (<code>s3://bucket/prefix</code>), with credentials from the AWS default chain -- environment, profile, SSO, instance or task role, IRSA -- or <code>accessKeyId</code> and <code>secretAccessKey</code>, a <code>roleArn</code> to assume, and an <code>endpoint</code> for MinIO, R2 and the like. Parts are staged and published by a copy within the bucket, since an upload pyarrow is made to stop is completed rather than abandoned; a failed job leaves no object a reader sees. See <a href="../../reference/connections/#files">files</a>.</li>
+<li><strong>Google Cloud Storage and Azure Blob Storage</strong> as a root: <code>gs://bucket/prefix</code>, and <code>az://container/prefix</code> with <code>accountName</code> or <code>abfss://container@account.dfs.core.windows.net/prefix</code>. Credentials come from each cloud's default chain -- Application Default Credentials; the environment, a workload or managed identity, <code>az login</code> -- or GCS's <code>serviceAccount</code> to impersonate, and Azure's <code>accountKey</code>, <code>sasToken</code> (pyarrow 20) or a service principal (pyarrow 21). On Azure without a hierarchical namespace, where pyarrow can't move a file, a part is published by a copy and a delete. With pyarrow before 19, which copies an Azure blob of at most 256 MiB, <code>fileSize</code> is held to that.</li>
+<li><strong>CSV and JSON Lines</strong> (<code>format: csv</code> or <code>ndjson</code>), gzipped by default and named <code>.gz</code>. Each type is spelled one way in both: a null apart from empty text, decimals exact (a string in JSON), timestamps as Hive and Athena read them, binary as base64, and a source's JSON documents nested in JSON Lines. CSV takes a <code>delimiter</code>. See <a href="../../concepts/how-it-works/#formats">formats</a>.</li>
+<li><code>run --dry-run</code> checks a files connection's root can be written and listed, and a file job's query and masking policy.</li>
+<li>A files connection is a target only. Naming it as a <code>sourceConnection</code>, keeping run state, history or a manifest in it, or giving it to <code>discover</code>, <code>subset</code>, <code>schema</code>, <code>synthesize</code> or <code>coverage</code> is refused, and <code>clear</code> refuses jobs that write files. Any other URL as a root is refused rather than read as a directory.</li>
+<li>From Python: <code>FilesConnection</code>, <code>DatabaseConfig</code> (the seven databases' settings, which <code>Database</code> and the dialects take), and <code>InsertStrategy.APPEND</code> and <code>OVERWRITE</code>. A job's load goes through <code>bauta.jobs.targets.LoadTarget</code>, of which a database table (<code>TableTarget</code>) and <code>bauta.files.FileTarget</code> are the two kinds.</li>
+</ul>
+<h2 id="019--2026-09-26">0.1.9 — 2026-09-26<a class="headerlink" href="#019--2026-09-26" title="Permanent link">#</a></h2>
+<p>DuckDB joins the six databases as a source or target, and connections replace databases as the unit of configuration: <code>connections.yaml</code>, <code>sourceConnection</code> and <code>targetConnection</code>, and settings checked per connection type. Copies between databases load lists, JSON, UUIDs, times and unsigned integers that failed before. <strong>Read Breaking before upgrading: every configuration needs editing.</strong> No mask changes.</p>
+<h3 id="breaking_1">Breaking<a class="headerlink" href="#breaking_1" title="Permanent link">#</a></h3>
+<ul>
+<li><strong><code>database.yaml</code> is now <code>connections.yaml</code></strong>, and a job's <code>sourceDatabase</code> and <code>targetDatabase</code> are now <code>sourceConnection</code> and <code>targetConnection</code>, in <code>defaults:</code> too. The old names are not read: <code>validate</code> refuses them as unknown settings. Rename the file, then search and replace the two settings.</li>
+<li><strong>The flags follow:</strong> <code>--databases</code> is <code>--connections</code>, and <code>--memory-database</code>, <code>--history-database</code> and <code>--manifest-database</code> are <code>--memory-connection</code>, <code>--history-connection</code> and <code>--manifest-connection</code>. A <code>memory</code>, <code>history</code> or <code>manifest</code> table names its alias with <code>connection:</code> rather than <code>database:</code>.</li>
+<li><strong>Each connection type takes only its own settings.</strong> SQLite and DuckDB name their file with <code>path</code> rather than <code>database</code>, and Oracle, which is reached by <code>serviceName</code> or <code>sid</code>, no longer takes the <code>database</code> it never used. A setting of another type -- a <code>serviceName</code> on a PostgreSQL connection, a <code>host</code> on a SQLite one -- is refused naming the types it belongs to; it used to be accepted and ignored. From Python, <code>DatabaseConnectionConfig</code> is replaced by one class per type (<code>PostgreSQLConnection</code>, <code>SQLiteConnection</code>, ...), <code>ConnectionConfig</code> is their union, and <code>connectionConfig(type=..., ...)</code> builds one from settings as the file would give them.</li>
+<li><strong><code>discover</code>, <code>subset</code>, <code>schema</code>, <code>synthesize</code> and <code>coverage</code> take <code>--connection ALIAS</code></strong> where they took <code>--database ALIAS</code>. From Python, <code>Configuration.validateDatabaseConfiguration</code> is <code>validateConnectionConfiguration</code>, and <code>validateJobGraph</code> takes <code>connections=</code> rather than <code>databases=</code>.</li>
+</ul>
+<h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>DuckDB</strong> (<code>type: duckdb</code>, <code>pip install "bauta[duckdb]"</code>), as source or target of any job, and for <code>schema</code>, <code>subset</code>, <code>discover</code>, <code>coverage</code>, <code>audit</code>, <code>clear</code> and <code>verify-references</code>. <code>database</code> is a file path or <code>:memory:</code>, <code>currentSchema</code> is supported, and <code>options</code> are DuckDB's own settings. A chunk loads as an Arrow table in one statement: 50,000 rows row by row took 13 seconds, and take a tenth of a second. It runs in every suite that runs across all the databases, by default, since it needs no server. See <a href="../../reference/connections/#duckdb">DuckDB</a>.</li>
+<li><strong><code>maxConcurrentJobs</code> on a connection</strong> caps how many jobs use it at once, however many <code>workers</code> the run has; a job held back waits while jobs on other connections start. DuckDB is always 1: it lets one process at a time open a file, and every job is a process of its own. Two aliases for one DuckDB file are refused, and a job finding the file held by something outside the run waits up to a minute, then fails saying why. Run state can't be kept in DuckDB, since the run holds it open throughout; history and manifests can.</li>
+<li>DuckDB can't swap a table in a foreign key or one with an index -- it refuses to rename either, and renaming a referencing one corrupts its catalog -- so such a swap fails before renaming anything, saying to use <code>upsert</code>. Each DuckDB session runs in UTC, since DuckDB otherwise converts through the machine's own zone when a time-zone-aware value meets a column without one. <code>clear</code> empties DuckDB tables one transaction per table, since DuckDB checks a foreign key against what is committed.</li>
+<li><code>discover</code> warns, when masking DuckDB in place, that a table in a foreign key can't be swapped.</li>
+</ul>
+<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>Lists and dictionaries load into SQLite, MySQL, MariaDB, Oracle and SQL Server as JSON text</strong>, which is what <code>schema</code> maps them to. A PostgreSQL array or JSON document, and DuckDB's LIST, STRUCT and MAP, failed the copy at its first chunk: none of those drivers can bind one. PostgreSQL writes a list into a <code>json</code> or <code>jsonb</code> column as JSON rather than as an array, which that column refused.</li>
+<li><strong>A UUID loads into MySQL and MariaDB, and a time of day into Oracle,</strong> as text; their drivers refused both, failing a PostgreSQL UUID or TIME column copied there.</li>
+<li><strong>What each Python type is sent as, for each database, is one table</strong> (<code>bauta/database/values.py</code>), tested directly, rather than spread over each dialect. Two things change with it. bauta no longer registers adapters with <code>sqlite3</code> for the whole process, which changed how any other code in it wrote dates and Decimals to SQLite. And a watermark is bound as a loaded value is, so a <code>datetime</code> watermark keeps its microseconds on SQL Server, where pymssql rounded it to the millisecond.</li>
+<li><strong><code>schema</code> maps each of MySQL's and MariaDB's unsigned integers to a type holding its whole range</strong>: SMALLINT UNSIGNED to INTEGER, INT UNSIGNED to BIGINT, BIGINT UNSIGNED to a 20-digit decimal. Mapped to the signed type of the same size, the upper half of each was refused as it loaded, and a BIGINT UNSIGNED past 2**63 copied into SQLite silently became a float. Found by a new copy test between every pair of databases over each one's UUID, time, JSON, binary, instant and unsigned types.</li>
+<li><strong>An integer past 64 bits loads into SQLite</strong> as its exact text. A MySQL unsigned BIGINT above 2**63 raised OverflowError.</li>
+</ul>
+<h2 id="018--2026-09-21">0.1.8 — 2026-09-21<a class="headerlink" href="#018--2026-09-21" title="Permanent link">#</a></h2>
+<p>The native masker covers <code>number</code>, masks <code>fpe</code> two and a half times as fast and <code>key</code> a quarter faster on a whole job, and scales integer columns across threads as well as text ones. <code>synthesize</code> no longer holds every generated key in memory, and the docs' throughput figures come from a benchmark in the repository. No mask changes.</p>
+<h3 id="changed_2">Changed<a class="headerlink" href="#changed_2" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>The native masker covers <code>number</code></strong>, four to six times as fast on integer, float and <code>Decimal</code> columns alike (a 5,000-row chunk of Decimals: 22 ms to 5; of integers, 18 ms to 3), and spread over <code>maskingThreads</code> like the other native strategies. The masks are unchanged: Rust repeats Python's decimal arithmetic at 60 digits, recorded vectors pin every result, and a value it would have to guess at -- a mask that comes out as zero, whose sign Python keeps -- is masked by Python instead.</li>
+<li><strong>Masked columns are spliced back into rows by rebuilding them from columns</strong> where the table is narrow or a third or more of it is masked, which is faster there; a wide table with a few masked columns keeps the row-by-row splice. Each column is masked as the transpose yields it, which also serves a table masked in every column. About 7% off a typical masked chunk, and 10-28% off splicing a table only partly masked.</li>
+<li><strong>The native <code>fpe</code> masks a value about four times as fast</strong> (4.7 µs to 1.1 for a ten-digit integer): FF1's rounds run in machine integers wherever each half fits 64 bits -- 19 decimal digits a half, so every identifier in practice -- instead of building and taking apart big integers every round. A million rows with two <code>fpe</code> columns among six went from 105,000 rows a second to 254,000 on one thread, which makes <code>fpe</code> faster than <code>key</code> natively. Longer values take the big-integer path as before.</li>
+<li><strong>The native <code>key</code> is 20-30% faster</strong> on the same grounds: its Feistel network runs in machine integers for any domain up to 2**128. Five <code>key</code> columns and a <code>hash</code>, a million rows: 58,000 rows a second to 74,000.</li>
+<li><strong>Integers cross into and out of the native masker through the C API</strong> wherever they fit 64 bits. The stable ABI the extension is built against converted every integer by calling <code>int.to_bytes</code> and <code>int.from_bytes</code>, a Python call per value made while every masking thread waited: an integer <code>key</code> column at eight threads ran at half a text column's throughput, and now keeps pace with it.</li>
+<li><strong><code>synthesize</code> remembers generated keys only for a table keyed wholly by foreign keys</strong>, the only kind that can repeat one. It held every row's key for the whole run whatever the table: 116 MiB a million rows of a table keyed by one integer.</li>
+<li><strong><code>benchmarks/masking.py</code> measures the throughput figures the docs quote</strong>, from a million generated rows copied SQLite to SQLite under each policy and each masker, and fails if any two copies of a policy differ. The figures in the docs are all re-measured with it, on a stated dataset. See <a href="../development/#benchmarks">benchmarks</a>.</li>
+<li>All the above leave every mask as it was: the machine-integer paths are tested against the big-integer ones on every width they take, and the recorded vectors pass on both sides of each boundary.</li>
+</ul>
+<h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>A <code>number</code> value past its 60 significant digits now fails as a masking error naming its column</strong> -- an integer of more than 60 digits, or a float held to more <code>decimals</code> than 60 digits reach at its size. It raised Python's bare <code>decimal.InvalidOperation</code>, which said neither which column nor why. No mask changes.</li>
+</ul>
+<h2 id="017--2026-09-21">0.1.7 — 2026-09-21<a class="headerlink" href="#017--2026-09-21" title="Permanent link">#</a></h2>
+<p>A watermark could leak an unmasked value, the package is reorganized into groups a newcomer can find their way around, run-state connections are closed, and loads spend less time in Python. No mask changes.</p>
+<h3 id="breaking_2">Breaking<a class="headerlink" href="#breaking_2" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>A <code>watermarkColumn</code> that <code>defaultStrategy</code> masks is refused by <code>validate</code>.</strong> Only a column the policy named was checked, so a watermark column left to a masking <code>defaultStrategy</code> passed, and every run wrote its raw, unmasked value into run state and logged it. <code>audit --connect</code> was the only thing that noticed. Watermark on a column masked with <code>keep</code>, or name the column in the policy with <code>keep</code>. <code>run</code> also refuses it before reading a row.</li>
+<li><strong>Modules moved into subpackages, and the old import paths are gone.</strong> Every module is now in a package named for what it does: <code>configuration</code>, <code>database</code> (with <code>dialects</code>), <code>jobs</code> (<code>runner</code>, <code>pipeline</code>, <code>workers</code>, <code>keys</code>, <code>dependencyGraph</code>, <code>memory</code>, <code>reporting</code>), <code>log</code> (with <code>scrubbing</code>), <code>transform</code>, <code>masking</code>, <code>generate</code>, <code>review</code> and <code>cli</code>. <code>bauta.databaseDialects</code> is now <code>bauta.database.dialects</code>, split into one module per database. <code>bauta.builtinMasking</code>, <code>bauta.fakeData</code> and <code>bauta.fpe</code> are now <code>bauta.masking.strategies</code>, <code>.fakeData</code> and <code>.fpe</code>, beside <code>bauta.masking.core</code>. <code>discovery</code>, <code>builtinDiscovery</code>, <code>subset</code>, <code>schema</code> and <code>synthesize</code> moved under <code>bauta.generate</code>, and <code>audit</code>, <code>coverage</code> and <code>references</code> under <code>bauta.review</code>. <code>bauta.masking.Strategy</code>, which custom strategies subclass, is unchanged, as are the <code>bauta</code> command and every configuration setting.</li>
+<li><strong><code>bauta</code> exports less.</strong> The dialect classes and <code>ColumnCategory</code> are imported from <code>bauta.database.dialects</code>, and <code>BaseJobConfig</code>, <code>Transform</code> and <code>resolveTransformer</code> are no longer exported at all. What <code>bauta</code> exports is now exactly what <a href="../../reference/python-api/#api-stability">library.md</a> documents, and anything reached only through a submodule is internal.</li>
+<li><strong>A <code>MemoryBackend</code> implements all six methods.</strong> Watermarks and key fingerprints had defaults so that backends written before them kept working, and the fingerprint default turned the masking-key-change check off without a word. A backend that leaves any method out now can't be created.</li>
+<li><strong><code>bauta.transform.builtinTransforms</code></strong> is the module path of the built-in transformers in <code>sourceQueryColumnTransforms</code>, in place of <code>bauta.builtinTransforms</code>: <code>bauta.transform.builtinTransforms:truncate(50)</code>.</li>
+<li><strong>A native masker that refuses a strategy's options raises</strong>, where it used to fall back to masking in Python without a word. The two are always the same version, so a refusal is a bug to report, not an older extension to work around.</li>
+<li><strong>Run state recorded before the masking implementation was</strong> reads as an implementation change, which logs a warning once on the next run of each masked upsert job; nothing is refused.</li>
+<li><strong><code>bauta.masking</code> no longer finds names lazily.</strong> The shim that let the strategies and fake-data lists be reached through the old <code>bauta.masking</code> module is gone; <code>bauta.masking</code> exports them itself.</li>
+</ul>
+<h3 id="changed_3">Changed<a class="headerlink" href="#changed_3" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>PostgreSQL loads COPY through psycopg's own encoders</strong>, twice as fast as the Python encoder they replace against a real server, with identical rows stored. Chunks holding an array, a JSON object or an interval still go statement by statement.</li>
+<li><strong>Each chunk is checked for the types it holds by its distinct types, not value by value</strong>: three to five times faster for every dialect's check, and SQL Server converts only the columns that need it.</li>
+<li><strong>A PostgreSQL upsert creates its staging table once per connection</strong>, not before every chunk: a round trip a chunk saved, 14% of a chunk's time at 10 ms of latency.</li>
+<li><strong><code>run --dry-run</code> and <code>audit --connect</code> open one connection per database alias</strong>, where they opened one per check, three or four a job, each running <code>passwordCommand</code> again.</li>
+<li><strong>Whether a column is masked is decided by its strategy's <code>PASSTHROUGH</code>, not its name.</strong> A custom strategy that returns values unchanged is now treated like <code>keep</code> by the watermark and primary-key checks. <code>canonical</code>, the bytes the built-in strategies key a value on, is public in <code>bauta.masking</code> for custom strategies.</li>
+</ul>
+<h3 id="fixed_2">Fixed<a class="headerlink" href="#fixed_2" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>Run-state connections were never closed.</strong> <code>DatabaseMemory</code> holds one connection per process and nothing closed it: each job process dropped its connection when it exited rather than closing it, and <code>bauta run</code>, <code>jobs</code> and <code>clear</code> held theirs until exit. A <code>MemoryBackend</code> now has <code>close()</code> and works as a context manager; the commands close theirs, and each job's process closes its copy once its outcome is sent.</li>
+<li><strong>A connection whose session setup failed was left open</strong>, such as a PostgreSQL <code>SET search_path</code> or an Oracle <code>ALTER SESSION</code> naming a schema that doesn't exist, and each retry opened another. It is now closed before the error is raised.</li>
+<li><strong>SIGTERM under <code>--forever</code> waited out <code>cycleSleepSeconds</code> before stopping</strong>, since Python resumes a sleep after a signal's handler returns; a long pause outlived a container's grace period. It now stops within a second.</li>
+<li><strong>A <code>swap</code> on SQL Server failed for a table whose name contains a single quote</strong>: <code>sp_rename</code> took the name as a string literal the quote ended.</li>
+<li><strong><code>run --dry-run</code> skipped a job's checks when another job was named like a database alias</strong> whose check had failed.</li>
+</ul>
+<h3 id="added_3">Added<a class="headerlink" href="#added_3" title="Permanent link">#</a></h3>
+<ul>
+<li><a href="https://github.com/ribeiro11075/bauta/blob/master/SECURITY.md">SECURITY.md</a>, for reporting a vulnerability privately, and <a href="../contributing/">CONTRIBUTING.md</a>.</li>
+<li><code>ruff check</code> runs in CI, for errors rather than style.</li>
+<li>The test suite fails on a connection or file left open, the package's or a test's.</li>
+<li>The tests mirror the package: the tests for <code>bauta/jobs/</code> are in <code>tests/jobs/</code>, and so on, with the helpers each needs beside them. See <a href="../development/#where-the-tests-are">where the tests are</a>.</li>
+<li>The operations every database must perform are one suite run against all six, where they were copied into a file per database and had drifted: MariaDB lacked four of them, including run state in a table, and SQLite several.</li>
+<li>CI measures coverage across the unit and integration suites, job processes included, and fails below 95%.</li>
+<li>GitHub Actions are pinned to commits, and Dependabot keeps them, the dev tools and the Rust crates current.</li>
+</ul>
+<h2 id="016--2026-09-20">0.1.6 — 2026-09-20<a class="headerlink" href="#016--2026-09-20" title="Permanent link">#</a></h2>
+<p>Masking and provability: a misspelled setting can no longer produce an unmasked
+copy, <code>coverage</code> answers what the jobs don't cover at all, and masking itself is
+faster without any mask changing.</p>
+<h3 id="breaking_3">Breaking<a class="headerlink" href="#breaking_3" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>An unknown field in <code>jobs.yaml</code> or <code>database.yaml</code> is now an error.</strong> It used to be ignored, so a misspelled key was silently dropped — and <code>maskng:</code> instead of <code>masking:</code> produced a job that looked masked in the file and copied every column as it stood, with <code>validate</code>, <code>run --dry-run</code> and <code>audit --connect --strict</code> all reporting success. Fix any misspelled setting a run was quietly ignoring; <code>bauta validate</code> names each one, offline. A top-level key beginning with <code>x-</code> is still allowed, for YAML anchors.</li>
+<li><strong><code>audit</code> reports every unmasked job.</strong> It used to say nothing unless another job masked the same source, so the first table copied from a new source, and any single-job configuration, went unreported. An unmasked job is now a warning, an <strong>error</strong> when its columns look like personal data, and <code>--strict</code> exits 1 on either. A job that copies as it stands declares <a href="../../reference/jobs/#copying-without-masking"><code>unmasked: true</code></a> and is recorded rather than flagged.</li>
+<li><strong><code>--accept-key-change</code> is refused for an upsert job whose policy masks the target's primary key.</strong> An upsert matches rows on the primary key, so a new masking key gave those rows new keys: the run inserted a second generation of rows beside the first instead of updating it, and where a new key landed on an existing one it overwrote a different row. <code>verify-references</code> reported the result clean, because every foreign key still pointed at some row. Empty those targets with <code>bauta clear</code> and run again; see <a href="../../guides/rotate-the-key/">rotating the masking key</a>.</li>
+<li><strong><code>BoundMasking.apply</code> refuses rows whose width doesn't match the policy it was bound to.</strong> Too-wide rows used to have their extra columns ignored in silence, which is at odds with every column having to be covered. No job the runner builds can reach it, since <code>bind()</code> settles the width; a library caller applying a plan to other rows now hears about it.</li>
+</ul>
+<h3 id="added_4">Added<a class="headerlink" href="#added_4" title="Permanent link">#</a></h3>
+<ul>
+<li><strong><code>bauta coverage</code></strong> lists every table in a source database and what the jobs do with each: copied and masked, copied as it stands, not copied and declared, or <strong>NOT COVERED</strong>. It exits 1 on anything uncovered, so it can follow <code>run</code> in CI and fail when production grows a table the copy doesn't account for. <code>audit</code> checks the jobs that exist and cannot see a table nobody wrote a job for. See <a href="../../guides/prove-the-copy-is-safe/#coverage-what-the-jobs-do-not-cover">coverage</a>.</li>
+<li><strong><code>acknowledged</code> in <code>jobs.yaml</code></strong> records the tables no job copies and why, so leaving one out is a decision on the page rather than an omission. <code>coverage</code> also reports a declaration for a table the database no longer has. See <a href="../../reference/jobs/#acknowledged">acknowledged</a>.</li>
+<li><strong><code>requireMasking</code> on a <code>database.yaml</code> alias</strong> refuses any job that reads from or writes to it without a masking policy, at <code>validate</code>, before anything connects. The line a reviewer signs: this copy can only ever hold masked data. Nothing overrides it, including a job's own <code>unmasked</code>. See <a href="../../reference/connections/#requiring-masking">requiring masking</a>.</li>
+<li><strong><code>unmasked: true</code> on a job</strong> says it was reviewed and copies its rows as they stand, as <code>keep</code> says it of a single column.</li>
+<li><strong><code>defaults</code> in <code>jobs.yaml</code></strong> supplies what every job would otherwise repeat: <code>sourceDatabase</code>, <code>targetDatabase</code>, <code>insertStrategy</code>, <code>chunkSize</code>, <code>active</code>, <code>refresh</code>, <code>retries</code>, <code>retryDelaySeconds</code>, <code>timeoutSeconds</code> and <code>masking.key</code>. A masking policy's <code>columns</code> stays with its job, and a job with no <code>masking</code> block does not grow one. See <a href="../../reference/jobs/#defaults">defaults</a>.</li>
+<li><strong><code>discover --all-tables</code></strong> proposes a policy for every table in a database, with <code>--schema NAME</code> for another schema, instead of naming each with a repeated <code>--table</code>.</li>
+<li><strong><code>discover --mask-keys</code> and <code>subset --mask --mask-keys</code></strong> propose <code>key</code> for numeric surrogate keys too, in the domain each foreign key already shares, instead of <code>keep</code>. Both ends move together, so the copy's references still match, and a generated policy needs no hand-editing to mask its ids. See <a href="../../guides/propose-a-policy/">proposing a policy</a>.</li>
+<li><code>Database.listTables()</code> lists a database's base tables on all six databases, excluding views and anything the server ships.</li>
+<li>Three runbooks that were missing: <a href="../../guides/rotate-the-key/">rotating the masking key</a>, <a href="../../guides/run-on-a-schedule/#after-a-failed-cycle">after a failed cycle</a> — which documents <code>refresh</code> as the resume mechanism — and <a href="../../guides/run-on-a-schedule/#one-production-several-environments">one production, several environments</a>, which already worked and was written down nowhere.</li>
+</ul>
+<h3 id="changed_4">Changed<a class="headerlink" href="#changed_4" title="Permanent link">#</a></h3>
+<ul>
+<li><strong><code>active</code>, <code>chunkSize</code> and <code>workers</code> have defaults</strong> (<code>true</code>, <code>5000</code> and <code>1</code>), so a job says only what is particular to it. <code>insertStrategy</code> stays required: it is the one setting where a wrong value gives wrong data rather than an error.</li>
+<li><strong><code>run --dry-run</code> compares the column counts it already printed.</strong> A target that had gained or lost a column, against a query that hadn't, passed the dry run and failed the next real run — at whatever hour it was scheduled for.</li>
+<li><strong>A connection error names what it tried to reach</strong>, resolved: <code>cannot connect to sqlite file /srv/copy.db</code>, rather than a driver message naming neither the path nor the directory it resolved against. Never the password.</li>
+<li><code>audit --connect</code> resolves every job's columns, not only a masked job's, so an unmasked job's can be checked for personal data.</li>
+<li>The starter configuration in <code>example/starter/</code> shows <code>defaults:</code>, and drops the empty keys and Oracle-only fields it carried on every job and connection.</li>
+</ul>
+<h3 id="performance">Performance<a class="headerlink" href="#performance" title="Permanent link">#</a></h3>
+<p>Masks are unchanged by all of this: the reference vectors pass unaltered, in pure Python and with the native masker.</p>
+<ul>
+<li><strong>A job with no transforms no longer copies every chunk twice.</strong> <code>sourceQueryColumnTransforms</code> is unset on most jobs, and each chunk was still converted to lists and back to tuples to change nothing: 3.5 ms per 10,000-row chunk, on every job in the product. A job with one transform now walks one column rather than all of them.</li>
+<li><strong>A masking policy reads and rewrites only the columns it masks.</strong> A realistic policy keeps far more columns than it masks, and all of them were extracted, copied and reassembled. Per 10,000-row × 30-column chunk: 5 masked columns 29.9 → 19.2 ms (−36%), 1 masked column 18.3 → 6.1 ms (−66%), all 30 masked 106.3 → 96.3 ms (−9%).</li>
+<li><strong><code>dateShift</code> derives each day's shift once</strong> rather than once per row: 32.0 → 4.3 ms per 10,000 rows spread over two years (−87%). The shift was already per day; only the work is new.</li>
+<li><strong>The per-value scans each dialect made before a load are now one walk</strong>: a clean 10,000-row chunk into SQL Server 35.5 → 19.7 ms (−45%).</li>
+<li><strong>PostgreSQL's bulk load spells each value through an exact-type lookup</strong> instead of a chain of <code>isinstance</code> checks, which every row into a PostgreSQL target crossed: 100.7 → 77.9 ms per 10,000-row × 30-column chunk (−23%). A subclass of a handled type still takes the chain, so nothing is spelled differently.</li>
+<li><strong>Run state in a table reuses one connection per process</strong> instead of opening one per read and write, which also ran <code>passwordCommand</code> again each time for cloud IAM tokens.</li>
+<li><strong><code>bauta history</code> reads backwards from the end of the file</strong> instead of parsing all of it to show the last 20 records.</li>
+</ul>
+<h3 id="fixed_3">Fixed<a class="headerlink" href="#fixed_3" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>Run state, history and manifest tables whose names need quoting</strong> were written correctly and read back unquoted, so a table called <code>order</code> worked until something read it.</li>
+<li><code>bauta/masking.py</code> and <code>bauta/builtinMasking.py</code> no longer import each other: a strategy declares <code>PASSTHROUGH</code> rather than the core naming a built-in strategy to recognise one.</li>
+</ul>
+<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">#</a></h3>
+<ul>
+<li><code>proposeTable</code>'s <code>primaryKeys</code> parameter, which nothing ever passed. The primary keys it would have supplied are read through the database's own cache.</li>
+</ul>
+<h2 id="015--2026-09-20">0.1.5 — 2026-09-20<a class="headerlink" href="#015--2026-09-20" title="Permanent link">#</a></h2>
+<h3 id="breaking_4">Breaking<a class="headerlink" href="#breaking_4" title="Permanent link">#</a></h3>
+<ul>
+<li><strong><code>charset: hex</code> is case-sensitive, so its masks change.</strong> It used to mask case-insensitively, so <code>aB12cd34</code> and <code>ab12cd34</code> got one mask and two rows of a key could merge silently. <code>key</code> now keeps each character's case (digits to digits, <code>a-f</code> to <code>a-f</code>, <code>A-F</code> to <code>A-F</code>); <code>fpe</code> masks both cases within one alphabet, as FF1 needs a single one, so a masked value may mix cases. Re-mask any copy whose <code>hex</code> columns must match one made with an earlier version.</li>
+<li><strong>Table names are quoted into the statements a run builds</strong>, as column names already were, so <code>targetTableFinal</code> and <code>targetTableStage</code> are read as names rather than passed through as SQL. A name written plainly still means the table it meant unquoted. A value that was really a fragment of SQL — an Oracle database link (<code>orders@remote</code>), say — no longer works and has to become a view or a table the job names directly. See <a href="../../concepts/how-it-works/#how-names-are-written">how names are written</a>.</li>
+<li><strong><code>dateShift</code> is keyed on the day, so timestamp masks change.</strong> It used to key on the whole value, so two timestamps hours apart moved by different numbers of days: a day's rows scattered across the month, and a <code>DATE</code> column and a <code>TIMESTAMP</code> column holding the same day disagreed about where that day went. Every value on a day now moves to one day, which is what the strategy is documented to do. Dates and ISO date text mask as before; re-mask any copy whose shifted timestamps must match one made with an earlier version.</li>
+<li><strong>SQLite connections enforce declared foreign keys</strong>, as every other database does; SQLite ignores them unless each connection asks. A load into a SQLite target whose rows break a declared key now fails instead of loading them, and so does emptying a table other rows still reference. For a job that has to load such rows, put <code>PRAGMA foreign_keys=OFF</code> in its <code>preTargetAdhocQueries</code>.</li>
+</ul>
+<h3 id="added_5">Added<a class="headerlink" href="#added_5" title="Permanent link">#</a></h3>
+<ul>
+<li><strong><code>bauta verify-references</code></strong> counts, for each foreign key on a table the jobs load, the rows whose key points at nothing: the keys the target declares, and those of the sources copied into it. Counts only, never values; exits 1 on any orphan, so it can follow <code>run</code> in CI. See <a href="../../guides/copy-a-subset/#verify-references-checking-the-copys-references">checking the copy's references</a>.</li>
+<li><code>bauta audit --connect</code> warns when a job copies only part of a table that another job's table references (it's incremental, or its query has a <code>WHERE</code>), and the referencing job isn't limited to match, so the copy can reference rows it lacks. See <a href="../../concepts/how-it-works/#tables-that-reference-each-other">tables that reference each other</a>.</li>
+<li><code>bauta audit --connect</code> warns when a job's table references another job's table, and the job can load before the other: it doesn't wait for it through <code>predecessors</code>, the other is inactive, or a job on the way has a longer <code>refresh</code>.</li>
+<li><code>bauta audit --connect</code> reports an error for a <code>swap</code> job whose target is referenced by a foreign key the target database declares. The key stays on the old table, now the stage, so it stops checking the target and the next run can't empty the stage. See <a href="../../concepts/how-it-works/#how-a-swap-works">how a swap works</a>.</li>
+<li><code>bauta audit --connect</code> warns when a <code>swap</code> job replaces a table that declares foreign keys of its own, since its stage table has none and the copy stops enforcing them after a run.</li>
+<li><code>bauta audit --connect</code> warns when a foreign key and the key it references are both masked with <code>shuffle</code>, which moves values between rows rather than mapping them, so the references point at other rows.</li>
+<li><code>bauta audit --connect</code>'s partial-parent check also recognises <code>LIMIT</code>, <code>TOP</code>, <code>FETCH FIRST</code> and a query that joins another table, not only <code>WHERE</code> and watermarks.</li>
+</ul>
+<h3 id="changed_5">Changed<a class="headerlink" href="#changed_5" title="Permanent link">#</a></h3>
+<ul>
+<li><code>schema</code> maps <code>TIME</code> into Oracle as <code>VARCHAR2(32 CHAR)</code> rather than <code>VARCHAR2(16 CHAR)</code>, which couldn't hold the day-long values MySQL's driver returns (<code>-34 days, 1:00:01</code>).</li>
+<li>The cycle message from <code>schema</code>, <code>synthesize</code> and <code>clear</code> no longer offers <code>--no-foreign-keys</code>, which only <code>schema</code> has: it now says to take those tables one at a time, or leave one of the keys out of the set.</li>
+</ul>
+<h3 id="fixed_4">Fixed<a class="headerlink" href="#fixed_4" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>A table whose name has to be written in quotes was unusable.</strong> A reserved word (<code>group</code>, <code>order</code>), a name whose case the database folds, a name with a space: every catalog lookup bound the quotes along with the name, so the table appeared to have no columns and no primary key, and <code>run</code> refused an upsert into it with "has no primary key". Names are now unquoted before a lookup binds them and quoted into every statement bauta builds, on all six databases. <code>audit</code> and <code>verify-references</code> match such a job to the catalog's keys, <code>schema</code> quotes the tables it creates as it already quoted their columns, and <code>subset</code> and <code>discover</code> quote the names they write into what they generate. A name written plainly still means what it means unquoted, so <code>orders</code> finds Oracle's <code>ORDERS</code>. See <a href="../../concepts/how-it-works/#how-names-are-written">how names are written</a>.</li>
+<li><strong>A decimal lost its digits in a SQLite copy.</strong> <code>schema</code> created <code>DECIMAL(38,10)</code>, which gives SQLite's numeric affinity, so the exact text was converted to an integer or a float as it was stored: <code>123456789012345678.1234567890</code> came back as <code>123456789012345680</code>, and <code>0.1</code> as the nearest double, both silently. A decimal is now created as <code>TEXT</code>, which keeps every digit, and the conversion is noted. Tables created by earlier versions keep the type they have; recreate them to hold exact values.</li>
+<li><strong>A MySQL <code>TIME</code> was corrupted or refused everywhere it was copied to.</strong> Its driver returns a duration, which nothing else accepts: SQL Server's and SQLite's drivers refused it outright, Oracle stored Python's own <code>-35 days, 1:00:01</code>, and PostgreSQL squeezed <code>-838:59:59</code> into a <code>TIME</code> column as <code>01:00:01</code> without a word. Durations are now written as <code>[-]HH:MM:SS[.ffffff]</code>, which every database parses back, and a value no <code>TIME</code> column can hold is refused as it loads.</li>
+<li><strong>MySQL's <code>INT UNSIGNED</code> was indistinguishable from <code>INT</code></strong>, so <code>schema</code> created a column that holds half its range and said nothing; a value above 2147483647 was found only when it failed to load. MySQL and MariaDB columns are now read as their full declared type, so both <code>INT UNSIGNED</code> and <code>BIGINT UNSIGNED</code> are noted on the table <code>schema</code> creates.</li>
+<li><strong>Two tables that would share a generated job name silently became one job.</strong> <code>orders</code> and <code>Orders</code>, or the same table name in two schemas, both rendered as <code>maskOrders</code>, and the second replaced the first as a duplicate key in the generated YAML. Names are now made distinct, and a schema-qualified name no longer puts a dot in a job name.</li>
+<li><strong>A <code>sourceQuery</code> returning fewer columns than the target has failed with a driver message that named nothing</strong> -- "the current statement uses 5, and there are 3 supplied". The job now says how many columns the query returns, how many the target has and what they are, and points at <code>targetColumns</code>.</li>
+<li><strong>An upsert into a target without a primary key wrote first and refused afterwards</strong>, so its <code>preTargetAdhocQueries</code> had already run against the live target and its stage table held every row. The target is now checked before anything is written.</li>
+<li><strong>A <code>json</code> or <code>jsonb</code> column couldn't be copied on PostgreSQL.</strong> psycopg reads one as a dict and then refuses to write one back ("cannot adapt type 'dict'"), so any job whose query returned such a column failed on its first chunk. Dictionaries are now written back as JSON. A <code>jsonb</code> column holding a top-level JSON <em>array</em> still has to be selected as text, since a list is what psycopg writes to a <code>text[]</code> column and the two can't be told apart.</li>
+<li><strong>A load that a masked value overflowed blamed the column.</strong> <code>key</code> keeps an integer's digit count, so a 10-digit value can leave an <code>INT</code> column's range, and <code>number</code> varies a value that may already be at its column's limit; the driver's message named only the column. Such a failure now says which mask is likely responsible and what to do about it, and <a href="../../reference/strategies/#key">masking.md</a> documents both limits.</li>
+<li><strong>A swap on Oracle could lose the stage table for good.</strong> Oracle commits each DDL statement, so a rename blocked by another session (<code>ORA-00054</code>) left the stage table under the temporary name: it was gone, and every run after that failed with <code>ORA-00942</code> until someone renamed it back by hand. A failed rename now undoes the ones that went through.</li>
+<li><strong>A swap on SQLite repointed every view on the target at the stage table.</strong> SQLite rewrites the views that name a renamed table, to follow it, so a view over the copy started reading the old rows -- and the next run emptied them. The renames now leave views naming the target.</li>
+<li><strong>A <code>postTargetAdhocQuery</code> that failed after a swap reported the job as having moved 0 rows</strong>, though the swap had already replaced the target with the new rows. The failure now says the load finished, names the target and reports the rows it holds.</li>
+<li><strong>A run killed outright left its jobs running.</strong> <code>kill -9</code>, an out-of-memory kill or a scheduler that doesn't wait runs none of the run's cleanup, so each job carried on loading rows and writing run state — while the run lock, held by the process that died, was already free, so the next <code>bauta run</code> started alongside it and the two loaded over each other. A job now ends the moment the run that started it does. See <a href="../../concepts/how-it-works/#workers">workers</a>.</li>
+<li><strong>A name longer than the target keeps was loaded into whatever table shared its first 63 characters.</strong> PostgreSQL cuts a name to 63 bytes without saying so, and the other servers to their own limits, so two jobs whose targets differed only past that truncated and loaded the same table, and the second job's swap renamed over the first's rows although both jobs reported failure. Such a name is now refused before anything is written, and <code>schema</code> notes it on the table it would create.</li>
+<li><strong>A swap of such a table built a temporary name its own parser refused</strong>: the <code>_tmp</code> went outside the quotes, so SQL Server got <code>sp_rename '[group_stage]', '[group]_tmp'</code> and failed after the stage table had been loaded. The suffix now goes inside them, and sp_rename is given the new name bare, since brackets in it would become part of the name.</li>
+<li><strong><code>schema</code> copied a foreign key's constraint name verbatim</strong>, so <code>--apply</code> failed partway, leaving half a schema, wherever two keys shared a name — legal on PostgreSQL and SQLite, which name constraints per table, but not on MySQL, MariaDB, Oracle or SQL Server. Names are now made unique across one invocation's statements, including where cutting to the length limit made two of them equal.</li>
+<li><strong><code>schema</code> emitted foreign keys it couldn't create</strong>: a key to a unique column that isn't the primary key — the shape <code>subset --root</code> produces — was refused by every dialect, since <code>schema</code> never copied the <code>UNIQUE</code> constraint behind it. It now copies the unique constraints its keys need.</li>
+<li><strong><code>schema</code> named a table after the first foreign key that matched it</strong>, mixing Oracle's upper-case catalog names with the names as typed in one script, so jobs written against the lower-case names found only half the tables. Every table is created under the name it was asked for.</li>
+<li><strong><code>schema</code> was silent about several lossy conversions</strong> it is documented to note: SQLite's 64-bit <code>INTEGER</code> into a narrower integer, MySQL's <code>BIGINT UNSIGNED</code>, a decimal declaring no precision, a decimal clamped to the target's limits, and a time-zone-aware timestamp into Oracle, which keeps the loading session's offset rather than the source's.</li>
+<li><strong><code>synthesize</code> repeated itself</strong>: every generator was indexed from row zero, so a second run regenerated the first run's values and a <code>UNIQUE</code> column refused them. Generators now continue from the rows already in the table, and generated text ends in the row's number so it stays distinct once cut to a column's width. A row the database still refuses is reported as a <code>SynthesisError</code> naming the table and the rows already inserted, rather than a raw driver traceback.</li>
+<li><strong><code>digits</code> copied a value through unmasked when <code>keepLeading</code> and <code>keepTrailing</code> covered every digit of it</strong> — <code>555-0100</code> under the docs' own card-number options — while the manifest said it was masked. Such a value now fails the job.</li>
+<li><strong>A masked column could be the watermark</strong>, which is read before masking and then written to run state and logs and shown by <code>bauta jobs</code>, leaking the value the job exists to hide. <code>validate</code> now refuses it, and <code>audit --connect</code> reports a column that falls to a masking <code>defaultStrategy</code>.</li>
+<li><strong>A foreign key pointing into another schema was reported without it</strong>, so every check matched a different, same-named table in the connection's own schema and <code>subset</code> read the wrong parent. MySQL, MariaDB, PostgreSQL, Oracle and SQL Server now name such a parent <code>schema.table</code>.</li>
+<li><strong>On SQL Server, foreign keys of tables outside the login's default schema were invisible</strong>, so <code>subset</code> silently dropped the parents of a table named <code>schema.table</code>, as configuration.md tells SQL Server users to do. Keys of every schema are listed, qualified when they aren't in the default one.</li>
+<li><strong>Oracle dropped the fraction of a second from every timestamp written</strong>, since the driver binds a datetime as <code>DATE</code>. <code>2026-01-01 10:00:07.123456</code> became <code>10:00:07</code> even in a <code>TIMESTAMP(6)</code> column.</li>
+<li><strong>Oracle returned every <code>NUMBER</code> with a scale as a float</strong>, losing digits (<code>123456789012345.6789</code> arrived as <code>123456789012345.67</code>) and turning large values into ones no target could store — an Oracle-to-Oracle copy of a <code>NUMBER(38,10)</code> failed with ORA-01438. They are now <code>Decimal</code>; a scale of 0 stays an <code>int</code>, and <code>BINARY_FLOAT</code>/<code>BINARY_DOUBLE</code> stay floats.</li>
+<li><strong>SQL Server truncated timestamps to milliseconds</strong>, since pymssql renders a bound datetime that way. Times are now sent as text, which SQL Server converts exactly.</li>
+<li><strong>SQL Server rewrote whole columns of a chunk.</strong> One <code>VALUES</code> list takes one type per column, so a number beside <code>'00001'</code> stored it as <code>'1'</code>, and a decimal spelled <code>1E-10</code> typed its column float and rounded the exact values beside it. Such a chunk now loads row by row, where each value is converted on its own.</li>
+<li><strong>A <code>Decimal</code> watermark was written to a run-state file as a float</strong>, which rounds: <code>12345678901234567.1</code> came back as <code>1.2345678901234568e+16</code>, above the highest row read, so the rows in between were never extracted again. It is now written exactly (<code>!decimal '12345678901234567.1'</code>); floats written by earlier versions still read.</li>
+<li><strong>Masking in place left the unmasked original in the stage table</strong>, where the swap had moved it, beside the masked copy. A masked job now empties its stage table after the swap.</li>
+<li><strong>On Oracle, foreign keys were read from the login's own schema rather than <code>currentSchema</code></strong>, so <code>subset</code>, <code>schema</code>, <code>clear</code>, <code>synthesize</code>, <code>audit --connect</code> and <code>verify-references</code> all worked from the wrong keys — usually none — wherever <code>currentSchema</code> named another schema.</li>
+</ul>
+<h2 id="014--2026-09-19">0.1.4 — 2026-09-19<a class="headerlink" href="#014--2026-09-19" title="Permanent link">#</a></h2>
+<h3 id="added_6">Added<a class="headerlink" href="#added_6" title="Permanent link">#</a></h3>
+<ul>
+<li><code>bauta --version</code> prints the version, and which masker a run would use: <code>bauta-rs</code> and its version, or Python and why.</li>
+</ul>
+<h3 id="changed_6">Changed<a class="headerlink" href="#changed_6" title="Permanent link">#</a></h3>
+<ul>
+<li>The built-in masking strategies moved from <code>bauta/masking.py</code> to <code>bauta/builtinMasking.py</code>, and the lists the <code>fake*</code> strategies pick from to <code>bauta/fakeData.py</code>. Old import paths such as <code>bauta.masking.STRATEGIES</code> and <code>bauta.masking.LOCALES</code> still work.</li>
+<li><code>bauta audit</code> no longer offers <code>--memory</code>, <code>--memory-database</code> or <code>--memory-table</code>, which it never read.</li>
+</ul>
+<h2 id="013--2026-09-18">0.1.3 — 2026-09-18<a class="headerlink" href="#013--2026-09-18" title="Permanent link">#</a></h2>
+<h3 id="added_7">Added<a class="headerlink" href="#added_7" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>Masking on several cores.</strong> <code>jobs.yaml</code>'s <code>maskingThreads</code> sets how many threads the native masker spreads each chunk over: <code>1</code> by default, a number up to the cores available, or <code>auto</code> to divide the cores between the jobs running as each starts. <code>BAUTA_MASKING_THREADS</code> overrides it. Results are identical for any count. See <a href="../../guides/make-it-faster/#masking-threads">masking threads</a>.</li>
+<li>The <code>fake*</code> strategies are masked by the native masker too, from the lists Python hands it.</li>
+<li>The native masker remembers masks across chunks for <code>key</code>, <code>fpe</code> and <code>fake*</code>, and allocates through mimalloc.</li>
+<li>The native-masking demo compares Python and Rust on a narrow table, and one core against all of them on a 25-column one.</li>
+</ul>
+<h3 id="changed_7">Changed<a class="headerlink" href="#changed_7" title="Permanent link">#</a></h3>
+<ul>
+<li>A 25-column masked table runs at about 73,000 rows a second on ten cores, from about 18,000 in 0.1.2. See <a href="../../guides/make-it-faster/#what-each-strategy-costs">speed</a> for the measurements and their conditions.</li>
+<li>The documentation was made consistent throughout, and every speed figure re-measured.</li>
+</ul>
+<h2 id="012--2026-09-18">0.1.2 — 2026-09-18<a class="headerlink" href="#012--2026-09-18" title="Permanent link">#</a></h2>
+<h3 id="breaking_5">Breaking<a class="headerlink" href="#breaking_5" title="Permanent link">#</a></h3>
+<ul>
+<li><strong><code>bauta init</code> is removed.</strong> Copy the starter configuration from <code>example/starter/configuration/</code> instead.</li>
+<li><strong>Prometheus metrics are removed:</strong> <code>--metrics</code>, <code>--metrics-push</code>, <code>writeMetricsFile</code> and <code>pushMetrics</code>. Take the flags out of cron entries and scripts. Run history in a table covers alerting on jobs that stop completing; see <a href="../../guides/watch-what-ran/#run-history">run history</a>.</li>
+<li><strong>PostgreSQL uses psycopg 3</strong> (<code>psycopg[binary]</code> 3.2.10 or newer) in place of psycopg2. <code>bauta[postgresql]</code> now installs without a compiler. psycopg2 is no longer used, so a leftover install can be removed. Connection <code>options</code> are still libpq parameters.</li>
+</ul>
+<h3 id="added_8">Added<a class="headerlink" href="#added_8" title="Permanent link">#</a></h3>
+<ul>
+<li><code>memory</code>, <code>history</code> and <code>manifest</code> settings in <code>jobs.yaml</code>, each a file relative to it or a table in one of <code>database.yaml</code>'s aliases. Flags still override them, and <code>--history-database</code>, <code>--manifest-database</code> and the <code>--*-table</code> flags are new.</li>
+<li>Masking manifests can be kept in a table, and <code>bauta verify-manifest</code> reads the latest, or <code>--run RUN_ID</code> an earlier one.</li>
+<li><code>discovery.yaml</code>: rules of your own for recognising personal data, used by <code>discover</code>, <code>subset --mask</code>, <code>audit</code> and <code>synthesize</code> ahead of the built-in rules, which it can leave out by name. <code>--rules FILE</code> names one elsewhere.</li>
+</ul>
+<h3 id="changed_8">Changed<a class="headerlink" href="#changed_8" title="Permanent link">#</a></h3>
+<ul>
+<li>The built-in discovery rules moved to <code>bauta/builtinDiscovery.py</code>.</li>
+</ul>
+<h2 id="011--2026-09-18">0.1.1 — 2026-09-18<a class="headerlink" href="#011--2026-09-18" title="Permanent link">#</a></h2>
+<h3 id="added_9">Added<a class="headerlink" href="#added_9" title="Permanent link">#</a></h3>
+<ul>
+<li><strong><code>bauta-rs</code>, the native masker, on PyPI.</strong> <code>pip install "bauta[native]"</code> installs the version that matches; wheels for Linux (x86-64 and ARM) and macOS (Apple silicon and Intel).</li>
+<li><code>bauta</code> uses <code>bauta-rs</code> only at its own version, and masks in Python, with a warning, alongside any other.</li>
+<li><code>bauta init</code>, which wrote a starter configuration. Removed again in 0.1.2.</li>
+</ul>
+<h2 id="010--2026-09-18">0.1.0 — 2026-09-18<a class="headerlink" href="#010--2026-09-18" title="Permanent link">#</a></h2>
+<p>The first release on PyPI, as <code>bauta</code>: masking, discovery, subsets, synthetic data, <code>audit</code>, sealed manifests, incremental loads and a dependency graph, across Oracle, SQL Server, PostgreSQL, MySQL, MariaDB and SQLite.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../../concepts/security/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Security model">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Security model
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../development/" class="md-footer__link md-footer__link--next" aria-label="Next: Development">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Development
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      MIT licensed
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ribeiro11075/bauta" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://pypi.org/project/bauta/" target="_blank" rel="noopener" title="pypi.org" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.8 200.5c-7.7-30.9-22.3-54.2-53.4-54.2h-40.1v47.4c0 36.8-31.2 67.8-66.8 67.8H172.7c-29.2 0-53.4 25-53.4 54.3v101.8c0 29 25.2 46 53.4 54.3 33.8 9.9 66.3 11.7 106.8 0 26.9-7.8 53.4-23.5 53.4-54.3v-40.7H226.2v-13.6h160.2c31.1 0 42.6-21.7 53.4-54.2 11.2-33.5 10.7-65.7 0-108.6M286.2 444.7a20.4 20.4 0 1 1 0-40.7 20.4 20.4 0 1 1 0 40.7M167.8 248.1h106.8c29.7 0 53.4-24.5 53.4-54.3V91.9c0-29-24.4-50.7-53.4-55.6-35.8-5.9-74.7-5.6-106.8.1-45.2 8-53.4 24.7-53.4 55.6v40.7h106.9v13.6h-147c-31.1 0-58.3 18.7-66.8 54.2-9.8 40.7-10.2 66.1 0 108.6 7.6 31.6 25.7 54.2 56.8 54.2H101v-48.8c0-35.3 30.5-66.4 66.8-66.4m-6.6-183.4a20.4 20.4 0 1 1 0 40.8 20.4 20.4 0 1 1 0-40.8"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.indexes", "navigation.path", "navigation.footer", "navigation.top", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
