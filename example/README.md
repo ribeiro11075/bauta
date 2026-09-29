@@ -81,7 +81,7 @@ python example/native-masking/demo.py                  # 100,000 narrow rows and
 python example/native-masking/demo.py 100000 200000    # the same comparison, quicker
 ```
 
-Masks two tables in Python and in Rust (the [native masker](../docs/masking.md#the-native-masker), `bauta-rs`), each run into a staging copy of its own, and checks every copy of a table is identical.
+Masks two tables in Python and in Rust (the [native masker](../docs/guides/make-it-faster.md#the-native-masker), `bauta-rs`), each run into a staging copy of its own, and checks every copy of a table is identical.
 
 A narrow table, six masked columns, where writing to the database sets the pace. Reading, masking and writing take turns or overlap (`BAUTA_PIPELINE`), in Python or in Rust (`BAUTA_NATIVE`):
 
@@ -128,4 +128,4 @@ cp example/starter/configuration/*.yaml configuration/
 
 Set the variables it reads -- `SOURCE_DB_PASSWORD`, `TARGET_DB_PASSWORD` and `MASKING_KEY` -- then edit it for your databases. The CLI reads `./configuration` by default; `--config DIR` points it anywhere else.
 
-Validated, with every demo's configuration, by `tests/examples/test_shipped_example_configuration.py`. See [docs/configuration.md](../docs/configuration.md) for every field.
+Validated, with every demo's configuration, by `tests/examples/test_shipped_example_configuration.py`. See [docs/configuration.md](../docs/reference/configuration.md) for every field.

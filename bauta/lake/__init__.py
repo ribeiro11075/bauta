@@ -1,6 +1,6 @@
 """Tables of files, and Iceberg tables, as a data job's target: written
 through pyarrow, which the `files` extra installs, and pyiceberg, which the
-`iceberg` extra does. See "Files as a target" in docs/design.md.
+`iceberg` extra does. See "Files as a target" in docs/concepts/how-it-works.md.
 """
 from typing import Any
 

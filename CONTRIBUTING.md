@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping. [docs/development.md](docs/development.md) is the full guide to the tests, the native masker and releases; this page is what to know before opening a pull request.
+Thank you for helping. [docs/project/development.md](docs/project/development.md) is the full guide to the tests, the native masker and releases; this page is what to know before opening a pull request.
 
 ## Setting up
 
@@ -33,12 +33,12 @@ pytest -m integration
 | `bauta/log/` | logging, and scrubbing values out of messages |
 | `bauta/cli/` | the command, one module per group of subcommands |
 
-Their tests are in the same place under `tests/`: `tests/jobs/` for `bauta/jobs/`, and so on. Tests against real databases are in `tests/integration/`; see [where the tests are](docs/development.md#where-the-tests-are).
+Their tests are in the same place under `tests/`: `tests/jobs/` for `bauta/jobs/`, and so on. Tests against real databases are in `tests/integration/`; see [where the tests are](docs/project/development.md#where-the-tests-are).
 
 ## What a change needs
 
 - **A test that fails without it.** Name it for the behaviour, and say in its docstring what used to go wrong.
-- **Docs, if behaviour changes.** Every configuration field and flag is documented; `tests/repository/test_documentation.py` checks the links.
+- **Docs, if behaviour changes.** Every configuration field and flag is documented; `tests/repository/test_documentation.py` checks the links. After changing a flag, run `python website/commands.py` to regenerate the command pages. See [the documentation site](docs/project/development.md#the-documentation-site).
 - **A changelog entry** under *Unreleased* in [CHANGELOG.md](CHANGELOG.md), breaking changes first.
 - **Masking changes go to Python first.** Python is the reference implementation; port the change to `mask-rs/`, then regenerate the vectors (`python3 mask-rs/generate_vectors.py`). A change that alters any mask is a breaking change.
 

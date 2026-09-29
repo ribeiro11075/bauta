@@ -1,7 +1,7 @@
 """Safe, realistic copies of production across databases. Most deployments
-use the `bauta` command; see docs/library.md for embedding it.
+use the `bauta` command; see docs/reference/python-api.md for embedding it.
 
-What is importable from here is the public API, the one docs/library.md
+What is importable from here is the public API, the one docs/reference/python-api.md
 describes. A name reached only through a submodule is internal, unless the
 documentation names it there, and may change in any release.
 """

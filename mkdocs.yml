@@ -1,0 +1,138 @@
+# The documentation site: docs/ built with Material for MkDocs.
+#
+#   pip install -e ".[docs]"
+#   mkdocs serve             # http://127.0.0.1:8000, rebuilt on every save
+#   mkdocs build --strict    # what CI runs: any broken link or anchor fails
+#
+# Releases publish it to GitHub Pages with mike, one copy per version; see
+# .github/workflows/release.yml.
+site_name: bauta
+site_description: Safe, realistic copies of production across databases
+site_url: https://ribeiro11075.github.io/bauta/
+repo_url: https://github.com/ribeiro11075/bauta
+repo_name: ribeiro11075/bauta
+edit_uri: edit/master/docs/
+copyright: MIT licensed
+
+hooks:
+  - website/hooks.py
+
+theme:
+  name: material
+  custom_dir: website/overrides
+  favicon: assets/images/favicon.svg
+  icon:
+    logo: bauta/mask
+    repo: fontawesome/brands/github
+  font:
+    text: Hanken Grotesk
+    code: JetBrains Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: bauta
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Dark
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Light
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.path
+    - navigation.footer
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+extra_css:
+  - assets/stylesheets/bauta.css
+
+extra:
+  version:
+    provider: mike
+    alias: true
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ribeiro11075/bauta
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/bauta/
+
+markdown_extensions:
+  - toc:
+      permalink: "#"
+      # GitHub's anchors, so a link written for docs/ on GitHub works here too
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - tables
+  - attr_list
+  - md_in_html
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Home: index.md
+  - Get started:
+      - get-started/install.md
+      - get-started/quickstart.md
+      - get-started/examples.md
+  - Guides:
+      - guides/mask-a-table.md
+      - guides/keep-joins-intact.md
+      - guides/cover-every-column.md
+      - guides/propose-a-policy.md
+      - guides/copy-a-subset.md
+      - guides/generate-data.md
+      - guides/prove-the-copy-is-safe.md
+      - guides/keep-a-manifest.md
+      - guides/run-on-a-schedule.md
+      - guides/watch-what-ran.md
+      - guides/rotate-the-key.md
+      - guides/make-it-faster.md
+  - Reference:
+      - reference/configuration.md
+      - connections.yaml: reference/connections.md
+      - jobs.yaml: reference/jobs.md
+      - reference/strategies.md
+      - Commands:
+          - reference/commands/index.md
+          - run: reference/commands/run.md
+          - validate: reference/commands/validate.md
+          - jobs: reference/commands/jobs.md
+          - history: reference/commands/history.md
+          - discover: reference/commands/discover.md
+          - subset: reference/commands/subset.md
+          - schema: reference/commands/schema.md
+          - synthesize: reference/commands/synthesize.md
+          - clear: reference/commands/clear.md
+          - audit: reference/commands/audit.md
+          - coverage: reference/commands/coverage.md
+          - verify-manifest: reference/commands/verify-manifest.md
+          - verify-references: reference/commands/verify-references.md
+      - reference/environment.md
+      - reference/tables.md
+      - Python API: reference/python-api.md
+  - Concepts:
+      - concepts/how-it-works.md
+      - concepts/security.md
+  - Project:
+      - project/changelog.md
+      - project/development.md
+      - project/contributing.md

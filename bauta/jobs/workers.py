@@ -1,6 +1,6 @@
 """Each job in a process of its own, so it can be stopped or die alone, and
 ends the moment the run that started it does. See "Workers" in
-docs/design.md.
+docs/concepts/how-it-works.md.
 """
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobC
 
 class _JobProcess:
     """One job, running in a process of its own so it can be stopped or die
-    alone; see "Workers" in docs/design.md.
+    alone; see "Workers" in docs/concepts/how-it-works.md.
 
     Log records and the outcome come back over a pipe only this job writes to.
     The child holds the only sending end, so its death shows up as end-of-file.

@@ -1,6 +1,6 @@
 # How it works, and why
 
-The behaviour behind the fields in [configuration.md](configuration.md), and the consequences worth knowing before you rely on it.
+The behaviour behind the fields in [configuration.md](../reference/configuration.md), and the consequences worth knowing before you rely on it.
 
 - [How a data job moves rows](#how-a-data-job-moves-rows)
 - [How a swap works](#how-a-swap-works)
@@ -39,9 +39,9 @@ One statement can't update a row twice, so for all three, rows repeating a key w
 
 **A `sourceQuery` that repeats a key** is a question the two upsert paths answer differently, so it is worth not writing one. A stage-less `upsert` keeps the last row of each key, as above. An `upsert` with a `targetTableStage` loads every row into the stage first, and the stage carries the target's primary key, so the database refuses the repeat there — loudly, and before anything reaches the target. Deduplicate in the query instead.
 
-Where the [native masker](masking.md#the-native-masker) is installed, the three stages overlap rather than taking turns: masking moves to a worker thread while the reader and writer keep the database connections, which they must — `mysqlclient` and PyMySQL forbid a connection being used by a thread other than its own, and SQLite enforces the same. Drivers release the GIL while they wait on a socket and the native masker releases it for a whole chunk, so the waiting and the masking genuinely overlap. A job then holds about four chunks rather than one: one being read, two masked or being masked ahead of the writer, and one being written. Pure-Python masking is slow enough to swamp any wait worth hiding, so it stays sequential; `BAUTA_PIPELINE` overrides either default.
+Where the [native masker](../guides/make-it-faster.md#the-native-masker) is installed, the three stages overlap rather than taking turns: masking moves to a worker thread while the reader and writer keep the database connections, which they must — `mysqlclient` and PyMySQL forbid a connection being used by a thread other than its own, and SQLite enforces the same. Drivers release the GIL while they wait on a socket and the native masker releases it for a whole chunk, so the waiting and the masking genuinely overlap. A job then holds about four chunks rather than one: one being read, two masked or being masked ahead of the writer, and one being written. Pure-Python masking is slow enough to swamp any wait worth hiding, so it stays sequential; `BAUTA_PIPELINE` overrides either default.
 
-One chunk is still masked at a time, and chunks are written in the order they were read. The native masker takes the whole chunk in one call and masks its columns at once, so the GIL changes hands once a chunk rather than once a column; with [`maskingThreads`](masking.md#masking-threads) above 1, the columns and their distinct values are spread over several threads, which changes how fast the chunk is masked, not the result. A stage-less upsert writes straight into the live target, where one statement can't update the same row twice, so a key repeating across chunks has to arrive as it was read.
+One chunk is still masked at a time, and chunks are written in the order they were read. The native masker takes the whole chunk in one call and masks its columns at once, so the GIL changes hands once a chunk rather than once a column; with [`maskingThreads`](../guides/make-it-faster.md#masking-threads) above 1, the columns and their distinct values are spread over several threads, which changes how fast the chunk is masked, not the result. A stage-less upsert writes straight into the live target, where one statement can't update the same row twice, so a key repeating across chunks has to arrive as it was read.
 
 **One consequence to know before sizing a job:** extract and load interleave, so a source that fails part-way leaves the rows it already yielded written.
 
@@ -69,11 +69,11 @@ On Oracle, a rename that fails — another session holding the table, which is `
 
 **What isn't rebound on PostgreSQL:** materialized views, which keep reading the old table until recreated.
 
-**What isn't rebound anywhere:** foreign keys in other tables that reference the target. Every database ties them to the table, not its name, so they move with the old table to the stage's name and stop checking the new target. The next run then can't empty the stage: PostgreSQL, SQL Server, Oracle, MySQL and MariaDB refuse to truncate a referenced table, and SQLite refuses to delete rows still referenced. Recreate those keys in `postTargetAdhocQueries`, or use `upsert` with a stage table instead of `swap`. `audit --connect` [reports](masking.md#reviewing-policies-audit) a swap job whose target such a key references.
+**What isn't rebound anywhere:** foreign keys in other tables that reference the target. Every database ties them to the table, not its name, so they move with the old table to the stage's name and stop checking the new target. The next run then can't empty the stage: PostgreSQL, SQL Server, Oracle, MySQL and MariaDB refuse to truncate a referenced table, and SQLite refuses to delete rows still referenced. Recreate those keys in `postTargetAdhocQueries`, or use `upsert` with a stage table instead of `swap`. `audit --connect` [reports](../guides/prove-the-copy-is-safe.md#reviewing-policies-audit) a swap job whose target such a key references.
 
 **A `postTargetAdhocQuery` that fails after the swap** fails the job, but the swap has already happened: the target holds the new rows. The failure says so, and reports the rows loaded rather than none, so a copy that was in fact rebuilt doesn't read as a job that moved nothing.
 
-**The swapped table's own keys alternate.** A stage table has none (it can't: see [`--stage-suffix`](masking.md#schema-creating-the-targets-tables)), so after a swap the live table is the keyless former stage, and after the next swap the original is back with its keys. Between the two, the copy enforces nothing, and no load fails to tell you. `audit --connect` [warns](masking.md#reviewing-policies-audit) about a swap job whose table declares keys. Recreate them in `postTargetAdhocQueries`, or use `upsert` with a stage table for any table whose keys matter.
+**The swapped table's own keys alternate.** A stage table has none (it can't: see [`--stage-suffix`](../guides/copy-a-subset.md#schema-creating-the-targets-tables)), so after a swap the live table is the keyless former stage, and after the next swap the original is back with its keys. Between the two, the copy enforces nothing, and no load fails to tell you. `audit --connect` [warns](../guides/prove-the-copy-is-safe.md#reviewing-policies-audit) about a swap job whose table declares keys. Recreate them in `postTargetAdhocQueries`, or use `upsert` with a stage table for any table whose keys matter.
 
 
 ## Incremental loads
@@ -144,14 +144,14 @@ where c.updatedAt > {{ watermark }}
    or exists (select 1 from orders o where o.customerId = c.id and o.updatedAt > {{ watermark }})
 ```
 
-`audit --connect` [warns about a parent copied in part](masking.md#reviewing-policies-audit) whose child isn't limited to match, and [`verify-references`](masking.md#verify-references-checking-the-copys-references) counts the rows a copy already holds that point at nothing.
+`audit --connect` [warns about a parent copied in part](../guides/prove-the-copy-is-safe.md#reviewing-policies-audit) whose child isn't limited to match, and [`verify-references`](../guides/copy-a-subset.md#verify-references-checking-the-copys-references) counts the rows a copy already holds that point at nothing.
 
 ### Where watermarks are kept
 
-In run state: `jobs.yaml`'s `memory`, a file or a table (see [run state](operations.md#run-state)); from Python, a `MemoryBackend`. `FileMemory` writes each update to a temporary file and renames it into place, so a process killed mid-write leaves the previous version rather than a file nothing can parse. It assumes a filesystem that persists between runs and is shared by every worker. Where that's false — a container without a volume, anything scaled across machines, serverless — use `DatabaseMemory`. `FileMemory` there doesn't fail loudly: it silently forgets every watermark and re-extracts from `watermarkInitial`. See [library.md](library.md#memory-backends).
+In run state: `jobs.yaml`'s `memory`, a file or a table (see [run state](../guides/run-on-a-schedule.md#run-state)); from Python, a `MemoryBackend`. `FileMemory` writes each update to a temporary file and renames it into place, so a process killed mid-write leaves the previous version rather than a file nothing can parse. It assumes a filesystem that persists between runs and is shared by every worker. Where that's false — a container without a volume, anything scaled across machines, serverless — use `DatabaseMemory`. `FileMemory` there doesn't fail loudly: it silently forgets every watermark and re-extracts from `watermarkInitial`. See [library.md](../reference/python-api.md#memory-backends).
 
 
-## refresh and predecessors
+## `refresh` and predecessors
 
 **`refresh` decides whether a job is in a cycle at all. `predecessors` only orders jobs within a cycle.** So a predecessor sitting inside its own refresh window is not waited for.
 
@@ -159,7 +159,7 @@ A job with `refresh: 5` whose predecessor has `refresh: 60` runs alone for 11 cy
 
 The trade-off is freshness, not correctness: between windows the dependent reads output up to an hour old. That's fine for a durable table, and wrong if the predecessor produces something transient the dependent consumes. Give both the same `refresh` in that case.
 
-It's wrong too when the dependent's table references the predecessor's: in the cycles the predecessor sits out, new orders load before the customers they reference. `audit --connect` [warns about this](masking.md#reviewing-policies-audit), and about a referencing job that doesn't wait at all.
+It's wrong too when the dependent's table references the predecessor's: in the cycles the predecessor sits out, new orders load before the customers they reference. `audit --connect` [warns about this](../guides/prove-the-copy-is-safe.md#reviewing-policies-audit), and about a referencing job that doesn't wait at all.
 
 `bauta jobs` shows which jobs are due and which are throttled.
 
@@ -178,21 +178,21 @@ It's wrong too when the dependent's table references the predecessor's: in the c
 
 **Stopping.** On `SIGINT` or `SIGTERM`, a run starts no new jobs, lets the running ones finish, reports the rest as skipped, and exits with status 130. Killing jobs mid-load instead would leave a streaming cursor or a half-loaded table for the database to clean up. A container's grace period has to cover the longest job for this to finish; give long jobs a `timeoutSeconds` shorter than that grace period, so a hung one can't hold the shutdown. Between `--forever` cycles, a signal ends the pause within a second, however long `cycleSleepSeconds` is.
 
-**Overlapping runs.** `run` holds a lock (`memory.yaml.run.lock`, beside the run state file; see [run state](operations.md#run-state) for run state in a table) for as long as it runs. A second invocation sharing that memory file exits with status 1 instead of running the same jobs at the same time, which a cron interval shorter than a slow run would otherwise cause. The operating system releases the lock if the process dies.
+**Overlapping runs.** `run` holds a lock (`memory.yaml.run.lock`, beside the run state file; see [run state](../guides/run-on-a-schedule.md#run-state) for run state in a table) for as long as it runs. A second invocation sharing that memory file exits with status 1 instead of running the same jobs at the same time, which a cron interval shorter than a slow run would otherwise cause. The operating system releases the lock if the process dies.
 
 A skipped job exits non-zero just as a failed one does: it didn't run, so its data isn't there.
 
 
 ## Workers
 
-Each job runs in a process of its own, as soon as its predecessors have completed, one of the `workers` slots is free, and each connection it uses is below its [`maxConcurrentJobs`](configuration.md#connectionsyaml) -- always 1 for DuckDB, which one process at a time may open. A job held back by a connection doesn't hold back the jobs behind it that use others. Starting a process costs a fraction of a second, which is noise next to a database load, and it lets each job be ended on its own:
+Each job runs in a process of its own, as soon as its predecessors have completed, one of the `workers` slots is free, and each connection it uses is below its [`maxConcurrentJobs`](../reference/connections.md) -- always 1 for DuckDB, which one process at a time may open. A job held back by a connection doesn't hold back the jobs behind it that use others. Starting a process costs a fraction of a second, which is noise next to a database load, and it lets each job be ended on its own:
 
 - **A job that dies** — killed for memory, crashed in a driver — fails, and only that job. Its dependents are skipped, and the run still ends; it doesn't wait for an outcome that will never come.
 - **A job past its `timeoutSeconds`** is sent `SIGTERM`, then `SIGKILL` five seconds later if it hasn't exited. It fails with a `Timeout` error and its dependents are skipped. Its database connections close with it, so each server rolls back whatever the job hadn't committed; what it had committed stays, as for any failure part-way (see [how a data job moves rows](#how-a-data-job-moves-rows)). The timeout covers the whole job, retries included.
 
-Within its process, a job masks on one thread, or on several with [`maskingThreads`](masking.md#masking-threads); `auto` divides half the cores between the jobs running when each starts.
+Within its process, a job masks on one thread, or on several with [`maskingThreads`](../guides/make-it-faster.md#masking-threads); `auto` divides half the cores between the jobs running when each starts.
 
-Processes are started with Python's `spawn` method on every platform, so a program embedding the library needs an `if __name__ == '__main__':` guard; see [library.md](library.md#running-jobs).
+Processes are started with Python's `spawn` method on every platform, so a program embedding the library needs an `if __name__ == '__main__':` guard; see [library.md](../reference/python-api.md#running-jobs).
 
 **Logs from jobs** are sent back to the main process and written by its handlers, so they follow `--log`, `--log-format` and `--quiet` like everything else.
 
@@ -214,7 +214,7 @@ Masked data jobs retry like any other data job. The watermark is read again on e
 
 ## Structured logs
 
-`--log-format json` writes one object per line, for a log collector (for history and alerts, see [operations.md](operations.md)):
+`--log-format json` writes one object per line, for a log collector (for history and alerts, see [operations.md](../guides/run-on-a-schedule.md)):
 
 ```json
 {"timestamp": "2026-09-16 01:00:12.514", "level": "INFO", "logger": "bauta", "message": "Completed loadOrders (4200 row(s))",
@@ -237,7 +237,7 @@ Every mask is derived from `HMAC(key, domain, value)`, keyed on the value itself
 
 A policy must list **every column the query returns**, or the job fails before writing anything. A new production column should stop the job, not flow into a non-production copy unmasked.
 
-[masking.md](masking.md) has the strategies, the key, the manifest, `audit`, `discover`, `subset`, `schema`, `synthesize` and `clear`.
+[masking.md](../guides/mask-a-table.md) has the strategies, the key, the manifest, `audit`, `discover`, `subset`, `schema`, `synthesize` and `clear`.
 
 
 ## Moving values between drivers

@@ -1,0 +1,238 @@
+{% extends "main.html" %}
+
+{#- The landing page. docs/index.md names this template; its own Markdown is
+    what GitHub shows for that file, and isn't rendered here. -#}
+{% block content %}
+<div class="bauta-home">
+  <h1 class="bauta-hero__title">Put a <em>mask</em> on production.</h1>
+  <p class="bauta-lede">A safe, realistic stand-in for your production data, in whichever database you need it. Bauta masks what it copies, copies only the slice you need with every relationship intact, and runs from the cron you already have, with nothing to host.</p>
+  <div class="bauta-cta">
+    <div class="bauta-install"><span class="dollar">$</span><code id="bauta-pip">pip install "bauta[postgresql,native]"</code><button type="button" id="bauta-copy">Copy</button></div>
+    <a class="bauta-ghost" href="{{ 'get-started/quickstart/' | url }}">Quickstart →</a>
+  </div>
+
+  <div class="bauta-demo" aria-labelledby="bauta-demo-title">
+    <div class="bauta-demo__head">
+      <div>
+        <p class="bauta-eyebrow">From <code>example/masking</code>, as it ran</p>
+        <h2 id="bauta-demo-title">Customers and orders, before and after</h2>
+      </div>
+      <div class="bauta-switch" role="group" aria-label="Which copy to show">
+        <button type="button" id="bauta-show-prod" aria-pressed="false">Production</button>
+        <button type="button" id="bauta-show-stg" aria-pressed="true">Staging, masked</button>
+      </div>
+    </div>
+    <div class="bauta-tables masked" id="bauta-tables">
+      <div class="bauta-scroll">
+        <table id="bauta-customers">
+          <caption>customers</caption>
+          <thead><tr>
+            <th><span class="col">id</span><span class="strat">key · customer</span></th>
+            <th><span class="col">email</span><span class="strat">email</span></th>
+            <th><span class="col">full_name</span><span class="strat">fakeName</span></th>
+            <th><span class="col">phone</span><span class="strat">digits</span></th>
+            <th><span class="col">birth_date</span><span class="strat">dateShift ±30d</span></th>
+            <th><span class="col">region</span><span class="strat keep">keep</span></th>
+            <th><span class="col">notes</span><span class="strat">null</span></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="bauta-scroll">
+        <table id="bauta-orders">
+          <caption>orders</caption>
+          <thead><tr>
+            <th><span class="col">id</span><span class="strat keep">keep</span></th>
+            <th><span class="col">customer_id</span><span class="strat">key · customer</span></th>
+            <th><span class="col">amount</span><span class="strat">number ±10%</span></th>
+            <th class="joined"><span class="col">full_name</span><span class="strat keep">joined on customer_id</span></th>
+            <th class="joined"><span class="col">region</span><span class="strat keep">joined on customer_id</span></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="bauta-demo__foot">
+      <span>Point at a customer to see their orders; the last two columns come from joining each order to its customer. <strong>7 of 7 masked orders still join to a masked customer</strong>, because both key columns share the <code>customer</code> domain: <a href="{{ 'guides/keep-joins-intact/' | url }}">keep joins intact</a>.</span>
+    </div>
+  </div>
+
+  <section>
+    <p class="bauta-eyebrow">What it does</p>
+    <h2>A copy of production that's safe to hand to anyone</h2>
+    <div class="bauta-four">
+      <div>
+        <h3><a href="{{ 'guides/mask-a-table/' | url }}">Mask</a></h3>
+        <p>Masks are consistent across tables and runs, and keys map one to one, with NIST FF1 where policy requires it. Values are masked before anything reaches the target, and every column must be covered.</p>
+      </div>
+      <div>
+        <h3><a href="{{ 'guides/copy-a-subset/' | url }}">Subset</a></h3>
+        <p>Copy a referentially complete slice of production, such as every EU customer and everything their rows point at, loaded parents first.</p>
+      </div>
+      <div>
+        <h3><a href="{{ 'guides/generate-data/' | url }}">Generate</a></h3>
+        <p>Fill the tables that may not be copied at all with generated rows, and create the copy's tables in the target's own dialect.</p>
+      </div>
+      <div>
+        <h3><a href="{{ 'guides/run-on-a-schedule/' | url }}">Move</a></h3>
+        <p>Jobs form a dependency graph and run concurrently where they can, each in its own process. They load incrementally, stream in flat memory and alert a webhook when something fails.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="bauta-split">
+      <div>
+        <p class="bauta-eyebrow">Fails closed</p>
+        <h2>A column nobody covered stops the run</h2>
+        <p>Someone adds <code>ssn</code> to production. The policy doesn't mention it, so the job refuses to run and staging keeps its last safe copy.</p>
+        <p><code>bauta discover</code> then proposes a strategy for every column from the live schema, with its reason, for a person to review. See <a href="{{ 'guides/cover-every-column/' | url }}">cover every column</a>.</p>
+      </div>
+      <pre class="bauta-term"><span class="p">$</span> bauta run
+<span class="err">maskCustomers failed: MaskingError: column(s) returned
+by sourceQuery but not in the masking policy: ssn.</span>
+<span class="c">staging still has 5 customers, and no ssn values</span>
+
+<span class="p">$</span> bauta discover --connection prod --table customers
+id          keep       <span class="c"># numeric key (domain customers)</span>
+email       <span class="ok">email</span>      <span class="c"># name suggests an email address</span>
+full_name   <span class="ok">fakeName</span>   <span class="c"># name suggests a person's name</span>
+phone       <span class="ok">digits</span>     <span class="c"># name suggests a phone number</span>
+birth_date  <span class="ok">dateShift</span>  <span class="c"># name suggests a date of birth</span>
+region      keep       <span class="c"># no sign of personal data -- review</span>
+notes       <span class="ok">null</span>       <span class="c"># free text can hold PII anywhere</span>
+ssn         <span class="ok">key</span>        <span class="c"># government identifier; stays unique</span></pre>
+    </div>
+  </section>
+
+  <section>
+    <p class="bauta-eyebrow">Where</p>
+    <h2>Seven databases, in any combination</h2>
+    <p class="bauta-lede">Any of them can be the source or the target. Drivers are extras, loaded only when a connection uses them, and none needs a client installed besides pip. See <a href="{{ 'reference/connections/' | url }}">connections</a>.</p>
+    <div class="bauta-where">
+      <div>
+        <p class="bauta-eyebrow">Databases</p>
+        <ul class="bauta-chips"><li>Oracle</li><li>SQL Server</li><li>PostgreSQL</li><li>MySQL</li><li>MariaDB</li><li>SQLite</li><li>DuckDB</li></ul>
+      </div>
+      <div>
+        <p class="bauta-eyebrow">Files</p>
+        <ul class="bauta-chips"><li>Parquet</li><li>CSV</li><li>JSON Lines</li></ul>
+        <p>In a directory, S3, Google Cloud Storage or Azure, for Athena, Snowflake or Databricks to read. Nothing is visible until a run succeeds.</p>
+      </div>
+      <div>
+        <p class="bauta-eyebrow">Iceberg</p>
+        <ul class="bauta-chips"><li>Glue</li><li>REST</li><li>SQL catalog</li></ul>
+        <p>Each run is one commit, and upserts merge by key. Old snapshots' files are deleted with them.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="bauta-eyebrow">Speed</p>
+    <h2>A million rows in under eight seconds</h2>
+    <p>That's six masked columns, two of them one-to-one keys, on one core. The optional Rust masker produces exactly the same masks as pure Python. See <a href="{{ 'guides/make-it-faster/' | url }}">make it faster</a>.</p>
+    <div class="bauta-bars" role="img" aria-label="Masking one million rows on one core: under 8 seconds with the native masker, 74 seconds without">
+      <div class="bauta-bar"><div>bauta-rs<small>native, Rust</small></div><div class="bauta-track"><div class="bauta-fill bauta-fill--rs"></div><span class="bauta-val bauta-val--rs">&lt; 8 s</span></div></div>
+      <div class="bauta-bar"><div>Python<small>no extension</small></div><div class="bauta-track"><div class="bauta-fill bauta-fill--py"></div><span class="bauta-val bauta-val--py">74 s</span></div></div>
+      <div class="bauta-axis"><span></span><div><span>0 s</span><span>1,000,000 rows, one core</span><span>74 s</span></div></div>
+    </div>
+  </section>
+</div>
+
+<script>
+// Real rows from example/masking/demo.py: production, then what landed in staging.
+(function () {
+  var customers = [
+    { prod: [1, 'ana.silva@corp.example', 'Ana Silva', '+351 912 345 678', '1985-04-12', 'eu', 'prefers email; allergic to penicillin'],
+      stg:  [2, 'ub31760b79f03@example.test', 'Theo Young', '+237 175 921 348', '1985-05-04', 'eu', null] },
+    { prod: [2, 'ben.okafor@corp.example', 'Ben Okafor', '+1 (555) 010-2233', '1990-11-02', 'us', null],
+      stg:  [0, 'u7b0aba2377d7@example.test', 'Jin Kaplan', '+0 (630) 832-3690', '1990-11-03', 'us', null] },
+    { prod: [3, 'chen.li@corp.example', 'Chen Li', '+86 138 0013 8000', '1978-07-30', 'apac', 'VIP'],
+      stg:  [8, 'u975c64383fa4@example.test', 'Freya Dahl', '+54 983 5767 8949', '1978-07-23', 'apac', null] },
+    { prod: [4, 'dara.nolan@corp.example', 'Dara Nolan', '+353 87 123 4567', '2001-01-19', 'eu', null],
+      stg:  [7, 'u876183521506@example.test', 'Ivan Garcia', '+934 85 398 9086', '2000-12-27', 'eu', null] },
+    { prod: [5, 'eve.martin@corp.example', 'Eve Martin', '+33 6 12 34 56 78', '1969-09-09', 'eu', 'called about a refund'],
+      stg:  [1, 'u302ff9f6edbc@example.test', 'Rafael Patel', '+29 6 31 52 87 63', '1969-09-10', 'eu', null] }
+  ];
+  var orders = [
+    { who: 1, prod: [100, 1, '25.00'],  stg: [100, 2, '26.00'] },
+    { who: 1, prod: [101, 1, '99.90'],  stg: [101, 2, '105.94'] },
+    { who: 2, prod: [102, 2, '12.50'],  stg: [102, 0, '12.75'] },
+    { who: 3, prod: [103, 3, '310.00'], stg: [103, 8, '321.00'] },
+    { who: 4, prod: [104, 4, '45.25'],  stg: [104, 7, '49.45'] },
+    { who: 5, prod: [105, 5, '8.75'],   stg: [105, 1, '8.52'] },
+    { who: 5, prod: [106, 5, '60.00'],  stg: [106, 1, '57.00'] }
+  ];
+  var tables = document.getElementById('bauta-tables');
+  if (!tables) return;
+
+  // Each order joined to its customer, in each copy: the masked orders find
+  // the masked customers, so the names and regions come out of the join too.
+  ['prod', 'stg'].forEach(function (copy) {
+    var byId = {};
+    customers.forEach(function (c) { byId[c[copy][0]] = c[copy]; });
+    orders.forEach(function (o) {
+      var customer = byId[o[copy][1]];
+      o[copy] = o[copy].concat([customer[2], customer[5]]);
+    });
+  });
+
+  function build(tbody, rows, kept, who, joinedFrom) {
+    rows.forEach(function (row) {
+      var tr = document.createElement('tr');
+      tr.dataset.who = who(row);
+      row.prod.forEach(function (_, i) {
+        var td = document.createElement('td');
+        if (kept.indexOf(i) < 0) td.classList.add('changed');
+        if (joinedFrom !== undefined && i >= joinedFrom) td.classList.add('joined');
+        tr.appendChild(td);
+      });
+      tr._row = row;
+      tbody.appendChild(tr);
+    });
+  }
+  build(document.querySelector('#bauta-customers tbody'), customers, [5], function (r) { return r.prod[0]; });
+  build(document.querySelector('#bauta-orders tbody'), orders, [0, 4], function (r) { return r.who; }, 3);
+  var rows = tables.querySelectorAll('tbody tr');
+
+  function show(which) {
+    rows.forEach(function (tr) {
+      Array.prototype.forEach.call(tr.children, function (td, i) {
+        var value = tr._row[which][i];
+        td.textContent = value === null ? 'NULL' : value;
+        td.classList.toggle('null', value === null);
+      });
+    });
+    tables.classList.toggle('masked', which === 'stg');
+    document.getElementById('bauta-show-prod').setAttribute('aria-pressed', which === 'prod');
+    document.getElementById('bauta-show-stg').setAttribute('aria-pressed', which === 'stg');
+  }
+  document.getElementById('bauta-show-prod').addEventListener('click', function () { show('prod'); });
+  document.getElementById('bauta-show-stg').addEventListener('click', function () { show('stg'); });
+  show('stg');
+
+  function hot(who) {
+    rows.forEach(function (tr) { tr.classList.toggle('hot', who !== null && tr.dataset.who === who); });
+  }
+  rows.forEach(function (tr) {
+    tr.addEventListener('mouseenter', function () { hot(tr.dataset.who); });
+    tr.addEventListener('mouseleave', function () { hot(null); });
+    tr.addEventListener('click', function () { hot(tr.dataset.who); });
+  });
+
+  document.getElementById('bauta-copy').addEventListener('click', function (event) {
+    var button = event.currentTarget, code = document.getElementById('bauta-pip');
+    navigator.clipboard.writeText(code.textContent).then(function () {
+      button.textContent = 'Copied';
+      setTimeout(function () { button.textContent = 'Copy'; }, 1600);
+    }).catch(function () {
+      var range = document.createRange();
+      range.selectNodeContents(code);
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -80,7 +80,7 @@ jobs:
     # PostgreSQL and Oracle refuse to subtract an interval from.
     watermarkInitial: 1970-01-01 00:00:00
   # A masked job: rows are masked between the extract and the load, so the
-  # target never sees a real value. See docs/masking.md.
+  # target never sees a real value. See docs/guides/mask-a-table.md.
   #
   # Every column sourceQuery returns must be listed -- `keep` for any that need
   # no masking -- or the job fails before writing anything. That's what stops a

@@ -28,11 +28,11 @@ NATIVE_VERSION = tomllib.loads((ROOT / 'mask-rs' / 'Cargo.toml').read_text())['w
 
 
 def _requirements():
-    """Runtime and driver requirements -- everything but the dev tools and the
-    extras that only name other extras.
+    """Runtime and driver requirements -- everything but the dev and docs tools,
+    pinned exactly, and the extras that only name other extras.
     """
     extras = PROJECT['optional-dependencies']
-    texts = PROJECT['dependencies'] + [text for name, group in extras.items() if name != 'dev' for text in group]
+    texts = PROJECT['dependencies'] + [text for name, group in extras.items() if name not in ('dev', 'docs') for text in group]
     requirements = {}
     for text in texts:
         requirement = Requirement(text)

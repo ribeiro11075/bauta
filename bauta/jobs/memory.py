@@ -276,7 +276,7 @@ KEY_FINGERPRINT_TYPE = 'maskingKey'
 class DatabaseMemory(MemoryBackend):
     """A MemoryBackend that keeps run state in a database table, for wherever
     no filesystem persists between runs and is shared by every worker. See
-    "Where watermarks are kept" in docs/design.md.
+    "Where watermarks are kept" in docs/concepts/how-it-works.md.
 
     The table must already exist, shaped like DATABASE_MEMORY_SCHEMA. Each
     write upserts only its own columns, so recordRun and recordWatermark don't

@@ -1,6 +1,6 @@
 """Iceberg tables as a data job's target, through a Glue, REST or SQL
 catalog, with their files in S3, Google Cloud Storage, Azure or a directory.
-See "Iceberg tables" in docs/design.md.
+See "Iceberg tables" in docs/concepts/how-it-works.md.
 
 A run is one commit, whatever its size: append and overwrite write their
 Parquet parts into the table's data directory with the writer a files

@@ -16,7 +16,7 @@ You load configuration however you like and hand it over as plain data. Each dri
 
 ## API stability
 
-Everything importable from `bauta` itself is the public API, and this page describes all of it. A few names this page points to in a submodule -- `bauta.database.dialects`' quoting helpers, `bauta.review.references`, `bauta.generate.schema` and `bauta.generate.subset` -- are public there. Anything else reached through a submodule is internal and may change in any release. A custom masking strategy subclasses `bauta.masking.Strategy`, and may use `KeyedHash`, `MaskingError` and `canonical` from `bauta.masking`; see [your own strategies](masking.md#your-own-strategies).
+Everything importable from `bauta` itself is the public API, and this page describes all of it. A few names this page points to in a submodule -- `bauta.database.dialects`' quoting helpers, `bauta.review.references`, `bauta.generate.schema` and `bauta.generate.subset` -- are public there. Anything else reached through a submodule is internal and may change in any release. A custom masking strategy subclasses `bauta.masking.Strategy`, and may use `KeyedHash`, `MaskingError` and `canonical` from `bauta.masking`; see [your own strategies](strategies.md#your-own-strategies).
 
 
 ## Configuration models
@@ -73,11 +73,11 @@ runDataJobs(jobsFile, connectionConfiguration, memory,
 ```
 
 - **`onCycle`** is called with each cycle's `RunResult` as the cycle ends, including under `runForever`. See [below](#history-manifests-and-notifications). An exception it raises is logged, not raised.
-- **`acceptKeyChange=True`** runs upsert jobs whose masking key changed since their last run; see [the key](masking.md#the-key).
-- **`runForever=False`** makes one pass and returns. `True` keeps running, honouring `refresh`, until `SIGINT` or `SIGTERM`. Either signal stops new jobs from starting and lets running ones finish; see [stopping](design.md#single-runs-not-a-daemon).
+- **`acceptKeyChange=True`** runs upsert jobs whose masking key changed since their last run; see [the key](../guides/mask-a-table.md#the-key).
+- **`runForever=False`** makes one pass and returns. `True` keeps running, honouring `refresh`, until `SIGINT` or `SIGTERM`. Either signal stops new jobs from starting and lets running ones finish; see [stopping](../concepts/how-it-works.md#single-runs-not-a-daemon).
 - **`logFile`** is optional. Without one, attach a stream yourself: `Log(level=...).addStreamHandler(sys.stderr)`. Workers' records are written by the calling process's handlers, whichever those are.
-- **`logFormat='json'`** writes structured records — see [design.md](design.md#structured-logs).
-- **`jobsFile.maskingThreads`** sets how many threads each job masks with, as in the CLI; see [masking threads](masking.md#masking-threads).
+- **`logFormat='json'`** writes structured records — see [design.md](../concepts/how-it-works.md#structured-logs).
+- **`jobsFile.maskingThreads`** sets how many threads each job masks with, as in the CLI; see [masking threads](../guides/make-it-faster.md#masking-threads).
 
 To keep two runs that share run state from overlapping, as the CLI does, hold `exclusiveRun(path)` around the call. It raises `RunInProgressError` if another process holds the same lock file.
 
@@ -107,7 +107,7 @@ Validation raises `ConfigurationError`. `runDataJobs` also raises it before star
 | `durationSeconds` | Wall-clock time. |
 | `masking` | For a masked job that completed, the policy applied to each column, as plain dicts. |
 
-`RunResult.maskingManifest(jobsFile.jobs)` builds the [masking manifest](masking.md#the-manifest) for the run.
+`RunResult.maskingManifest(jobsFile.jobs)` builds the [masking manifest](../guides/keep-a-manifest.md#what-it-records) for the run.
 
 A run with `runForever=True` returns only once it has been stopped, with the last cycle's outcomes.
 
@@ -121,7 +121,7 @@ A `MemoryBackend` holds what the scheduler needs *before* a job runs: when it la
 | `FileMemory(memoryFile=...)` | A filesystem persists between runs and every worker shares it. |
 | `DatabaseMemory(connectionSettings=..., table=...)` | It doesn't: a container without a volume, anything across several machines, or serverless. |
 
-`FileMemory` in the wrong environment doesn't fail loudly: it forgets every watermark and re-extracts from `watermarkInitial`. `DatabaseMemory`'s table must exist first; its shape is `DATABASE_MEMORY_SCHEMA`, shown in [operations.md](operations.md#tables).
+`FileMemory` in the wrong environment doesn't fail loudly: it forgets every watermark and re-extracts from `watermarkInitial`. `DatabaseMemory`'s table must exist first; its shape is `DATABASE_MEMORY_SCHEMA`, shown in [operations.md](tables.md).
 
 ### Writing your own
 
@@ -165,7 +165,7 @@ runDataJobs(jobsFile, connections, memory, onCycle=report)
 | `DatabaseManifests(connectionSettings, table=...)` | Sealed manifests in a table: `write(manifest, runId)`, and `read(runId=None)`, which returns `(runId, manifest)`, the latest if no run is named. `DATABASE_MANIFEST_SCHEMA` is the table. |
 | `notify(url, result, always=False)` | Posts `reporting.notificationPayload(result)` if the cycle didn't succeed, or always; returns whether it posted. |
 
-See [operations.md](operations.md#notifications) for the payload.
+See [operations.md](../guides/watch-what-ran.md#notifications) for the payload.
 
 
 ## Masking, discovery and subsets
@@ -190,11 +190,11 @@ with Database(connectionSettings=connections['prod']) as database:
 | `MaskingPlan(key, columns, defaultStrategy=None)` | A validated policy. `bind(columns)` checks coverage and returns an object whose `apply(rows)` masks one chunk, and whose `manifest` lists what each column gets. `fingerprint` is the key's safe identifier. |
 | `STRATEGIES` | Strategy name → class, for the built-in strategies, which are in `bauta.masking.strategies`. Each `Strategy` validates its own options in `validateOptions`. |
 | `masking.setMaskingThreads(n)` | How many threads the native masker spreads a chunk over, in this process; one until set. `runDataJobs` sets it in each job's process from `maskingThreads`, so call it only when using `MaskingPlan` directly. Results are the same for any `n`. |
-| `resolveStrategy(name)` | A built-in strategy, or your own named `module.path:ClassName`; see [your own strategies](masking.md#your-own-strategies). |
+| `resolveStrategy(name)` | A built-in strategy, or your own named `module.path:ClassName`; see [your own strategies](strategies.md#your-own-strategies). |
 | `LOCALES` | The fake-data locales, as name → `Locale`, from `bauta.masking.fakeData`, which holds every list the `fake*` strategies pick from. |
 | `keyFingerprint(key)` | The same fingerprint, for a key on its own. |
 | `buildMaskingManifest(outcomes, declared)` | The manifest from outcomes and each masked job's declared target and fingerprint. `RunResult.maskingManifest` wraps it. |
-| `sealManifest(manifest, signingKey=None)`, `verifyManifest(manifest, signingKey=None)` | Add a manifest's digest (and signature), and check them. `verifyManifest` returns `digestValid`, `signed`, `signatureValid` and the signing key's fingerprint, and raises `ValueError` for a manifest with no integrity section. See [sealing and verifying](masking.md#sealing-and-verifying). |
+| `sealManifest(manifest, signingKey=None)`, `verifyManifest(manifest, signingKey=None)` | Add a manifest's digest (and signature), and check them. `verifyManifest` returns `digestValid`, `signed`, `signatureValid` and the signing key's fingerprint, and raises `ValueError` for a manifest with no integrity section. See [sealing and verifying](../guides/keep-a-manifest.md#sealing-and-verifying). |
 | `auditJobs(jobs, returnedColumns=None, encryption=None, unreachable=None, targetColumns=None, foreignKeys=None, declaredForeignKeys=None, rules=...)`, `renderAudit(report)` | The `audit` report as a dict, and as text. The optional arguments carry what `audit --connect` learns from the databases: `foreignKeys` maps a target alias to its keys and its sources', `declaredForeignKeys` to the target's own. |
 | `bauta.review.coverage.coverageReport(alias, tables, jobs, acknowledged=None, columns=None, rules=...)`, `renderCoverage(report)` | What the jobs do with each of `tables`: `masked`, `copied`, `acknowledged` or `uncovered`, with a `summary` of each. `acknowledged` maps a table left out on purpose to why; `columns` maps a table to its columns, so an uncovered one can say which look like personal data. A table counts as covered when a job reading `alias` names it in its `sourceQuery`. |
 | `verifyReferences(database, alias, loaded, sourceKeys=())` | A `ReferenceResult` per foreign key on a table the jobs load: the key as the target spells it, whether the target declares it, and its orphaned rows, or the `problem` that stopped it being counted. `loaded` maps each table's upper-cased name to its `targetTableFinal`. From `bauta.review.references`, with `renderReferences(results)`. |

@@ -253,7 +253,7 @@ class PostgreSQLDialect(_OnConflictDialect):
         """Renames, then recreates each view on the target from its definition
         captured beforehand, since a PostgreSQL view follows the table, not the
         name. CREATE OR REPLACE keeps grants and views built on it. See "How a
-        swap works" in docs/design.md.
+        swap works" in docs/concepts/how-it-works.md.
         """
 
         cursor.execute(self.DEPENDENT_VIEWS_QUERY, (targetTable,))

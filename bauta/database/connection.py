@@ -370,7 +370,7 @@ class Database:
         unquoted name to -- a mixed-case name on Oracle or PostgreSQL, a
         reserved word, a name with a space -- comes back quoted, since that is
         the only spelling that reads back as the same table. See "How names are
-        written" in docs/design.md.
+        written" in docs/concepts/how-it-works.md.
         """
 
         names = [self._asWritten(name) for name in self.dialect.listTables(self.cursor, schema)]
