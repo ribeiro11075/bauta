@@ -126,7 +126,7 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> Dict[str, Any]:
     runCommand = ['run', '--config', DEMO_CONFIGURATION_DIRECTORY, '--log', logPath, '--log-level', 'debug', '--quiet']
 
     for alias in databases:
-        with Database(connectionSettings=databases[alias]) as database:
+        with Database(connectionSettings=databases[alias], create=True) as database:
             database.connection.executescript(SCHEMA)
 
     with Database(connectionSettings=databases['prod']) as prod, Database(connectionSettings=databases['staging']) as staging:

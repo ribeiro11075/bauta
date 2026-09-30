@@ -38,7 +38,7 @@ Every command takes these.
 | --- | --- | --- |
 | `--config CONFIG` | $BAUTA_CONFIG or ./configuration | Directory holding jobs.yaml and connections.yaml. |
 | `--connections CONNECTIONS` |  | Explicit path to the connections file, overriding --config. |
-| `--log LOG` |  | Also write logs to this file (logs always go to stderr unless --quiet) |
+| `--log LOG` |  | Also write logs to this file (logs always go to stderr; --quiet leaves only errors there) |
 | `--log-level {debug,info,warning,error}` | `info` | One of `debug`, `info`, `warning`, `error`. |
 | `--log-format {text,json}` | `text` | Json emits one object per record, carrying job/status/rowCount as fields a log collector can filter and alert on. |
-| `--quiet` | off | Do not log to stderr. |
+| `--quiet` | off | Log only errors to stderr, one line each, without tracebacks. |

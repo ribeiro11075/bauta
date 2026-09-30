@@ -14,7 +14,7 @@ ORDERS_KEY = ForeignKey('ORDERS', ('CUSTOMER_ID',), 'CUSTOMERS', ('ID',), 'FK_OR
 
 @pytest.fixture
 def copy(tmp_path):
-    with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'copy.db'))) as database:
+    with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'copy.db')), create=True) as database:
         yield database
 
 
@@ -139,11 +139,11 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'configuration').mkdir()
     (tmp_path / 'configuration' / 'connections.yaml').write_text(
-        'prod:\n  type: sqlite\n  path: prod.db\ncopy:\n  type: sqlite\n  path: copy.db\n')
+        'prod:\n  type: sqlite\n  path: ../prod.db\ncopy:\n  type: sqlite\n  path: ../copy.db\n')
     (tmp_path / 'configuration' / 'jobs.yaml').write_text(JOBS_YAML.format(active='true'))
 
     for name, orders in (('prod', 'customer_id INT REFERENCES customers(id)'), ('copy', 'customer_id INT')):
-        with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / (name + '.db')))) as database:
+        with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / (name + '.db'))), create=True) as database:
             database.alter('CREATE TABLE customers (id INT PRIMARY KEY, email TEXT)')
             database.alter('CREATE TABLE orders (id INT PRIMARY KEY, {})'.format(orders))
             database.alter("INSERT INTO customers VALUES (1, 'a@corp.com')")
@@ -153,7 +153,7 @@ def workspace(tmp_path, monkeypatch):
 
 
 def _copyStatement(workspace, statement):
-    with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(workspace / 'copy.db'))) as database:
+    with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(workspace / 'copy.db')), create=True) as database:
         database.alter(statement)
 
 

@@ -139,20 +139,29 @@ class OracleDialect(DatabaseDialect):
 
 
     def foreignKeysQuery(self) -> str:
-        """From all_* views in the session's current schema: user_* views read
-        the login's own schema, whatever currentSchema says. Constraint names
+        """From all_* views, in the bound schema or the session's current one:
+        user_* views read the login's own schema, whatever currentSchema says. Constraint names
         are unique per owner only, so every join matches the owner too.
         """
 
-        return ("SELECT c.table_name, cc.column_name, "
-                "CASE WHEN rc.owner = c.owner THEN rc.table_name ELSE rc.owner || '.' || rc.table_name END, "
-                "rcc.column_name, c.constraint_name "
+        return ("SELECT c.owner, c.table_name, cc.column_name, rc.owner, rc.table_name, rcc.column_name, c.constraint_name, "
+                "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') "
                 "FROM all_constraints c "
                 "JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name "
                 "JOIN all_constraints rc ON rc.owner = c.r_owner AND rc.constraint_name = c.r_constraint_name "
                 "JOIN all_cons_columns rcc ON rcc.owner = rc.owner AND rcc.constraint_name = rc.constraint_name AND rcc.position = cc.position "
-                "WHERE c.constraint_type = 'R' AND c.owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') "
+                "WHERE c.constraint_type = 'R' AND c.owner = COALESCE({}, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')) "
                 "ORDER BY c.table_name, c.constraint_name, cc.position")
+
+
+    def foreignKeyCountsQuery(self) -> str:
+        """The schemas Oracle itself maintains -- SYS, MDSYS and the rest --
+        are left out, as they are no copy's.
+        """
+
+        return ("SELECT c.owner, count(*), SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM all_constraints c "
+                "JOIN all_users u ON u.username = c.owner "
+                "WHERE c.constraint_type = 'R' AND u.oracle_maintained = 'N' GROUP BY c.owner")
 
 
     # all_* views filtered to the bound schema or the session's current one,

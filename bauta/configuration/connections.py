@@ -781,6 +781,42 @@ ConnectionConfig = Annotated[Union[PostgreSQLConnection, MySQLConnection, MariaD
 _CONNECTION_ADAPTER: 'TypeAdapter[ConnectionConfig]' = TypeAdapter(cast(Any, ConnectionConfig))
 
 
+# A path that names something other than a file on this machine: a driver's
+# own scheme, such as DuckDB's md: for MotherDuck. Two letters at least, so a
+# drive letter would still read as a path.
+_SCHEME_PREFIX = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:')
+
+
+def isSchemePath(path: str) -> bool:
+
+    return bool(_SCHEME_PREFIX.match(path))
+
+
+def anchorPaths(settings: ConnectionConfig, directory: str) -> ConnectionConfig:
+    """`settings` with a relative file path made relative to `directory`, the
+    one connections.yaml is in, as the run state and history a jobs file names
+    are relative to it: cron, a shell and CI then open the same file wherever
+    they start. Absolute paths, `~`, `:memory:`, URLs and cloud roots are left
+    as they are.
+    """
+
+    def anchored(path: str) -> str:
+        expanded = os.path.expanduser(path)
+        return expanded if os.path.isabs(expanded) else os.path.normpath(os.path.join(directory, expanded))
+
+    if isinstance(settings, (SQLiteConnection, DuckDBConnection)):
+        if settings.path == ':memory:' or isSchemePath(settings.path):
+            return settings
+        return settings.model_copy(update={'path': anchored(settings.path)})
+    if isinstance(settings, FilesConnection) and settings.store() == FileStore.LOCAL:
+        return settings.model_copy(update={'root': anchored(settings.root)})
+    if (isinstance(settings, IcebergConnection) and settings.warehouse is not None and settings.store() == FileStore.LOCAL
+            and not settings.warehouse.startswith('file://')):
+        return settings.model_copy(update={'warehouse': anchored(settings.warehouse)})
+
+    return settings
+
+
 def _listed(names: Sequence[str]) -> str:
 
     return names[0] if len(names) == 1 else '{} and {}'.format(', '.join(names[:-1]), names[-1])

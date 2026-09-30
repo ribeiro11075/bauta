@@ -54,10 +54,13 @@ class MSSQLDialect(DatabaseDialect):
         return count * ['%s']
 
 
+    # Bound twice: without a schema, every schema's keys, as SQL Server has
+    # always been read, so a subset follows a child table in another schema.
+    FOREIGN_KEY_SCHEMA_BINDS = 2
+
     def foreignKeysQuery(self) -> str:
 
-        return ("SELECT CASE WHEN sp.name = SCHEMA_NAME() THEN tp.name ELSE sp.name + '.' + tp.name END, cp.name, "
-                "CASE WHEN sr.name = SCHEMA_NAME() THEN tr.name ELSE sr.name + '.' + tr.name END, cr.name, fk.name "
+        return ("SELECT sp.name, tp.name, cp.name, sr.name, tr.name, cr.name, fk.name, SCHEMA_NAME() "
                 "FROM sys.foreign_keys fk "
                 "JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id "
                 "JOIN sys.tables tp ON tp.object_id = fkc.parent_object_id "
@@ -66,7 +69,14 @@ class MSSQLDialect(DatabaseDialect):
                 "JOIN sys.columns cr ON cr.object_id = fkc.referenced_object_id AND cr.column_id = fkc.referenced_column_id "
                 "JOIN sys.schemas sp ON sp.schema_id = tp.schema_id "
                 "JOIN sys.schemas sr ON sr.schema_id = tr.schema_id "
-                "ORDER BY tp.name, fk.name, fkc.constraint_column_id")
+                "WHERE {} IS NULL OR sp.name = {} "
+                "ORDER BY sp.name, tp.name, fk.name, fkc.constraint_column_id")
+
+
+    def foreignKeyCountsQuery(self) -> str:
+
+        return ("SELECT s.name, count(*), SCHEMA_NAME() FROM sys.foreign_keys fk JOIN sys.schemas s ON s.schema_id = fk.schema_id "
+                "GROUP BY s.name")
 
 
     def columnsQuery(self) -> str:

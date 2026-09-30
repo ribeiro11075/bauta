@@ -5,14 +5,21 @@ the jobs and discovery rules in `models`.
 """
 from .environment import ConfigurationError, PasswordCommandError, expandEnvironmentVariables, runPasswordCommand
 from .connections import (EMBEDDED_TYPES, IDENTIFIER, S3_LARGEST_COPY, ConnectionConfig, DatabaseConfig, DatabaseType, DuckDBConnection,
-                          FileCompression, FileFormat, FilesConnection, FileStore, IcebergCatalog, IcebergConnection, LakeConfig, MariaDBConnection,
+                          FileCompression, FileFormat, FilesConnection, FileStore, IcebergCatalog, IcebergConnection, LakeConfig, MariaDBConnection, anchorPaths, isSchemePath,
                           MSSQLConnection, MySQLConnection, OracleConnection, PostgreSQLConnection, SQLiteConnection, StoreType)
 from .models import (FILE_STRATEGIES, WATERMARK_PLACEHOLDER, BaseJobConfig, Configuration, DataJobConfig, DataJobsFile, DiscoveryRulesFile,
                      InsertStrategy, MaskingConfig, NameRuleConfig, StorageLocation, TableLocation, ValueRuleConfig, connectionConfig, filePathProblem,
                      findCycle, isLake, targetKind, targetProblems)
 from .columnTypes import ColumnType, parseColumnType
+from .files import INCLUDE_KEY, JobsDocument, loadYamlFile, readJobsFile
 
 __all__ = [
+    'INCLUDE_KEY',
+    'JobsDocument',
+    'loadYamlFile',
+    'readJobsFile',
+    'anchorPaths',
+    'isSchemePath',
     'BaseJobConfig',
     'Configuration',
     'ConfigurationError',

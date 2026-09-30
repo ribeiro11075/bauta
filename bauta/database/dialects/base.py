@@ -24,6 +24,32 @@ class ForeignKey(NamedTuple):
     name: str
 
 
+def _relativeName(schema: Optional[str], table: str, current: Optional[str], scanned: Optional[str]) -> str:
+    """A table's name as the rest of bauta writes one read from this
+    connection: bare in the connection's current schema, `schema.table`
+    anywhere else. A schema named explicitly qualifies its own tables even
+    when it is the current one, as listTables(schema) does, so the keys and
+    the tables of one schema are named alike.
+    """
+
+    if schema is None or (schema == current and schema != scanned):
+        return table
+
+    return '{}.{}'.format(schema, table)
+
+
+def _schemaForeignKeys(rows: Sequence[Sequence[Any]], scanned: Optional[str]) -> List[ForeignKey]:
+    """Folds (schema, table, column, referencedSchema, referencedTable,
+    referencedColumn, constraint, currentSchema) rows into ForeignKeys named
+    by _relativeName. `scanned` is the schema the caller named, folded as the
+    catalog holds it, or None for the connection's own.
+    """
+
+    return _groupForeignKeys([(_relativeName(schema, table, current, scanned), column,
+                               _relativeName(referencedSchema, referencedTable, current, scanned), referencedColumn, name)
+                              for schema, table, column, referencedSchema, referencedTable, referencedColumn, name, current in rows])
+
+
 def _groupForeignKeys(rows: Sequence[Sequence[Any]]) -> List[ForeignKey]:
     """Folds (table, column, referencedTable, referencedColumn, constraint) rows,
     already ordered by position within each constraint, into ForeignKeys.
@@ -340,22 +366,48 @@ class DatabaseDialect(ABC):
 
         return [row[0] for row in cursor.fetchall()]
 
+    # How many times foreignKeysQuery binds the schema.
+    FOREIGN_KEY_SCHEMA_BINDS = 1
+
     def foreignKeysQuery(self) -> str:
-        """Every foreign key in the connection's current schema, as rows of
-        (table, column, referencedTable, referencedColumn, constraintName),
-        ordered by table, constraint and position.
+        """Every foreign key on a table in the bound schema, or in the
+        connection's current one where the bound value is NULL, as rows of
+        (schema, table, column, referencedSchema, referencedTable,
+        referencedColumn, constraintName, currentSchema), ordered by table,
+        constraint and position. Names are the catalog's own; foreignKeys
+        decides which to qualify.
         """
 
         raise NotImplementedError('{} cannot list foreign keys'.format(type(self).__name__))
 
-    def foreignKeys(self, cursor: Cursor) -> List[ForeignKey]:
-        """For planning subsets. SQLite, which can't do it in one query,
-        overrides this.
+    def foreignKeys(self, cursor: Cursor, schema: Optional[str] = None) -> List[ForeignKey]:
+        """For planning subsets, and every check that follows a reference.
+        `schema` is bound as listTables binds it. SQLite, which can't do it in
+        one query, overrides this.
         """
 
-        cursor.execute(self.foreignKeysQuery())
+        scanned = catalogName(self.databaseType, schema) if schema is not None else None
+        cursor.execute(self.foreignKeysQuery().format(*self.placeholders(self.FOREIGN_KEY_SCHEMA_BINDS)),
+                       (scanned,) * self.FOREIGN_KEY_SCHEMA_BINDS)
 
-        return _groupForeignKeys(cursor.fetchall())
+        return _schemaForeignKeys(cursor.fetchall(), scanned)
+
+    def foreignKeyCountsQuery(self) -> str:
+        """How many foreign keys each schema declares, as rows of (schema,
+        count, currentSchema), leaving out the server's own schemas.
+        """
+
+        raise NotImplementedError('{} cannot count foreign keys'.format(type(self).__name__))
+
+    def foreignKeyCounts(self, cursor: Cursor) -> Tuple[Dict[str, int], Optional[str]]:
+        """Each schema's number of foreign keys, and the current schema's
+        name: what says a check that read none was looking in the wrong place.
+        """
+
+        cursor.execute(self.foreignKeyCountsQuery())
+        rows = cursor.fetchall()
+
+        return {row[0]: int(row[1]) for row in rows}, (rows[0][2] if rows else None)
 
     @abstractmethod
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:

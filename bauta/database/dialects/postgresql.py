@@ -177,9 +177,7 @@ class PostgreSQLDialect(_OnConflictDialect):
         composite key's columns with the columns they reference.
         """
 
-        return ("SELECT cl.relname, att.attname, "
-                "CASE WHEN rns.nspname = current_schema() THEN rcl.relname ELSE rns.nspname || '.' || rcl.relname END, "
-                "ratt.attname, con.conname "
+        return ("SELECT ns.nspname, cl.relname, att.attname, rns.nspname, rcl.relname, ratt.attname, con.conname, current_schema() "
                 "FROM pg_constraint con "
                 "JOIN pg_class cl ON cl.oid = con.conrelid "
                 "JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
@@ -188,8 +186,15 @@ class PostgreSQLDialect(_OnConflictDialect):
                 "CROSS JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS k(attnum, refattnum, position) "
                 "JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = k.attnum "
                 "JOIN pg_attribute ratt ON ratt.attrelid = con.confrelid AND ratt.attnum = k.refattnum "
-                "WHERE con.contype = 'f' AND ns.nspname = current_schema() "
+                "WHERE con.contype = 'f' AND ns.nspname = COALESCE({}::text, current_schema()) "
                 "ORDER BY cl.relname, con.conname, k.position")
+
+
+    def foreignKeyCountsQuery(self) -> str:
+
+        return ("SELECT ns.nspname, count(*), current_schema() FROM pg_constraint con "
+                "JOIN pg_class cl ON cl.oid = con.conrelid JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
+                "WHERE con.contype = 'f' AND ns.nspname NOT IN ('pg_catalog', 'information_schema') GROUP BY ns.nspname")
 
 
     # The bound names arrive folded, so the lookups compare them as they are;

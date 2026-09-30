@@ -6,9 +6,10 @@ import decimal
 import os
 import sys
 import time
+import urllib.parse
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Generator, Iterable, Optional, Tuple, TypeVar, Union
 
 import yaml
 
@@ -21,7 +22,9 @@ from ..database import Database
 if sys.platform == 'win32':
     import msvcrt
 
-    def _lock(file: Any, blocking: bool = True) -> None:
+    # msvcrt has no shared lock, so one is taken exclusively: runs of
+    # different jobs then wait for each other, as every run did before.
+    def _lock(file: Any, blocking: bool = True, shared: bool = False) -> None:
         file.seek(0)
         msvcrt.locking(file.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
 
@@ -31,21 +34,23 @@ if sys.platform == 'win32':
 else:
     import fcntl
 
-    def _lock(file: Any, blocking: bool = True) -> None:
-        fcntl.flock(file.fileno(), fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB)
+    def _lock(file: Any, blocking: bool = True, shared: bool = False) -> None:
+        mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+        fcntl.flock(file.fileno(), mode if blocking else mode | fcntl.LOCK_NB)
 
     def _unlock(file: Any) -> None:
         fcntl.flock(file.fileno(), fcntl.LOCK_UN)
 
 
 @contextlib.contextmanager
-def exclusiveLock(path: Path, blocking: bool = True) -> Generator[None, None, None]:
-    """Holds an exclusive lock on `path`, creating it if needed. Raises
-    OSError at once if `blocking` is False and someone else holds it.
+def exclusiveLock(path: Path, blocking: bool = True, shared: bool = False) -> Generator[None, None, None]:
+    """Holds a lock on `path`, creating it if needed: exclusive, or `shared`
+    with other shared holders. Raises OSError at once if `blocking` is False
+    and it can't be had.
     """
 
     with open(path, 'a') as file:
-        _lock(file, blocking=blocking)
+        _lock(file, blocking=blocking, shared=shared)
         try:
             yield
         finally:
@@ -56,18 +61,47 @@ class RunInProgressError(Exception):
     """Another run already holds the run lock."""
 
 
+def jobLockFile(lockFile: Union[str, Path], job: str) -> Path:
+    """Where a run of `job` alone holds its lock: beside the run lock, one
+    file per job, its name quoted so any job name makes one file name.
+    """
+
+    return Path(str(lockFile) + '.jobs') / (urllib.parse.quote(job, safe='') + '.lock')
+
+
 @contextlib.contextmanager
-def exclusiveRun(lockFile: Union[str, Path]) -> Generator[None, None, None]:
+def exclusiveRun(lockFile: Union[str, Path], jobs: Optional[Iterable[str]] = None) -> Generator[None, None, None]:
     """Holds `lockFile` for the life of a run, or raises RunInProgressError, so
     two runs sharing run state can't run the same jobs at once. The operating
     system releases it if the process dies.
+
+    A run of every job holds it exclusively. A run of only `jobs` -- `run
+    --job`, as an orchestrator starts one task per job -- holds it shared,
+    and each of those jobs' own lock exclusively: runs of different jobs go
+    side by side, the same job never twice at once, and a run of every job
+    waits for none of them to be running. Run state can take the concurrent
+    writes, since each is made to one job's entry under a lock of its own.
     """
 
-    try:
-        with exclusiveLock(Path(lockFile), blocking=False):
-            yield
-    except OSError as error:
-        raise RunInProgressError('another run is already using {} -- not starting a second one alongside it'.format(lockFile)) from error
+    held = contextlib.ExitStack()
+    with held:
+        try:
+            held.enter_context(exclusiveLock(Path(lockFile), blocking=False, shared=jobs is not None))
+        except OSError as error:
+            raise RunInProgressError('another run is already using {} -- not starting a second one alongside it'.format(lockFile)) from error
+
+        for job in sorted(set(jobs or ())):
+            path = jobLockFile(lockFile, job)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                held.enter_context(exclusiveLock(path, blocking=False))
+            except OSError as error:
+                raise RunInProgressError('another run is already running {} (holding {}) -- not starting a second one alongside it'.format(
+                    job, path)) from error
+
+        # Only taking the locks is a RunInProgressError: an OSError from the
+        # run itself -- a full disk -- is that, and goes on as it is.
+        yield
 
 
 _Backend = TypeVar('_Backend', bound='MemoryBackend')

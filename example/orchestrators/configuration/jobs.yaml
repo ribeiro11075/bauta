@@ -1,0 +1,42 @@
+# Three jobs an orchestrator runs as three tasks: maskOrders waits for the two
+# tables its rows reference, and loads incrementally, through a stage table a
+# weekly full refresh swaps in. Paths are relative to this file.
+workers: 2
+defaults:
+  sourceConnection: prod
+  targetConnection: staging
+  insertStrategy: upsert
+  masking:
+    key: ${MASKING_KEY}
+# Run state and history: ../transaction/ unless the demo points them elsewhere.
+memory: ${ORCHESTRATOR_DEMO_STATE:-../transaction}/memory.yaml
+history: ${ORCHESTRATOR_DEMO_STATE:-../transaction}/history.jsonl
+jobs:
+  maskCustomers:
+    sourceQuery: SELECT id, email, full_name FROM customers
+    targetTableFinal: customers
+    masking:
+      columns:
+        id: keep
+        email: email
+        full_name: fakeName
+  loadProducts:
+    sourceQuery: SELECT id, name, price FROM products
+    targetTableFinal: products
+    unmasked: true              # reviewed: a catalogue, nothing personal
+  maskOrders:
+    predecessors:
+    - maskCustomers
+    - loadProducts
+    sourceQuery: SELECT id, customer_id, product_id, shipping_phone, updated_at FROM orders WHERE updated_at > {{ watermark }}
+    targetTableFinal: orders
+    targetTableStage: orders_stage
+    watermarkColumn: updated_at
+    watermarkInitial: 0
+    masking:
+      columns:
+        id: keep
+        customer_id: keep
+        product_id: keep
+        shipping_phone: digits
+        updated_at: keep

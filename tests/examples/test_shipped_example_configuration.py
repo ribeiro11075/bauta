@@ -109,7 +109,7 @@ def test_the_sample_refuses_to_load_when_its_secrets_are_absent(monkeypatch):
 
 
 def test_every_demo_has_its_configuration():
-    assert {path.parent.name for path in DEMO_CONFIGURATION_DIRECTORIES} == {'incremental', 'masking', 'native-masking', 'walkthrough'}
+    assert {path.parent.name for path in DEMO_CONFIGURATION_DIRECTORIES} == {'incremental', 'masking', 'native-masking', 'orchestrators', 'walkthrough'}
 
 
 @pytest.mark.parametrize('demoDirectory', DEMO_CONFIGURATION_DIRECTORIES, ids=lambda path: path.parent.name)

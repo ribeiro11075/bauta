@@ -190,7 +190,7 @@ def test_an_aware_timestamp_is_stored_the_same_whatever_the_machines_time_zone(c
         import datetime
         from bauta.configuration import ConnectionConfig, connectionConfig
         from bauta.database import Database
-        with Database(connectionConfig(type='duckdb', path={!r})) as database:
+        with Database(connectionConfig(type='duckdb', path={!r}), create=True) as database:
             database.alter('CREATE TABLE moments (id INTEGER, naive TIMESTAMP, aware TIMESTAMPTZ)')
             moment = datetime.datetime(2026, 1, 1, 12, tzinfo=datetime.timezone(datetime.timedelta(hours=2)))
             database.insert(table='moments', data=[(1, moment, moment)])

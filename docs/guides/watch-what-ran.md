@@ -18,7 +18,7 @@ bauta history --format json
 ```
 
 ```
-FINISHED             JOB                          STATUS           ROWS   SECONDS  ERROR
+FINISHED (UTC)       JOB                          STATUS           ROWS   SECONDS  ERROR
 2026-09-16 02:00:14  loadInvoices                 skipped             0       0.0  predecessor(s) did not complete: loadCustomers
 2026-09-16 02:00:13  loadCustomers                failed              0       1.0  OperationalError: timeout
 2026-09-16 02:00:12  loadOrders                   completed        4200      12.5

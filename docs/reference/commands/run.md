@@ -27,6 +27,7 @@ See [Run on a schedule](../../guides/run-on-a-schedule.md) for how to use it.
 | `--manifest-connection ALIAS` |  | The masking manifest in a table of this connection. |
 | `--manifest-table MANIFEST_TABLE` | jobs.yaml's, else bauta_manifest | The manifest table. |
 | `--manifest-key-variable MANIFEST_KEY_VARIABLE` | `BAUTA_MANIFEST_KEY` | Environment variable holding the manifest signing key. |
+| `--full-refresh` | off | Load every incremental job's whole source and replace its target, so rows deleted from the source leave the copy; implies --force. Database targets need targetTableStage. |
 | `--accept-key-change` | off | Run upsert jobs even though their masking key changed since their last run. |
 | `--history FILE` | jobs.yaml's `history` | Run history as JSON lines. |
 | `--history-connection ALIAS` |  | Run history in a table of this connection. |

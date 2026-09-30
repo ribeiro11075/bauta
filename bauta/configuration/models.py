@@ -12,7 +12,7 @@ from typing import Annotated, Any, Callable, Dict, List, Literal, Mapping, Optio
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 
 from ..masking import changesValues, policyFor, validateColumnPolicy, validateKey
-from .connections import (_CONNECTION_ADAPTER, CONNECTION_TYPES, CleanedListMapping, CleanedMapping, CleanedStringList, ConnectionConfig,
+from .connections import (_CONNECTION_ADAPTER, CONNECTION_TYPES, anchorPaths, CleanedListMapping, CleanedMapping, CleanedStringList, ConnectionConfig,
                           DuckDBConnection, FilesConnection, IcebergConnection, _listed)
 from .environment import ConfigurationError
 from .columnTypes import parseColumnType
@@ -143,6 +143,16 @@ class MaskingConfig(BaseModel):
     def _validateDefaultStrategy(cls, policy: Any) -> Any:
 
         return None if policy is None else validateColumnPolicy(policy)
+
+
+def _passesUnnamedColumns(masking: MaskingConfig) -> bool:
+    """Whether a policy's defaultStrategy copies the columns it doesn't name
+    as they are: `keep`, or a custom strategy that says it passes values through.
+    """
+
+    from ..masking import changesValues
+
+    return masking.defaultStrategy is not None and not changesValues(masking.defaultStrategy)
 
 
 def _names(table: str) -> Tuple[str, str]:
@@ -641,6 +651,9 @@ class DataJobsFile(BaseModel):
             return value
 
         settings = dict(value)
+        if 'include' in settings:
+            raise ValueError('include names other files, which a mapping cannot hold: read the jobs file with readJobsFile(path), '
+                             'which merges them, and validate what it returns')
         defaults = settings.pop(DEFAULTS_KEY, None) or {}
         if not isinstance(defaults, Mapping):
             raise ValueError('defaults must be a mapping of job settings')
@@ -743,15 +756,21 @@ class Configuration:
 
 
     @staticmethod
-    def validateConnectionConfiguration(rawConfiguration: Dict[str, Any]) -> Dict[str, ConnectionConfig]:
+    def validateConnectionConfiguration(rawConfiguration: Dict[str, Any], directory: Optional[str] = None) -> Dict[str, ConnectionConfig]:
         """Two DuckDB aliases for one file are refused: each would count its
         jobs separately, and two jobs would open the file at once.
+
+        With `directory`, the one connections.yaml was read from, a relative
+        file path is taken relative to it rather than to the working
+        directory; see anchorPaths.
         """
 
         connections = {
             alias: Configuration.validateConnection(connectionSettings, f'connections.yaml -> {alias}')
             for alias, connectionSettings in (rawConfiguration or {}).items() if not isAnchorKey(alias)
             }
+        if directory is not None:
+            connections = {alias: anchorPaths(settings, directory) for alias, settings in connections.items()}
 
         files: Dict[str, List[str]] = {}
         for alias, settings in connections.items():
@@ -794,14 +813,22 @@ class Configuration:
 
         for jobName, job in jobs.items():
 
-            if connections is not None and isinstance(job, DataJobConfig) and job.masking is None:
+            if connections is not None and isinstance(job, DataJobConfig) and (job.masking is None or _passesUnnamedColumns(job.masking)):
                 for setting in ('sourceConnection', 'targetConnection'):
                     alias = getattr(job, setting)
                     connection = connections.get(alias)
                     if connection is not None and connection.requireMasking:
-                        problems.append('{}: {} "{}" is configured with requireMasking, and this job has no masking policy. '
-                                        'Add one naming every column sourceQuery returns -- `keep` for the ones that need no '
-                                        'masking'.format(jobName, setting, alias))
+                        if job.masking is None:
+                            problems.append('{}: {} "{}" is configured with requireMasking, and this job has no masking policy. '
+                                            'Add one naming every column sourceQuery returns -- `keep` for the ones that need no '
+                                            'masking'.format(jobName, setting, alias))
+                        else:
+                            # Every column named is a decision someone made;
+                            # a passthrough default copies the ones nobody did,
+                            # a column production adds later included.
+                            problems.append('{}: {} "{}" is configured with requireMasking, and this job\'s defaultStrategy copies '
+                                            'every column its policy doesn\'t name as it is. Name each column -- `keep` for the ones '
+                                            'that need no masking -- or give defaultStrategy one that masks'.format(jobName, setting, alias))
 
             for predecessor in job.predecessors:
                 if predecessor not in jobs:

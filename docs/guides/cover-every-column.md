@@ -12,6 +12,8 @@ This guards against the most common masking failure: someone adds a column to pr
 
 A column named in the policy that the query doesn't return is also an error, since it's almost always a typo that leaves the real column uncovered.
 
+[`bauta discover --update`](propose-a-policy.md#keeping-a-policy-up-to-date) finds both across every job, proposes a policy for each new column, and with `--apply` writes the change into the jobs' files for review.
+
 These errors are never retried. `bauta run --dry-run` finds them without loading anything. It runs each masked job's query, reads one row and discards it unexamined.
 
 `defaultStrategy` turns the check off for unlisted columns. Only `'null'` or `constant` keep the safety property, since they discard whatever a new column holds.

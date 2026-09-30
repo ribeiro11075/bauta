@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import json
 import re
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
@@ -16,8 +17,10 @@ import yaml
 from . import builtinDiscovery
 from .builtinDiscovery import isIsoDate
 from ..configuration import DatabaseType, DiscoveryRulesFile
+from ..configuration.models import DEFAULT_CHUNK_SIZE
 from ..database.dialects import ColumnCategory, ForeignKey, quoteFoldedTable
 from ..masking import changesValues
+from ..masking.strategies import structuredText
 
 DEFAULT_SAMPLE_SIZE = 1000
 
@@ -199,6 +202,72 @@ def _classifyValues(values: Sequence[Any], category: Optional[ColumnCategory], r
     return None
 
 
+def _documents(values: Sequence[Any]) -> List[Any]:
+    """The sampled values as JSON documents, where they are some: dicts and
+    lists as psycopg and oracledb return them, or text that parses as an
+    object or an array, as MySQL and DuckDB return them. Empty otherwise.
+    """
+
+    present = [value for value in values if value is not None]
+    if present and all(isinstance(value, (dict, list)) for value in present):
+        return present
+    if present and all(isinstance(value, str) and value.lstrip()[:1] in ('{', '[') for value in present):
+        try:
+            return [json.loads(value) for value in present]
+        except ValueError:
+            return []
+
+    return []
+
+
+def _leaves(document: Any, path: Tuple[str, ...], into: Dict[Tuple[str, ...], List[Any]]) -> None:
+
+    if isinstance(document, dict):
+        for key, value in document.items():
+            _leaves(value, path + (str(key),), into)
+    elif isinstance(document, list):
+        for item in document:
+            _leaves(item, path + ('[]',), into)
+    elif document is not None:
+        into.setdefault(path, []).append(document)
+
+
+def _classifyDocuments(documents: Sequence[Any], rules: DiscoveryRules) -> Optional[Tuple[Dict[str, Any], str]]:
+    """Personal data inside sampled JSON documents: each leaf's key against
+    the name rules, and its values, key path by key path, against the value
+    rules. A `json` policy naming each path found with the policy its rule
+    gives, redacting the rest of the document.
+    """
+
+    leaves: Dict[Tuple[str, ...], List[Any]] = {}
+    for document in documents:
+        _leaves(document, (), leaves)
+
+    fields: Dict[str, Dict[str, Any]] = {}
+    for path, values in sorted(leaves.items()):
+        where = '.'.join(path).replace('.[]', '[]')
+        if not where:
+            continue
+        key = next((part for part in reversed(path) if part != '[]'), None)
+        rule = rules.matchName(key) if key is not None else None
+        if rule is not None and changesValues(rule.policy) and _compatible(rule.policy['strategy'], values, None):
+            fields[where] = dict(rule.policy)
+            continue
+        texts = [value.strip() for value in values if isinstance(value, str)]
+        digits = [str(value) for value in values if isinstance(value, (str, int)) and not isinstance(value, bool)]
+        for valueRule in rules.values:
+            candidates = texts if valueRule.name is not None else digits
+            if changesValues(valueRule.policy) and candidates and _share(candidates, valueRule.test) >= VALUE_MATCH_THRESHOLD:
+                fields[where] = dict(valueRule.policy)
+                break
+
+    if not fields:
+        return None
+
+    return ({'strategy': 'json', 'fields': fields},
+            'sampled JSON documents hold personal data at {}; the rest of each document is redacted'.format(', '.join(fields)))
+
+
 def keyDomain(table: str, column: str, primaryKey: Sequence[str]) -> str:
     """The domain a key column masks in. A single-column primary key is named
     after its table, so a foreign key pointing at it can use the same domain.
@@ -267,6 +336,12 @@ def suggestColumn(table: str, column: str, category: Optional[ColumnCategory], v
             return Suggestion(column, {'strategy': 'key', 'domain': domain}, 'numeric key; masked one-to-one so references still match')
         return Suggestion(column, {'strategy': 'key', 'domain': domain}, 'text key; masked one-to-one so references still match')
 
+    documents = _documents(values)
+    # A JSON document or an IP address as the text a strategy masks, so a
+    # name rule's guess is checked against what will be masked: an inet
+    # column named ip_address fits `hash`.
+    values = [value if isinstance(value, str) else structuredText(value) or value for value in values]
+
     words = nameWords(column)
     for rule in rules.names:
         if words & rule.words and _compatible(rule.policy['strategy'], values, category):
@@ -275,7 +350,7 @@ def suggestColumn(table: str, column: str, category: Optional[ColumnCategory], v
     if 'name' in words and nameWords(table) & rules.personalTables and _compatible('fakeName', values, category):
         return Suggestion(column, {'strategy': 'fakeName'}, 'a name column in a table that looks like it holds people')
 
-    classified = _classifyValues(values, category, rules)
+    classified = _classifyDocuments(documents, rules) if documents else _classifyValues(values, category, rules)
     if classified is not None:
         return Suggestion(column, classified[0], classified[1])
 
@@ -335,7 +410,7 @@ def proposeTable(database: Any, table: str, sampleSize: int = DEFAULT_SAMPLE_SIZ
 
     if foreignKeys is None:
         try:
-            foreignKeys = database.getForeignKeys()
+            foreignKeys = database.getForeignKeysFor([table])
         except NotImplementedError:
             foreignKeys = []
 
@@ -400,10 +475,19 @@ class JobDraft(NamedTuple):
 
 
 def renderJobs(drafts: Sequence[JobDraft], sourceConnection: str, targetConnection: str, heading: Sequence[str],
-               keyVariable: str = 'MASKING_KEY', chunkSize: int = 5000, targetType: Optional[DatabaseType] = None) -> str:
+               keyVariable: str = 'MASKING_KEY', chunkSize: int = DEFAULT_CHUNK_SIZE, targetType: Optional[DatabaseType] = None,
+               selfContained: bool = False) -> str:
     """A jobs.yaml document, with each suggestion's reason as a comment, which
     yaml.dump can't emit. Masking in place swaps, since upserting a masked key
     would add rows rather than replace them.
+
+    What every job shares -- the connections, the insert strategy, the
+    masking key -- is written once, under `defaults:`, so the key can't
+    differ between two jobs by an edit to one of them, and what is left under
+    each job is what a reviewer has to read. `selfContained` writes it into
+    every job instead, for jobs to paste into a file whose own defaults would
+    otherwise apply to them. A setting at its built-in default is left out
+    either way.
 
     A job's target tables go into statements as they are written here, so with
     `targetType` they are quoted for that database -- a table named for a
@@ -415,21 +499,32 @@ def renderJobs(drafts: Sequence[JobDraft], sourceConnection: str, targetConnecti
         return table if targetType is None else quoteFoldedTable(targetType, table)
 
     inPlace = sourceConnection == targetConnection
+    masked = any(draft.proposal is not None for draft in drafts)
+    shared = [('sourceConnection', _scalar(sourceConnection)), ('targetConnection', _scalar(targetConnection)),
+              ('insertStrategy', 'swap' if inPlace else 'upsert')]
+    if chunkSize != DEFAULT_CHUNK_SIZE:
+        shared.append(('chunkSize', str(chunkSize)))
+    key = '${{{}}}'.format(keyVariable)
+
     lines = ['# ' + line if line else '#' for line in heading]
     if inPlace and targetType == DatabaseType.DUCKDB:
         lines += ['# DuckDB cannot swap a table in a foreign key, so a job below masking such a table fails before renaming',
                   '# anything. Mask those tables into another database instead.']
-    lines += ['workers: 2', 'jobs:']
+    lines.append('workers: 2')
+    if not selfContained:
+        lines.append('defaults:')
+        lines += ['  {}: {}'.format(name, value) for name, value in shared]
+        if masked:
+            lines += ['  masking:', '    key: {}'.format(key)]
+    lines.append('jobs:')
     taken: Set[str] = set()
     names = {draft.table: jobName(draft.table, taken) for draft in drafts}
 
     for draft in drafts:
         lines.append('  {}:'.format(_scalar(names[draft.table])))
-        lines.append('    active: true')
         if draft.predecessors:
             lines.append('    predecessors:')
             lines += ['    - {}'.format(_scalar(names[predecessor])) for predecessor in draft.predecessors]
-        lines.append('    sourceConnection: {}'.format(_scalar(sourceConnection)))
 
         if '\n' in draft.sourceQuery:
             lines.append('    sourceQuery: |-')
@@ -437,21 +532,18 @@ def renderJobs(drafts: Sequence[JobDraft], sourceConnection: str, targetConnecti
         else:
             lines.append('    sourceQuery: {}'.format(_scalar(draft.sourceQuery)))
 
-        lines.append('    targetConnection: {}'.format(_scalar(targetConnection)))
         if inPlace:
             lines.append('    # Masking in place: rows load into the stage table, which is then swapped')
             lines.append('    # with the original. Create it first, with the same shape.')
             lines.append('    targetTableStage: {}'.format(_scalar(target(draft.table + '_masked_stage'))))
-            lines.append('    targetTableFinal: {}'.format(_scalar(target(draft.table))))
-            lines.append('    insertStrategy: swap')
-        else:
-            lines.append('    targetTableFinal: {}'.format(_scalar(target(draft.table))))
-            lines.append('    insertStrategy: upsert')
-        lines.append('    chunkSize: {}'.format(chunkSize))
+        lines.append('    targetTableFinal: {}'.format(_scalar(target(draft.table))))
+        if selfContained:
+            lines += ['    {}: {}'.format(name, value) for name, value in shared]
 
         if draft.proposal is not None:
             lines.append('    masking:')
-            lines.append('      key: ${{{}}}'.format(keyVariable))
+            if selfContained:
+                lines.append('      key: {}'.format(key))
             lines.append('      columns:')
             for suggestion in draft.proposal.columns:
                 lines.append('        {}: {}  # {}'.format(_scalar(suggestion.column), _flow(suggestion.policy), suggestion.reason))

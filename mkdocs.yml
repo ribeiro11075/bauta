@@ -103,6 +103,7 @@ nav:
       - guides/prove-the-copy-is-safe.md
       - guides/keep-a-manifest.md
       - guides/run-on-a-schedule.md
+      - guides/run-from-an-orchestrator.md
       - guides/watch-what-ran.md
       - guides/rotate-the-key.md
       - guides/make-it-faster.md

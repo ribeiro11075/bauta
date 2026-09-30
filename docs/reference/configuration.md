@@ -20,7 +20,7 @@ The CLI reads its configuration from one directory, found in this order:
 
 `--connections FILE`, `--jobs FILE` and `--rules FILE` name a file anywhere else.
 
-Paths inside `jobs.yaml` are relative to `jobs.yaml`, so a cron entry and a shell started elsewhere find the same files. Paths on the command line are relative to the working directory. A layout that keeps what you write apart from what runs write:
+A path inside a file is relative to that file: paths in `jobs.yaml` to `jobs.yaml`, and a database file or directory in `connections.yaml` to `connections.yaml`. A cron entry, a shell and CI then find the same files wherever they start. Paths on the command line are relative to the working directory. A layout that keeps what you write apart from what runs write:
 
 ```
 configuration/    connections.yaml, jobs.yaml, discovery.yaml
@@ -28,6 +28,42 @@ transaction/      run state, history and the manifest, which jobs.yaml points at
 ```
 
 `example/starter/configuration/` is set up this way.
+
+### Splitting the jobs across files
+
+`include` in `jobs.yaml` names more files of jobs, relative to it, as paths or glob patterns (`**` matches any depth):
+
+```yaml
+workers: 4
+defaults:
+  sourceConnection: prod
+  targetConnection: staging
+  insertStrategy: upsert
+  masking:
+    key: ${MASKING_KEY}
+include:
+- jobs.d/*.yaml
+```
+
+```yaml
+# jobs.d/billing.yaml, owned by the billing team
+jobs:
+  maskInvoices:
+    sourceQuery: select * from invoices
+    targetTableFinal: invoices
+    masking:
+      columns:
+        ...
+acknowledged:
+  prod:
+    ledger_archive: kept in production only
+```
+
+An included file holds `jobs` and `acknowledged` and nothing else. Everything else, such as `workers`, `defaults` and where run state goes, is said once, in `jobs.yaml`, and `defaults` reaches every included job as if it were written there. The files are merged before anything is checked, so predecessors, `validate`, `audit` and `coverage` see one set of jobs, and a job may name a predecessor in another file.
+
+What would otherwise be ambiguous is an error that names both files: a job defined in two files, a table acknowledged in two, a pattern that matches no file (a misspelled directory would otherwise drop every job in it), and an `include` inside an included file. `validate` prints how many jobs came from each file, and the [manifest](../guides/keep-a-manifest.md) records each included file's digest beside the jobs file's.
+
+One file per team or domain lets a code-owners rule give each its reviewers, and keeps unrelated changes out of each other's merges.
 
 
 ## Credentials

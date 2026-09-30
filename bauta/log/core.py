@@ -50,6 +50,37 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+# The `event` of the record a job's last failed attempt logs, with its
+# traceback; the cycle's summary reports the same failure in a line.
+ATTEMPT_FAILED = 'attemptFailed'
+
+
+class _OneLineFormatter(logging.Formatter):
+    """A record as `formatter` writes it, less any traceback. Text keeps
+    only the level and message, since a line on a terminal or in cron mail
+    needs no timestamp or source line.
+    """
+
+    def __init__(self, formatter: logging.Formatter) -> None:
+        super().__init__()
+        self._json = formatter if isinstance(formatter, JsonFormatter) else None
+
+    def format(self, record: logging.LogRecord) -> str:
+
+        record = copy.copy(record)
+        record.exc_info = None
+        record.exc_text = None
+
+        if self._json is not None:
+            return self._json.format(record)
+
+        return '[{}] {}'.format(record.levelname, record.getMessage())
+
+
+class _ErrorStreamHandler(logging.StreamHandler):
+    """The handler addErrorStream adds, told apart from addStreamHandler's."""
+
+
 class ScrubbingFilter(logging.Filter):
     """Removes quoted data values from a record's message and exception text.
     On the logger rather than its handlers, so it covers handlers a caller
@@ -198,13 +229,35 @@ class Log:
         """
 
         for handler in self.logging.handlers:
-            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler) and handler.stream is stream:
+            if (isinstance(handler, logging.StreamHandler) and not isinstance(handler, (logging.FileHandler, _ErrorStreamHandler))
+                    and handler.stream is stream):
                 handler.setLevel(level)
                 return
 
         handler = logging.StreamHandler(stream=stream)
         handler.setLevel(level)
         handler.setFormatter(self._formatter)
+        self.logging.addHandler(handler)
+
+
+    def addErrorStream(self, stream: Any) -> None:
+        """What --quiet leaves on a stream: each error as one line, without
+        its traceback, and a job's failure once rather than once per attempt
+        and again in the cycle's summary. Under cron that is the mail sent
+        when a run fails, and nothing when it succeeds. With no handler at all,
+        Python's own last resort would print every warning and traceback.
+        """
+
+        # One per process, replacing the last: a command run again in the
+        # same process -- a test, a host program -- may bring a new stream,
+        # and the old one may be closed.
+        for existing in [handler for handler in self.logging.handlers if isinstance(handler, _ErrorStreamHandler)]:
+            self.logging.removeHandler(existing)
+
+        handler = _ErrorStreamHandler(stream=stream)
+        handler.setLevel(logging.ERROR)
+        handler.setFormatter(_OneLineFormatter(self._formatter))
+        handler.addFilter(lambda record: getattr(record, 'event', None) != ATTEMPT_FAILED)
         self.logging.addHandler(handler)
 
 

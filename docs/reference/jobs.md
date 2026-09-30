@@ -25,6 +25,7 @@ jobs:
 | `manifest` | optional | Where `run` writes its [masking manifest](../guides/keep-a-manifest.md#what-it-records), for `bauta verify-manifest`. A file, replaced each run, or a [table](#tables), which keeps every run's. Not written when unset. `--manifest FILE` or `--manifest-connection ALIAS` overrides it. |
 | `maskingThreads` | optional, `1` | Threads the [native masker](../guides/make-it-faster.md#the-native-masker) masks each job with: `1`, a number up to the cores available, or `auto` to divide half the cores between the jobs running. Results are the same for any count. `BAUTA_MASKING_THREADS` overrides it. See [masking threads](../guides/make-it-faster.md#masking-threads). |
 | `defaults` | optional | Settings every job takes unless it names its own. See [defaults](#defaults). |
+| `include` | optional | More files of `jobs` and `acknowledged`, as paths or glob patterns relative to this one. See [splitting the jobs across files](configuration.md#splitting-the-jobs-across-files). |
 | `acknowledged` | optional | Tables no job copies, on purpose: connection alias, then table, then why. What [`bauta coverage`](../guides/prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover) reads. |
 | `jobs` | required | A map of job name to job definition. |
 

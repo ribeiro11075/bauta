@@ -208,7 +208,8 @@ class DatabaseHistory(RunHistory):
 
 def renderHistory(records: Sequence[Mapping[str, Any]]) -> str:
 
-    lines = ['{:<20} {:<28} {:<10} {:>10} {:>9}  {}'.format('FINISHED', 'JOB', 'STATUS', 'ROWS', 'SECONDS', 'ERROR')]
+    # UTC, as recorded, and labelled so: the log lines beside it are local.
+    lines = ['{:<20} {:<28} {:<10} {:>10} {:>9}  {}'.format('FINISHED (UTC)', 'JOB', 'STATUS', 'ROWS', 'SECONDS', 'ERROR')]
     for record in records:
         lines.append('{:<20} {:<28} {:<10} {:>10} {:>9.1f}  {}'.format(
             (record['finishedAt'] or '-')[:19].replace('T', ' '), record['job'], record['status'], record['rowCount'] or 0,

@@ -4,7 +4,7 @@ changed under it, which would leave two keys' masks in one target.
 from __future__ import annotations
 
 import logging
-from typing import List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, InsertStrategy
 from ..database import Database
@@ -13,6 +13,27 @@ from ..masking import changesValues, keyFingerprint, maskingImplementation, poli
 from .memory import MemoryBackend
 
 logger = logging.getLogger(LOGGER_NAME)
+
+
+# How many job names a message lists for one change before it counts the rest.
+LISTED_JOBS = 10
+
+
+def _describeChanges(changes: Sequence[Tuple[str, str, str]]) -> str:
+    """(job, was, now) triples as one clause per distinct change: a key
+    rotated under sixty jobs is one change, and says so once.
+    """
+
+    grouped: Dict[Tuple[str, str], List[str]] = {}
+    for name, was, now in changes:
+        grouped.setdefault((was, now), []).append(name)
+
+    clauses = []
+    for (was, now), names in grouped.items():
+        listed = ', '.join(names[:LISTED_JOBS]) + (' and {} more'.format(len(names) - LISTED_JOBS) if len(names) > LISTED_JOBS else '')
+        clauses.append('{} ({} job(s); was {}, now {})'.format(listed, len(names), was, now))
+
+    return '; '.join(clauses)
 
 
 def _maskedPrimaryKeyColumns(jobConfig: DataJobConfig, primaryKeyColumns: Sequence[str]) -> List[str]:
@@ -80,9 +101,9 @@ def _requireUnchangedMaskingKeys(jobsFile: DataJobsFile, memory: MemoryBackend, 
     """
 
     recorded = memory.readKeyFingerprints()
-    changed = []
+    changed: List[Tuple[str, str, str]] = []
     changedJobs: List[Tuple[str, DataJobConfig]] = []
-    reimplemented = []
+    reimplemented: List[Tuple[str, str, str]] = []
 
     for name, job in sorted(jobsFile.jobs.items()):
         if not job.active or job.masking is None or job.insertStrategy != InsertStrategy.UPSERT:
@@ -95,10 +116,10 @@ def _requireUnchangedMaskingKeys(jobsFile: DataJobsFile, memory: MemoryBackend, 
         currentKey = keyFingerprint(job.masking.key.get_secret_value())
 
         if previousKey != currentKey:
-            changed.append('{} (was {}, now {})'.format(name, previousKey, currentKey))
+            changed.append((name, previousKey, currentKey))
             changedJobs.append((name, job))
         elif previousImplementation != maskingImplementation():
-            reimplemented.append('{} (was {}, now {})'.format(name, previousImplementation, maskingImplementation()))
+            reimplemented.append((name, previousImplementation, maskingImplementation()))
 
     # Warned rather than refused: the implementations are tested to agree (see
     # maskingIdentity), and refusing would stop every upsert job whenever the
@@ -106,7 +127,7 @@ def _requireUnchangedMaskingKeys(jobsFile: DataJobsFile, memory: MemoryBackend, 
     if reimplemented:
         logger.warning('Masking implementation changed since the last run of upsert job(s) {}. The two are tested to produce '
                        'identical masks, so this is recorded rather than refused -- but if rows masked before and after stop '
-                       'joining, this is why'.format(', '.join(reimplemented)))
+                       'joining, this is why'.format(_describeChanges(reimplemented)))
 
     if not changed:
         return
@@ -114,11 +135,11 @@ def _requireUnchangedMaskingKeys(jobsFile: DataJobsFile, memory: MemoryBackend, 
     if acceptKeyChange:
         if connectionConfiguration is not None:
             _refuseAcceptedKeyChangeThatWouldDuplicateRows(changedJobs, connectionConfiguration)
-        logger.warning('Masking key changed for {}; continuing, as acknowledged'.format(', '.join(changed)))
+        logger.warning('Masking key changed for {}; continuing, as acknowledged'.format(_describeChanges(changed)))
         return
 
     raise ConfigurationError(
         'the masking key changed since the last run of upsert job(s) {}. Their targets still hold rows masked under the old key, '
         'which would no longer match rows masked under the new one. Empty those targets with `bauta clear`, which also forgets '
         'the old key, and run again. Where re-loading under the new key merely rewrites the rows -- the target\'s primary key is '
-        'not masked -- --accept-key-change runs them as they are instead'.format(', '.join(changed)))
+        'not masked -- --accept-key-change runs them as they are instead'.format(_describeChanges(changed)))

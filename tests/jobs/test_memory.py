@@ -1,6 +1,8 @@
 import datetime
 import decimal
 
+import sys
+
 import pytest
 
 from bauta.jobs.memory import FileMemory
@@ -187,6 +189,37 @@ def test_the_run_lock_is_exclusive_and_released_afterwards(tmp_path):
 
     with exclusiveRun(lockFile):
         pass
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='msvcrt has no shared lock, so runs of different jobs wait for each other there')
+def test_runs_of_different_jobs_go_side_by_side_and_of_the_same_job_do_not(tmp_path):
+    from bauta.jobs.memory import RunInProgressError, exclusiveRun
+
+    lockFile = tmp_path / 'memory.yaml.run.lock'
+
+    with exclusiveRun(lockFile, jobs=['loadOrders']):
+        with exclusiveRun(lockFile, jobs=['loadCustomers', 'load/Odd name']):
+            pass
+        with pytest.raises(RunInProgressError, match='already running loadOrders'):
+            with exclusiveRun(lockFile, jobs=['loadCustomers', 'loadOrders']):
+                pass
+        # A run of every job waits for no --job run.
+        with pytest.raises(RunInProgressError, match='already using'):
+            with exclusiveRun(lockFile):
+                pass
+
+    with exclusiveRun(lockFile):
+        with pytest.raises(RunInProgressError, match='already using'):
+            with exclusiveRun(lockFile, jobs=['loadCustomers']):
+                pass
+
+
+def test_an_os_error_from_the_run_itself_is_not_taken_for_another_run(tmp_path):
+    from bauta.jobs.memory import exclusiveRun
+
+    with pytest.raises(OSError, match='No space left'):
+        with exclusiveRun(tmp_path / 'memory.yaml.run.lock'):
+            raise OSError(28, 'No space left on device')
 
 
 def test_the_database_memory_schema_uses_a_portable_float_type():

@@ -486,6 +486,30 @@ def test_a_masked_job_satisfies_a_database_that_requires_masking():
     Configuration.validateJobGraph(jobsFile.jobs, connections=_databases(staging={'requireMasking': True}))
 
 
+@pytest.mark.parametrize('columns', [{}, {'id': 'keep'}, {'id': 'keep', 'email': 'email'}])
+def test_requiring_masking_refuses_a_policy_whose_default_copies_unnamed_columns_as_they_are(columns):
+    """`defaultStrategy: keep` with no columns was a masking policy in name
+    only: it satisfied requireMasking and copied every column unmasked.
+    """
+    raw = _jobsFile(_job(sourceConnection='prod', targetConnection='staging',
+                         masking={'key': MASKING_KEY, 'columns': columns, 'defaultStrategy': 'keep'}))
+    jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
+
+    with pytest.raises(ConfigurationError, match="requireMasking, and this job's defaultStrategy copies every column"):
+        Configuration.validateJobGraph(jobsFile.jobs, connections=_databases(staging={'requireMasking': True}))
+
+    # Allowed where nothing requires masking, as audit already warns of it.
+    Configuration.validateJobGraph(jobsFile.jobs, connections=_databases())
+
+
+def test_requiring_masking_accepts_a_default_that_masks():
+    raw = _jobsFile(_job(sourceConnection='prod', targetConnection='staging',
+                         masking={'key': MASKING_KEY, 'columns': {'id': 'keep'}, 'defaultStrategy': 'null'}))
+    jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
+
+    Configuration.validateJobGraph(jobsFile.jobs, connections=_databases(staging={'requireMasking': True}))
+
+
 def test_a_job_needs_only_what_is_particular_to_it():
     """active, chunkSize and workers have defaults, so a minimal file says only
     what this job does that another wouldn't.

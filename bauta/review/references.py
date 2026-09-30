@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
-from ..database.dialects import ForeignKey, quoteIdentifier, quoteTableName, splitTableName, unqualifiedName
+from ..database.dialects import ForeignKey, catalogTable, quoteIdentifier, quoteTableName, splitTableName, unqualifiedName
 from ..log.scrubbing import describeError
 
 
@@ -29,6 +29,35 @@ class ReferenceResult(NamedTuple):
     declared: bool
     orphans: Optional[int]
     problem: Optional[str]
+
+
+class UncheckedNote(NamedTuple):
+    """A target with no foreign key to count. `missed` maps each database
+    involved -- the target, its sources -- to the schemas that do declare
+    keys, which the jobs' tables are not in, and how many each: empty when
+    there is nothing to find.
+    """
+
+    database: str
+    missed: Dict[str, Dict[str, int]]
+
+
+def uncheckedNote(database: str, missed: Mapping[str, Mapping[str, int]]) -> UncheckedNote:
+
+    return UncheckedNote(database, {alias: dict(counts) for alias, counts in sorted(missed.items()) if counts})
+
+
+def describeUnchecked(note: UncheckedNote) -> str:
+    """Why nothing was counted in a target, and whether that is a pass."""
+
+    if not note.missed:
+        return ('no foreign keys are declared on the tables loaded into it or on their sources, so no relationship was checked. '
+                'Keys the application enforces are not seen')
+
+    where = '; '.join('{} declares {} in {}'.format(alias, sum(counts.values()), ', '.join(sorted(counts))) for alias, counts in note.missed.items())
+
+    return ('no foreign key was checked, but {}: schemas the jobs\' tables are not in. Set currentSchema on the connection, '
+            'or qualify the jobs\' tables with their schema'.format(where))
 
 
 class _Check(NamedTuple):
@@ -62,9 +91,12 @@ def orphanQuery(databaseType: Any, table: str, columns: Sequence[str], reference
 
 
 def _folded(foreignKey: ForeignKey) -> Tuple[Any, ...]:
+    """A key as it is matched between databases: by table name, without the
+    schema, since a copy often lands in another schema than its source's.
+    """
 
-    return (foreignKey.table.upper(), tuple(column.upper() for column in foreignKey.columns),
-            foreignKey.referencedTable.upper(), tuple(column.upper() for column in foreignKey.referencedColumns))
+    return (unqualifiedName(foreignKey.table).upper(), tuple(column.upper() for column in foreignKey.columns),
+            unqualifiedName(foreignKey.referencedTable).upper(), tuple(column.upper() for column in foreignKey.referencedColumns))
 
 
 def _plan(database: Any, loaded: Mapping[str, str], sourceKeys: Sequence[ForeignKey]) -> List[_Check]:
@@ -74,17 +106,11 @@ def _plan(database: Any, loaded: Mapping[str, str], sourceKeys: Sequence[Foreign
     """
 
     checks = []
-    # A catalog key describes the connection's current schema. It applies to a
-    # job's table only where the job names that same table: a job loading
-    # `other.orders` means another table, whose keys this connection can't read,
-    # so its keys are counted against the table the job loads, not the catalog's.
-    declared: List[ForeignKey] = []
-    qualified: List[ForeignKey] = []
-    for foreignKey in database.getForeignKeys():
-        table = loaded.get(foreignKey.table.upper())
-        if table is None:
-            continue
-        (declared if splitTableName(table)[0] is None else qualified).append(foreignKey)
+    # The target's own keys, read from each schema a job loads into, so a
+    # job's `app.orders` is checked against what `app` declares. A key names
+    # its table as the job would: bare in the current schema, else qualified.
+    byCatalog = {catalogTable(database.type, table).upper(): table for table in loaded.values()}
+    declared = [foreignKey for foreignKey in database.getForeignKeysFor(list(loaded.values())) if foreignKey.table.upper() in byCatalog]
     declaredFolded = {_folded(foreignKey) for foreignKey in declared}
 
     for foreignKey in declared:
@@ -104,19 +130,26 @@ def _plan(database: Any, loaded: Mapping[str, str], sourceKeys: Sequence[Foreign
             return None, '{} has no column {}'.format(unqualifiedName(table), ', '.join(missing))
         return [known[column.upper()] for column in columns], None
 
+    # The connection's own schema's keys on tables a job loads elsewhere --
+    # `orders` declaring one, a job loading `other.orders` -- are counted
+    # against the job's table by name, as a source's are.
+    byName = [foreignKey for foreignKey in (database.getForeignKeys() if any(splitTableName(table)[0] for table in loaded.values()) else [])
+              if foreignKey.table.upper() not in byCatalog]
+
     seen = set()
-    for foreignKey in list(qualified) + list(sourceKeys):
+    for foreignKey in byName + list(sourceKeys):
         folded = _folded(foreignKey)
-        if foreignKey.table.upper() not in loaded or folded in declaredFolded or folded in seen:
+        if folded[0] not in loaded or folded in declaredFolded or folded in seen:
             continue
         seen.add(folded)
-        table = loaded[foreignKey.table.upper()]
+        table = loaded[folded[0]]
         # An unloaded parent is looked for beside the child, not in the
         # connection's schema, where a same-named table would be another table.
         schema = splitTableName(table)[0]
-        referencedTable = loaded.get(foreignKey.referencedTable.upper())
+        referencedTable = loaded.get(folded[2])
         if referencedTable is None:
-            referencedTable = '{}.{}'.format(schema, foreignKey.referencedTable) if schema else foreignKey.referencedTable
+            parent = unqualifiedName(foreignKey.referencedTable)
+            referencedTable = '{}.{}'.format(schema, parent) if schema else parent
         columns, problem = spelled(table, foreignKey.columns)
         referencedColumns, referencedProblem = spelled(referencedTable, foreignKey.referencedColumns)
         checks.append(_Check(foreignKey, False, table, columns, referencedTable, referencedColumns, problem or referencedProblem))
@@ -159,10 +192,12 @@ def verifyReferences(database: Any, alias: str, loaded: Mapping[str, str], sourc
     return results
 
 
-def renderReferences(results: Sequence[ReferenceResult]) -> str:
-    """The results for a terminal: one line a key, then a summary."""
+def renderReferences(results: Sequence[ReferenceResult], notes: Sequence[UncheckedNote] = ()) -> str:
+    """The results for a terminal: one line a key, a line for each target
+    with none to check, then a summary.
+    """
 
-    lines = []
+    lines = ['{:<8} {}: {}'.format('ERROR' if note.missed else 'NONE', note.database, describeUnchecked(note)) for note in notes]
 
     for result in results:
         key = '{}: {} ({}) -> {} ({}){}'.format(result.database, result.table, ', '.join(result.columns), result.referencedTable,
@@ -191,12 +226,14 @@ def summarize(results: Sequence[ReferenceResult]) -> str:
     return 'Checked {} foreign key(s): {} with orphaned rows, {} not checked'.format(len(results), orphaned, unchecked)
 
 
-def referencesReport(results: Sequence[ReferenceResult], generatedAt: str) -> Dict[str, Any]:
+def referencesReport(results: Sequence[ReferenceResult], generatedAt: str, notes: Sequence[UncheckedNote] = ()) -> Dict[str, Any]:
     """The results as a JSON-ready dict."""
 
     return {
         'generatedAt': generatedAt,
         'references': [dict(result._asdict(), status=_status(result).lower()) for result in results],
+        'unchecked': [{'database': note.database, 'status': 'error' if note.missed else 'none', 'foreignKeysElsewhere': note.missed,
+                       'message': describeUnchecked(note)} for note in notes],
         'summary': {
             'checked': len(results),
             'orphaned': sum(1 for result in results if result.orphans),

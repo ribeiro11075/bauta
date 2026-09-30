@@ -16,7 +16,8 @@ from typing import Any, Callable, Deque, Dict, Generator, Iterable, List, Option
 
 from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, FilesConnection, IcebergConnection, targetProblems
 from ..database import Database
-from ..log import LOGGER_NAME
+from ..log import ATTEMPT_FAILED, LOGGER_NAME
+from .fullRefresh import isFullRefresh
 from ..log.scrubbing import describeError
 from ..masking import BoundMasking, MaskingError, MaskingPlan, maskingIdentity
 from ..masking import core as maskingModule
@@ -85,7 +86,7 @@ def _openTarget(job: str, jobConfig: DataJobConfig, settings: ConnectionConfig) 
             target = IcebergTarget(job, jobConfig, settings)
             held.callback(target.close)
         else:
-            target = TableTarget(held.enter_context(Database(connectionSettings=settings)), jobConfig)
+            target = TableTarget(held.enter_context(Database(connectionSettings=settings, create=True)), jobConfig)
 
         try:
             yield target
@@ -117,7 +118,11 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
         if jobConfig.watermarkColumn:
             sourceQuery = sourceConnection.substituteWatermarkPlaceholder(sourceQuery)
             parameters = (watermark,)
-            logger.info('Extracting {} incrementally, from watermark {!r}'.format(jobConfig.sourceConnection, watermark))
+            if isFullRefresh(jobConfig):
+                logger.info('Extracting all of {} for a full refresh, from watermark {!r}, to replace {}'.format(
+                    jobConfig.sourceConnection, watermark, jobConfig.targetTableFinal))
+            else:
+                logger.info('Extracting {} incrementally, from watermark {!r}'.format(jobConfig.sourceConnection, watermark))
 
         logger.debug('Streaming sourceQuery against {} in chunks of {}'.format(jobConfig.sourceConnection, jobConfig.chunkSize))
         sourceQueryColumns, chunks = sourceConnection.stream(query=sourceQuery, chunkSize=jobConfig.chunkSize, parameters=parameters)
@@ -300,7 +305,8 @@ def _executeWithRetries(jobConfig: DataJobConfig, job: str, attempt: Callable[[]
         except Exception as error:
 
             if isinstance(error, PERMANENT_ERRORS) or attemptNumber > jobConfig.retries:
-                logger.error('Failed to complete {} due to error {}'.format(job, error), exc_info=error)
+                logger.error('Failed to complete {} due to error {}'.format(job, error), exc_info=error,
+                             extra={'job': job, 'event': ATTEMPT_FAILED})
                 loaded = error.rowCount if isinstance(error, PostLoadError) else 0
                 return JobOutcome(job=job, status=JobStatus.FAILED, error=describeError(error), attempts=attemptNumber, rowCount=loaded)
 
@@ -329,7 +335,11 @@ def _runDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dic
 
     def attempt() -> JobOutcome:
         nonlocal watermark
-        if jobConfig.watermarkColumn:
+        if isFullRefresh(jobConfig):
+            # From the start, so the query returns every row; what it reads
+            # up to is recorded below as for any run.
+            watermark = jobConfig.watermarkInitial
+        elif jobConfig.watermarkColumn:
             watermark = memory.readWatermarks().get(job, jobConfig.watermarkInitial)
         return _executeDataJob(job, jobConfig, connectionConfiguration, watermark=watermark)
 

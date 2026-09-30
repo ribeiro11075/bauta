@@ -19,6 +19,7 @@ For each table, `discover` reads the schema and samples rows (`--sample`, defaul
 ```
 
 - **Names first, then values.** Column names are matched against [rules](#your-own-rules-discoveryyaml) for common patterns (email, phone, SSN, card, name, address, birth date and so on). A name-based suggestion is dropped if it doesn't fit the column's type, so `place_of_birth` isn't treated as a date. Sampled values are then checked for emails, national identifiers, card numbers (with a Luhn check), IP addresses, UUIDs, dates, phone numbers and long free text.
+- **Inside JSON documents.** A JSON column -- a document PostgreSQL or Oracle returns as one, or text MySQL and DuckDB return that parses as an object or array -- is read value by value: each key against the name rules and each key path's values against the value rules, so `{"contact": {"alt_email": ...}}` is found. Anything found is proposed as a [`json`](../reference/strategies.md#json) policy naming each path, with the rest of the document redacted: `{strategy: json, fields: {contact.alt_email: {strategy: email}}}`. An IP address PostgreSQL returns as `inet` is read as its text, so an `ip_address` column is found as a text one would be.
 - **Keys are decided together.** Primary keys, the columns that foreign keys reference, and the foreign-key columns themselves get matching domains, so both ends of a relationship agree. Numeric keys are proposed as `keep`, since surrogate ids reveal little, and text keys as `key`. **`--mask-keys` masks the numeric ones too**, in the domain each relationship shares:
 
   ```yaml
@@ -29,10 +30,32 @@ For each table, `discover` reads the schema and samples rows (`--sample`, defaul
   Both ends move together, so the copy's references still match. Use it where the ids themselves are meaningful — sequential ids leak how many customers there are, and when each was created — or where the copy's ids must not be production's. Note that masking a key the target uses as its primary key means a later key rotation has to go through `bauta clear`; see [rotating the masking key](rotate-the-key.md).
 - **Sampled values stay in memory.** None of them is printed, logged or written.
 - **Load settings.** With a separate `--target`, jobs upsert and load parent tables before child tables. Without one, the proposal masks in place through a `<table>_masked_stage` swap.
-- **A whole schema at once.** `--all-tables` proposes for every table in the database, instead of naming each with a repeated `--table`; `--schema NAME` lists another schema. Pair it with [`bauta coverage`](prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover), which starts from the same list and fails on anything the generated jobs then leave out.
+- **A whole schema at once.** `--all-tables` proposes for every table in the database, instead of naming each with a repeated `--table`; `--schema NAME` lists another schema, and reads that schema's foreign keys, so its keys share domains and its jobs load parents first as the connection's own would. Pair it with [`bauta coverage`](prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover), which starts from the same list and fails on anything the generated jobs then leave out.
 - `--output` refuses to overwrite an existing file, so it can't replace a policy that has already been reviewed.
 
 Treat the result as a starting point for review. It isn't a finished policy.
+
+**What every job shares is written once.** The connections, the insert strategy and the masking key go under [`defaults`](../reference/jobs.md#defaults), and each job keeps only its query, its table and its columns: what a reviewer has to read. One `key:` line also means no edit to one job can leave it masking under a different key than the jobs it joins with. Settings at their built-in values (`active: true`, `chunkSize: 5000`) are left out. To paste the jobs into a file that has defaults of its own, pass `--self-contained`, which writes every setting into every job instead, so the other file's defaults can't change what they do.
+
+
+## Keeping a policy up to date
+
+Production changes after a policy is written. A column added to a table stops every job that reads it, since [every column must be covered](cover-every-column.md), and so does a column dropped from one. `discover --update` reads the jobs file instead of naming tables, runs each masked job's query, and reports both kinds of drift, with a proposal for each new column made the same way as the first time:
+
+```
+$ bauta discover --update
+maskCustomers (configuration/jobs.d/crm.yaml):
+  + ssn: {strategy: key}  # name suggests a government identifier; key keeps it unique and shaped
+  + home_email: {strategy: email}  # name suggests an email address
+  - notes  # no longer returned by sourceQuery
+1 of 61 masked job(s) have drifted. Review the proposals above, then apply them with --apply
+```
+
+It exits 1 when any job has drifted, so it can run in CI beside [`coverage`](prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover): `coverage` catches a new table, and `discover --update` a new column. `--job NAME` narrows it to some jobs.
+
+**`--apply` writes the change** into the file each job is defined in, [included](../reference/configuration.md#splitting-the-jobs-across-files) ones too. New columns are added at the end of the job's `columns:`, each marked `proposed by discover --update` beside its reason, and columns the query no longer returns are removed. Nothing else in the file changes: comments, order and quoting stay as they were. Only a policy written in block style is edited. For one in flow style (`columns: {id: keep}`), or if the edited file wouldn't read back with exactly those changes, that file is left as it was and the error says so. Review what it wrote as you would any policy change: the proposal is what discovery thinks, not what your data needs.
+
+A job whose query reads one table whole, as the ones `discover` generates do, gets its proposals from the table: a new foreign key column shares its parent's domain. Any other query's new columns are classified from their names and sampled values. A job with `defaultStrategy` already covers every column it returns, so only its stale columns are reported.
 
 ### Your own rules: `discovery.yaml`
 
@@ -76,6 +99,7 @@ exclude: [ip]                           # built-in rules to leave out
 | `credential` | passwords, secrets, tokens and API keys |
 | `nationalId` | SSNs, tax ids, passports and licence numbers, by name; `123-45-6789` by value |
 | `card` | card numbers, by name, and by value with a Luhn check |
+| `cardSecurityCode` | CVV, CVC and CSC codes, by name, proposed as `null`: PCI DSS forbids storing them |
 | `bankAccount` | IBANs, account, routing and sort codes |
 | `phone` | phone, mobile and fax numbers, by name and value |
 | `firstName`, `lastName`, `fullName` | people's names |

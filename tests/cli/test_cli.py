@@ -7,6 +7,7 @@ this reported success on total failure.
 """
 import argparse
 import sqlite3
+from pathlib import Path
 
 import pytest
 import yaml
@@ -51,7 +52,7 @@ def workspace(tmp_path, monkeypatch):
     connection.commit()
     connection.close()
 
-    (configuration / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: demo.db\n')
+    (configuration / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: ../demo.db\n')
     (configuration / 'jobs.yaml').write_text(JOBS_YAML)
 
     monkeypatch.chdir(tmp_path)
@@ -303,7 +304,7 @@ def test_jobs_shows_a_throttled_job_after_it_has_run(workspace, capsys):
 
 def test_the_cli_expands_environment_variables_in_configuration(workspace, monkeypatch):
     """Credentials belong in the environment, not in the file beside the jobs."""
-    monkeypatch.setenv('DEMO_DB_PATH', 'demo.db')
+    monkeypatch.setenv('DEMO_DB_PATH', '../demo.db')
     (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: ${DEMO_DB_PATH}\n')
 
     assert main(['run', '--quiet']) == EXIT_SUCCESS
@@ -414,7 +415,7 @@ def schemaWorkspace(workspace):
     connection.close()
 
     (workspace / 'configuration' / 'connections.yaml').write_text(
-        'demo:\n  type: sqlite\n  path: demo.db\ncopy:\n  type: sqlite\n  path: copy.db\n')
+        'demo:\n  type: sqlite\n  path: ../demo.db\ncopy:\n  type: sqlite\n  path: ../copy.db\n')
 
     return workspace
 
@@ -425,8 +426,44 @@ def test_discover_proposes_a_policy_without_printing_values(schemaWorkspace, cap
     output = capsys.readouterr().out
 
     assert 'email: {strategy: email}  # name suggests an email address' in output
-    assert 'maskOrders:\n    active: true\n    predecessors:\n    - maskCustomers' in output
+    assert 'maskOrders:\n    predecessors:\n    - maskCustomers' in output
     assert 'a@corp.com' not in output
+
+
+def test_discover_writes_what_the_jobs_share_once_under_defaults(schemaWorkspace, capsys):
+    """The key most of all: one line, so no edit to one job can leave two
+    jobs masking one domain under different keys."""
+    assert main(['discover', '--quiet', '--connection', 'demo', '--table', 'customers', '--table', 'orders', '--target', 'copy']) == EXIT_SUCCESS
+
+    output = capsys.readouterr().out
+    document = yaml.safe_load(output)
+
+    assert document['defaults'] == {'sourceConnection': 'demo', 'targetConnection': 'copy', 'insertStrategy': 'upsert',
+                                    'masking': {'key': '${MASKING_KEY}'}}
+    assert output.count('${MASKING_KEY}') == 1
+    assert 'active: true' not in output and 'chunkSize' not in output
+    assert all(set(job) <= {'predecessors', 'sourceQuery', 'targetTableFinal', 'masking'} for job in document['jobs'].values())
+    assert all(set(job['masking']) == {'columns'} for job in document['jobs'].values())
+
+
+def test_discover_self_contained_writes_every_setting_into_every_job(schemaWorkspace, capsys):
+    assert main(['discover', '--quiet', '--connection', 'demo', '--table', 'customers', '--table', 'orders', '--target', 'copy',
+                 '--self-contained', '--chunk-size', '200']) == EXIT_SUCCESS
+
+    document = yaml.safe_load(capsys.readouterr().out)
+
+    assert 'defaults' not in document
+    for job in document['jobs'].values():
+        assert (job['sourceConnection'], job['targetConnection'], job['insertStrategy'], job['chunkSize']) == ('demo', 'copy', 'upsert', 200)
+        assert job['masking']['key'] == '${MASKING_KEY}'
+
+
+def test_generated_jobs_validate_and_resolve_their_defaults(schemaWorkspace, capsys, monkeypatch):
+    monkeypatch.setenv('MASKING_KEY', 'a-masking-key-for-the-tests-only')
+    assert main(['discover', '--quiet', '--connection', 'demo', '--table', 'customers', '--table', 'orders', '--target', 'copy']) == EXIT_SUCCESS
+    (schemaWorkspace / 'configuration' / 'jobs.yaml').write_text(capsys.readouterr().out)
+
+    assert main(['validate', '--quiet']) == EXIT_SUCCESS
 
 
 def test_discover_refuses_to_overwrite_a_file(schemaWorkspace):
@@ -486,6 +523,30 @@ jobs:
     assert out.count('WARNING') == 2  # the same one, from each run
     assert 'maskOrders: in copy, orders.customer_id is masked with key in domain customer_id' in out
     assert 'but customers.id, which it references, is masked with key in domain customer' in out
+
+
+def test_audit_connect_blames_a_missing_target_table_not_the_source_query(schemaWorkspace, capsys):
+    """The query ran; the target table wasn't there. Saying the query
+    couldn't be checked sent a reader to the source database.
+    """
+    sqlite3.connect(str(schemaWorkspace / 'copy.db')).close()
+    (schemaWorkspace / 'configuration' / 'jobs.yaml').write_text("""jobs:
+  maskCustomers:
+    sourceConnection: demo
+    sourceQuery: SELECT id, email, tier FROM customers
+    targetConnection: copy
+    targetTableFinal: customers
+    insertStrategy: upsert
+    masking:
+      key: an-audit-cli-masking-key
+      columns: {id: keep, email: email, tier: keep}
+""")
+
+    assert main(['audit', '--quiet', '--connect']) == EXIT_JOBS_DID_NOT_SUCCEED
+
+    out = capsys.readouterr().out
+    assert 'maskCustomers: target table customers in copy could not be read' in out
+    assert 'sourceQuery could not be checked' not in out
 
 
 AUDIT_SWAP_JOBS_YAML = """workers: 1
@@ -583,6 +644,30 @@ def test_schema_prints_ddl_for_the_target(schemaWorkspace, capsys):
     assert output.startswith('-- Generated by `bauta schema`')
     assert output.index('CREATE TABLE "customers"') < output.index('CREATE TABLE "orders"')
     assert 'REFERENCES "customers" ("id")' in output
+
+
+def test_schema_all_tables_creates_every_table_parents_first(schemaWorkspace, capsys):
+    assert main(['schema', '--quiet', '--connection', 'demo', '--target', 'copy', '--all-tables', '--apply']) == EXIT_SUCCESS
+    assert '4 table(s) created, 0 already existed' in capsys.readouterr().out
+
+    copy = sqlite3.connect(str(schemaWorkspace / 'copy.db'))
+    try:
+        assert {row[0] for row in copy.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} == {'customers', 'orders', 'src', 'tgt'}
+    finally:
+        copy.close()
+
+
+@pytest.mark.parametrize('selection', [[], ['--all-tables', '--table', 'orders'], ['--all-tables', '--related']])
+def test_schema_needs_exactly_one_way_of_naming_its_tables(schemaWorkspace, selection):
+    assert main(['schema', '--quiet', '--connection', 'demo', '--target', 'copy'] + selection) == EXIT_BAD_CONFIGURATION
+
+
+def test_discover_all_tables_suggests_schema_all_tables_rather_than_every_table(schemaWorkspace, capsys):
+    assert main(['discover', '--quiet', '--connection', 'demo', '--target', 'copy', '--all-tables']) == EXIT_SUCCESS
+
+    output = capsys.readouterr().out
+    assert '#   bauta schema --connection demo --target copy --all-tables --apply' in output
+    assert '--table' not in output
 
 
 def test_schema_apply_creates_missing_tables_and_leaves_existing_ones(schemaWorkspace, capsys):
@@ -734,6 +819,20 @@ def test_a_second_run_sharing_the_memory_file_refuses_to_start(workspace, caplog
     assert main(['run', '--quiet']) == EXIT_SUCCESS
 
 
+def test_a_job_runs_while_another_job_is_running_but_not_while_it_is(workspace, caplog):
+    """An orchestrator's task per job: `run --job` locks only its own jobs."""
+    from bauta.jobs.memory import exclusiveRun
+
+    lockFile = workspace / 'configuration' / 'memory.yaml.run.lock'
+    with exclusiveRun(lockFile, jobs=['dependent']):
+        assert main(['run', '--quiet', '--job', 'loadRows']) == EXIT_SUCCESS
+        assert main(['run', '--quiet', '--job', 'dependent']) == EXIT_JOBS_DID_NOT_SUCCEED
+        assert main(['run', '--quiet']) == EXIT_JOBS_DID_NOT_SUCCEED
+
+    assert 'another run is already running dependent' in caplog.text
+    assert _targetRowCount(workspace) == 5
+
+
 def test_an_interrupted_run_exits_130(workspace, monkeypatch):
     from bauta.cli import EXIT_INTERRUPTED
     from bauta.jobs.runner import RunResult
@@ -845,7 +944,7 @@ def test_coverage_passes_once_the_rest_is_acknowledged_and_names_a_stale_declara
 
 def test_coverage_needs_database_when_the_jobs_read_from_several(coverageWorkspace, caplog):
     (coverageWorkspace / 'configuration' / 'connections.yaml').write_text(
-        'demo:\n  type: sqlite\n  path: demo.db\nother:\n  type: sqlite\n  path: other.db\n')
+        'demo:\n  type: sqlite\n  path: ../demo.db\nother:\n  type: sqlite\n  path: ../other.db\n')
     _writeJobs(coverageWorkspace, dependent={'sourceConnection': 'other'})
 
     assert main(['coverage', '--quiet']) == EXIT_BAD_CONFIGURATION
@@ -866,7 +965,7 @@ def test_coverage_still_reports_a_table_whose_columns_it_cannot_read(coverageWor
 
 
 def test_validate_refuses_an_option_that_duplicates_a_field(workspace):
-    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: demo.db\n  options:\n    database: other.db\n')
+    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: ../demo.db\n  options:\n    database: other.db\n')
 
     assert main(['validate', '--quiet']) == EXIT_BAD_CONFIGURATION
 
@@ -896,6 +995,27 @@ def test_the_manifest_records_the_tool_and_the_jobs_file_and_is_sealed(workspace
 
     assert main(['verify-manifest', str(path), '--quiet']) == EXIT_SUCCESS
     assert 'not signed' in capsys.readouterr().out
+
+
+def test_a_split_configuration_runs_validates_and_records_every_file_in_the_manifest(workspace, monkeypatch, capsys):
+    import hashlib
+    import json
+
+    configuration = workspace / 'configuration'
+    jobs = yaml.safe_load(JOBS_YAML)
+    (configuration / 'jobs.d').mkdir()
+    (configuration / 'jobs.d' / 'dependent.yaml').write_text(yaml.safe_dump({'jobs': {'dependent': jobs['jobs'].pop('dependent')}}))
+    (configuration / 'jobs.yaml').write_text(yaml.safe_dump({**jobs, 'include': ['jobs.d/*.yaml'], 'manifest': 'manifest.json'}))
+
+    assert main(['validate', '--quiet']) == EXIT_SUCCESS
+    assert 'jobs from 2 file(s)' in capsys.readouterr().out
+    assert main(['run', '--quiet']) == EXIT_SUCCESS
+
+    manifest = json.loads((configuration / 'manifest.json').read_text())
+    included = configuration / 'jobs.d' / 'dependent.yaml'
+    [recorded] = manifest['configuration']['includes']
+    assert Path(recorded['file']).resolve() == included.resolve()
+    assert recorded['sha256'] == hashlib.sha256(included.read_bytes()).hexdigest()
 
 
 def test_verify_manifest_catches_an_edit(workspace, monkeypatch, caplog):
@@ -953,7 +1073,7 @@ def test_run_records_history_and_history_shows_it(workspace, capsys):
 
     assert main(['history', '--quiet', '--history', 'state/history.jsonl']) == EXIT_SUCCESS
     rows = capsys.readouterr().out.splitlines()
-    assert rows[0].split() == ['FINISHED', 'JOB', 'STATUS', 'ROWS', 'SECONDS', 'ERROR']
+    assert rows[0].split() == ['FINISHED', '(UTC)', 'JOB', 'STATUS', 'ROWS', 'SECONDS', 'ERROR']
     assert [row.split()[2] for row in rows[1:]] == ['loadRows', 'dependent', 'loadRows']
 
     assert main(['history', '--quiet', '--history', 'state/history.jsonl', '--job', 'dependent', '--format', 'json']) == EXIT_SUCCESS
@@ -1041,7 +1161,7 @@ def test_a_rotated_masking_key_needs_clear_or_acknowledgement(workspace, monkeyp
 
 def test_validate_never_runs_a_password_command(workspace, capsys):
     (workspace / 'configuration' / 'connections.yaml').write_text(
-        'demo:\n  type: sqlite\n  path: demo.db\n'
+        'demo:\n  type: sqlite\n  path: ../demo.db\n'
         'warehouse:\n  type: postgresql\n  database: w\n  host: h\n  user: u\n  passwordCommand: [/no/such/command]\n')
 
     assert main(['validate', '--quiet']) == EXIT_SUCCESS
@@ -1351,7 +1471,7 @@ def lakeWorkspace(workspace):
     src into it.
     """
     pytest.importorskip('pyarrow', reason='a files connection writes with pyarrow (pip install -e ".[files]")')
-    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: demo.db\nlake:\n  type: files\n  root: lake\n')
+    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: ../demo.db\nlake:\n  type: files\n  root: ../lake\n')
     (workspace / 'configuration' / 'jobs.yaml').write_text(yaml.safe_dump({'jobs': {'export': {
         'sourceConnection': 'demo', 'sourceQuery': 'SELECT id, name FROM src', 'targetConnection': 'lake',
         'targetTableFinal': 'crm/src', 'insertStrategy': 'overwrite', 'unmasked': True}}}))
@@ -1402,3 +1522,157 @@ def test_audit_reads_a_file_jobs_columns_from_its_query(lakeWorkspace, capsys):
     """A file target has no table to read columns from before its first run."""
     assert main(['audit', '--quiet', '--connect']) in (EXIT_SUCCESS, EXIT_JOBS_DID_NOT_SUCCEED)
     assert 'export' in capsys.readouterr().out
+
+
+def test_relative_database_paths_are_relative_to_connections_yaml_wherever_the_command_starts(workspace, monkeypatch, tmp_path_factory):
+    elsewhere = tmp_path_factory.mktemp('elsewhere')
+    monkeypatch.chdir(elsewhere)
+
+    assert main(['run', '--quiet', '--config', str(workspace / 'configuration')]) == EXIT_SUCCESS
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_a_source_file_that_does_not_exist_is_an_error_not_an_empty_database(workspace, capsys):
+    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: ../misspelt.db\n')
+
+    assert main(['discover', '--quiet', '--connection', 'demo', '--all-tables']) == EXIT_BAD_CONFIGURATION
+    assert 'misspelt.db does not exist' in capsys.readouterr().err
+    assert not (workspace / 'misspelt.db').exists()
+
+
+def test_quiet_leaves_one_line_per_failed_job_on_stderr_and_nothing_on_success(workspace, capsys):
+    assert main(['run', '--quiet']) == EXIT_SUCCESS
+    assert capsys.readouterr().err == ''
+
+    (workspace / 'configuration' / 'jobs.yaml').write_text(JOBS_YAML.replace('FROM src', 'FROM missing'))
+    assert main(['run', '--quiet', '--force']) == EXIT_JOBS_DID_NOT_SUCCEED
+
+    err = capsys.readouterr().err
+    assert err.splitlines() == [line for line in err.splitlines() if line.startswith('[ERROR] ')]
+    # The failure once: not its attempt's own record, nor the dependent skipped because of it.
+    assert len(err.splitlines()) == 1
+    assert 'Traceback' not in err
+
+
+INCREMENTAL_JOBS_YAML = """workers: 1
+memory: memory.yaml
+jobs:
+  loadOrders:
+    sourceConnection: demo
+    sourceQuery: SELECT id, name, updated FROM orders WHERE updated > {{ watermark }}
+    targetConnection: demo
+    targetTableFinal: orders_copy
+    targetTableStage: orders_copy_stage
+    insertStrategy: upsert
+    watermarkColumn: updated
+    watermarkInitial: 0
+    refresh: 1000
+"""
+
+
+@pytest.fixture
+def incrementalWorkspace(workspace):
+    connection = sqlite3.connect(str(workspace / 'demo.db'))
+    connection.executescript('''
+        CREATE TABLE orders (id INT PRIMARY KEY, name TEXT, updated INT);
+        CREATE TABLE orders_copy (id INT PRIMARY KEY, name TEXT, updated INT);
+        CREATE TABLE orders_copy_stage (id INT PRIMARY KEY, name TEXT, updated INT);
+        INSERT INTO orders VALUES (1, 'a', 1), (2, 'b', 2), (3, 'c', 3);
+        ''')
+    connection.commit()
+    connection.close()
+    (workspace / 'configuration' / 'jobs.yaml').write_text(INCREMENTAL_JOBS_YAML)
+    return workspace
+
+
+def _copied(workspace):
+    connection = sqlite3.connect(str(workspace / 'demo.db'))
+    try:
+        return sorted(connection.execute('SELECT id, name FROM orders_copy').fetchall())
+    finally:
+        connection.close()
+
+
+def _source(workspace, statement):
+    connection = sqlite3.connect(str(workspace / 'demo.db'))
+    connection.execute(statement)
+    connection.commit()
+    connection.close()
+
+
+def test_a_full_refresh_removes_rows_deleted_from_the_source_and_keeps_the_watermark(incrementalWorkspace):
+    workspace = incrementalWorkspace
+    assert main(['run', '--quiet']) == EXIT_SUCCESS
+    assert _copied(workspace) == [(1, 'a'), (2, 'b'), (3, 'c')]
+
+    # A hard delete: no watermark sees it, so an incremental run keeps the row.
+    _source(workspace, 'DELETE FROM orders WHERE id = 2')
+    assert main(['run', '--quiet', '--force']) == EXIT_SUCCESS
+    assert _copied(workspace) == [(1, 'a'), (2, 'b'), (3, 'c')]
+
+    # Inside the refresh window, which a full refresh ignores.
+    assert main(['run', '--quiet', '--full-refresh']) == EXIT_SUCCESS
+    assert _copied(workspace) == [(1, 'a'), (3, 'c')]
+    assert yaml.safe_load((workspace / 'configuration' / 'memory.yaml').read_text())['watermarks']['loadOrders'] == 3
+
+    # And the next incremental run carries on from there.
+    _source(workspace, "INSERT INTO orders VALUES (4, 'd', 4)")
+    assert main(['run', '--quiet', '--force']) == EXIT_SUCCESS
+    assert _copied(workspace) == [(1, 'a'), (3, 'c'), (4, 'd')]
+
+
+def test_a_full_refresh_needs_a_stage_table_and_names_every_job_without_one(incrementalWorkspace, capsys):
+    jobs = INCREMENTAL_JOBS_YAML.replace('    targetTableStage: orders_copy_stage\n', '')
+    (incrementalWorkspace / 'configuration' / 'jobs.yaml').write_text(jobs)
+
+    assert main(['run', '--quiet', '--full-refresh']) == EXIT_BAD_CONFIGURATION
+    assert 'loadOrders has no targetTableStage' in capsys.readouterr().err
+    assert _copied(incrementalWorkspace) == []
+
+
+def test_a_full_refresh_refuses_files_jobs_and_forever(incrementalWorkspace, capsys):
+    configuration = incrementalWorkspace / 'configuration'
+    (configuration / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: ../demo.db\nlake:\n  type: files\n  root: ../lake\n')
+    (configuration / 'jobs.yaml').write_text(INCREMENTAL_JOBS_YAML.replace('targetConnection: demo', 'targetConnection: lake')
+                                             .replace('    targetTableStage: orders_copy_stage\n', '').replace('upsert', 'append'))
+
+    assert main(['run', '--quiet', '--full-refresh']) == EXIT_BAD_CONFIGURATION
+    assert 'loadOrders appends to files' in capsys.readouterr().err
+
+    (configuration / 'jobs.yaml').write_text(INCREMENTAL_JOBS_YAML)
+    assert main(['run', '--quiet', '--full-refresh', '--forever']) == EXIT_BAD_CONFIGURATION
+
+
+def test_a_full_refresh_replaces_a_masked_copy_under_a_new_key_without_clear(incrementalWorkspace, monkeypatch):
+    """A swap replaces every row, so the rotation the key check guards against
+    can't leave two keys' masks in one table."""
+    jobs = INCREMENTAL_JOBS_YAML + '    masking:\n      key: ${MASKING_KEY}\n      columns: {id: keep, name: hash, updated: keep}\n'
+    (incrementalWorkspace / 'configuration' / 'jobs.yaml').write_text(jobs)
+    monkeypatch.setenv('MASKING_KEY', 'the-first-masking-key-for-tests')
+    assert main(['run', '--quiet']) == EXIT_SUCCESS
+    first = _copied(incrementalWorkspace)
+
+    monkeypatch.setenv('MASKING_KEY', 'the-second-masking-key-for-tests')
+    assert main(['run', '--quiet', '--force']) == EXIT_BAD_CONFIGURATION
+    assert main(['run', '--quiet', '--full-refresh']) == EXIT_SUCCESS
+    assert main(['run', '--quiet', '--force']) == EXIT_SUCCESS
+
+    second = _copied(incrementalWorkspace)
+    assert [row[0] for row in second] == [1, 2, 3] and all(a[1] != b[1] for a, b in zip(first, second))
+
+
+def test_audit_warns_of_an_incremental_job_a_full_refresh_cannot_replace(incrementalWorkspace, capsys):
+    """So `audit --strict` fails in CI, not the weekly refresh, which
+    refuses every job for the sake of one."""
+    reviewed = INCREMENTAL_JOBS_YAML + '    unmasked: true\n'
+    (incrementalWorkspace / 'configuration' / 'jobs.yaml').write_text(reviewed)
+    assert main(['audit', '--quiet', '--strict']) == EXIT_SUCCESS
+    assert 'full-refresh' not in capsys.readouterr().out
+
+    jobs = reviewed.replace('    targetTableStage: orders_copy_stage\n', '')
+    (incrementalWorkspace / 'configuration' / 'jobs.yaml').write_text(jobs)
+
+    assert main(['audit', '--quiet', '--strict']) == EXIT_JOBS_DID_NOT_SUCCEED
+    output = capsys.readouterr().out
+    assert 'loadOrders: rows deleted from the source stay in its copy, and `run --full-refresh` cannot remove them: it has no targetTableStage' in output
+    assert main(['audit', '--quiet']) == EXIT_SUCCESS

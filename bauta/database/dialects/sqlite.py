@@ -2,12 +2,40 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..driver import Connection, Cursor, native
 from ...configuration import DatabaseConfig, DatabaseType, SQLiteConnection
-from .base import ColumnDefinition, ForeignKey, settingsOf, _OnConflictDialect, _groupForeignKeys, _renameInThreeSteps
+from .base import ColumnDefinition, ForeignKey, settingsOf, _OnConflictDialect, _renameInThreeSteps, _schemaForeignKeys
 from .names import catalogName, catalogTableName, quoteIdentifier
+
+
+# How long a connection keeps trying to switch a file to WAL while another holds it.
+WAL_SWITCH_SECONDS = 30.0
+
+
+def _useWriteAheadLog(connection: Any) -> None:
+    """Switches the file to WAL, unless it already is. The switch takes an
+    exclusive lock, and doesn't wait for one as other statements do: two
+    processes opening a new file at once -- two jobs, an orchestrator's two
+    tasks -- would fail one of them with "database is locked". So a file
+    already in WAL is left alone, which is every file after its first
+    connection, and the switch is retried while another connection holds it.
+    """
+
+    import sqlite3
+
+    deadline = time.monotonic() + WAL_SWITCH_SECONDS
+    while connection.execute('PRAGMA journal_mode').fetchone()[0].lower() != 'wal':
+        try:
+            # Whatever mode results is kept: :memory: stays in memory.
+            connection.execute('PRAGMA journal_mode=WAL')
+            return
+        except sqlite3.OperationalError as error:
+            if 'locked' not in str(error) or time.monotonic() > deadline:
+                raise
+            time.sleep(0.05)
 
 
 class SQLiteDialect(_OnConflictDialect):
@@ -29,7 +57,7 @@ class SQLiteDialect(_OnConflictDialect):
         # WAL, so a writer can proceed while a stream reads the same file; the
         # default journal fails it with "database is locked". It persists in
         # the file, and needs a local filesystem, not NFS or SMB.
-        native(connection).execute('PRAGMA journal_mode=WAL')
+        _useWriteAheadLog(native(connection))
         # Declared foreign keys are enforced, as on every other database.
         # SQLite leaves them off unless each connection asks.
         native(connection).execute('PRAGMA foreign_keys=ON')
@@ -118,17 +146,21 @@ class SQLiteDialect(_OnConflictDialect):
         return [row[0] for row in cursor.fetchall()]
 
 
-    def foreignKeys(self, cursor: Cursor) -> List[ForeignKey]:
+    def foreignKeys(self, cursor: Cursor, schema: Optional[str] = None) -> List[ForeignKey]:
         """SQLite keeps foreign keys per table, behind a pragma, so this lists
         the tables and asks each. A reference that omits its columns means the
         referenced table's primary key, which is resolved here.
+
+        A schema is an attached database, and a key never leaves the database
+        it is declared in, so both ends are in `schema`, or `main`.
         """
 
-        tables = self.listTables(cursor)
+        attached = catalogName(self.databaseType, schema) if schema is not None else 'main'
+        tables = self.listTables(cursor, schema)
         rows = []
 
         for table in tables:
-            cursor.execute('SELECT id, "table", "from", "to" FROM pragma_foreign_key_list(?) ORDER BY id, seq', (table,))
+            cursor.execute('SELECT id, "table", "from", "to" FROM pragma_foreign_key_list(?, ?) ORDER BY id, seq', (table, attached))
             references = cursor.fetchall()
 
             primaryKeys: Dict[str, List[str]] = {}
@@ -140,12 +172,29 @@ class SQLiteDialect(_OnConflictDialect):
 
                 if referencedColumn is None:
                     if referencedTable not in primaryKeys:
-                        primaryKeys[referencedTable] = self.primaryKey(cursor, referencedTable)
+                        primaryKeys[referencedTable] = self.primaryKey(cursor, '{}.{}'.format(
+                            quoteIdentifier(self.databaseType, attached), quoteIdentifier(self.databaseType, referencedTable)))
                     referencedColumn = primaryKeys[referencedTable][position]
 
-                rows.append((table, column, referencedTable, referencedColumn, '{}_fk{}'.format(table, constraintId)))
+                rows.append((attached, table, column, attached, referencedTable, referencedColumn, '{}_fk{}'.format(table, constraintId), 'main'))
 
-        return _groupForeignKeys(rows)
+        return _schemaForeignKeys(rows, attached if schema is not None else None)
+
+
+    def foreignKeyCounts(self, cursor: Cursor) -> Tuple[Dict[str, int], Optional[str]]:
+        """Per attached database, `temp` aside, read the only way SQLite
+        offers: a table at a time.
+        """
+
+        cursor.execute('SELECT name FROM pragma_database_list WHERE name <> ?', ('temp',))
+        counts = {}
+
+        for (attached,) in cursor.fetchall():
+            keys = self.foreignKeys(cursor, None if attached == 'main' else attached)
+            if keys:
+                counts[attached] = len(keys)
+
+        return counts, 'main'
 
 
     def swapQueries(self, targetTable: str, stageTable: str, tempTable: str) -> List[str]:

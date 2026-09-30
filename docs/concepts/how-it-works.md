@@ -130,9 +130,18 @@ So every point a job can die at falls *backwards*, into re-reading rows already 
 
 ### Deletes
 
-**Watermarks cannot see hard deletes.** A deleted row has no `updatedAt` to pass the watermark; it just stops appearing, and the target keeps it. Soft deletes — a flag whose change bumps `updatedAt` — work fine. For hard deletes you need a periodic full refresh or change-data-capture, which this library doesn't do.
+**Watermarks cannot see hard deletes.** A deleted row has no `updatedAt` to pass the watermark; it just stops appearing, and the target keeps it. Soft deletes — a flag whose change bumps `updatedAt` — work fine.
 
-A reasonable split: `swap` for small tables and anywhere deletes matter; watermarked `upsert` for large append-and-update tables where full refreshes are what hurt.
+**`bauta run --full-refresh` removes them**, scheduled as often as a deleted row may outlive its source, weekly say. It runs each incremental job over its whole source and replaces the target, rather than upserting into it:
+
+- Its query is bound to `watermarkInitial`, the value a first run binds, so it returns every row without being rewritten. What it reads up to is recorded as the watermark, and the next incremental run carries on from there.
+- A database target is loaded into its `targetTableStage` and [swapped](#how-a-swap-works) in, so readers see the old copy until the new one is whole. That needs `targetTableStage` on the job, and the stage table created (`bauta schema --stage-suffix`); a job without one is refused, with every other such job, before anything runs. [`bauta audit`](../guides/prove-the-copy-is-safe.md#reviewing-policies-audit) warns of each such job, so `audit --strict` in CI finds one before the scheduled refresh does. An Iceberg target takes one overwrite commit. Incremental jobs writing files are refused: their appended parts and an overwrite's snapshot directories are different layouts to a reader.
+- Refresh windows are ignored, as with `--force`. Jobs that aren't incremental run as they always do.
+- Since the target is replaced whole, a masking key changed since the last run is no reason to stop: a full refresh is also how an incremental job's copy moves to a new key without `bauta clear`.
+
+It costs a full extract per refresh, and room for two copies of each table while it swaps. Change-data-capture, which this library doesn't do, is the alternative that costs neither.
+
+A reasonable split: `swap` for small tables; watermarked `upsert` for large append-and-update tables, with `--full-refresh` scheduled where deletes matter.
 
 ### Tables that reference each other
 
@@ -166,7 +175,7 @@ It's wrong too when the dependent's table references the predecessor's: in the c
 
 ## Single runs, not a daemon
 
-`bauta run` makes one pass and exits, because it should compose with whatever already schedules work — cron, a systemd timer, a Kubernetes CronJob, an Airflow task — rather than compete with it. Those give you alerting, backfill and calendar-aware schedules that `refresh` can't express; `refresh` is a throttle, not a schedule.
+`bauta run` makes one pass and exits, because it should compose with whatever already schedules work — cron, a systemd timer, a Kubernetes CronJob, an Airflow task — rather than compete with it. Those give you alerting, backfill and calendar-aware schedules that `refresh` can't express; `refresh` is a throttle, not a schedule. [Run from Airflow or Dagster](../guides/run-from-an-orchestrator.md) has working examples.
 
 `refresh` still works across separate invocations, since it's checked against the durable memory backend. Running every 5 minutes with `refresh: 60` correctly skips 11 runs in 12:
 
@@ -221,7 +230,7 @@ Masked data jobs retry like any other data job. The watermark is read again on e
  "file": "pipeline.py", "line": 397, "job": "loadOrders", "status": "completed", "rowCount": 4200, "attempts": 1}
 ```
 
-The fields are the point. Completions, failures and skips carry `job` and `status`; completions add `rowCount` and `attempts`, failures `error` and `durationSeconds`, and each cycle's summary its totals. A collector can alert on `status="failed"` or chart rows per job without parsing messages. Logs go to stderr unless `--quiet`; `--log FILE` adds a file.
+The fields are the point. Completions, failures and skips carry `job` and `status`; completions add `rowCount` and `attempts`, failures `error` and `durationSeconds`, and each cycle's summary its totals. A collector can alert on `status="failed"` or chart rows per job without parsing messages. Logs go to stderr; `--log FILE` adds a file. `--quiet` leaves only errors on stderr, one line each without a traceback, and a job's failure once rather than again for its last attempt: under cron, that is a mail when a run fails and none when it succeeds, while `--log` still records everything.
 
 
 ## Masking

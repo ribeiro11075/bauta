@@ -7,6 +7,8 @@ for numbers -- so these tests state the property and check it over many values.
 import datetime
 import decimal
 import hmac
+import ipaddress
+import json
 import re
 import unicodedata
 import uuid
@@ -1285,3 +1287,90 @@ def test_rows_are_rebuilt_from_columns_where_that_was_measured_faster(width, mas
     policy = {name: ('hash' if index < masked else 'keep') for index, name in enumerate(columns)}
 
     assert MaskingPlan(GOLDEN_KEY, policy).bind(columns)._transposeToSplice is transposes
+
+
+# --- values a driver returns structured -------------------------------------
+
+def test_redact_masks_inside_a_json_document_and_returns_its_text():
+    """psycopg returns jsonb as a dict, which redact used to refuse; the
+    document's text is masked, in its own key order, and a JSON column loads it.
+    """
+    document = {'contact': {'alt_email': 'ann.lee@corp.example.com'}, 'newsletter': True, 'nome': 'José'}
+
+    (masked,) = _redact({'strategy': 'redact', 'replacement': 'mask'}, [document])
+
+    assert 'ann.lee' not in masked and 'corp.example.com' not in masked
+    parsed = json.loads(masked)
+    assert list(parsed) == ['contact', 'newsletter', 'nome'] and parsed['newsletter'] is True and parsed['nome'] == 'José'
+    assert _redact({'strategy': 'redact', 'replacement': 'mask'}, [[document]]) == ['[{}]'.format(masked)]
+
+
+@pytest.mark.parametrize('address', [ipaddress.ip_address('10.0.1.7'), ipaddress.ip_interface('10.0.1.7/24'),
+                                     ipaddress.ip_address('2001:db8::1'), ipaddress.ip_network('192.168.0.0/16')])
+def test_an_ip_address_is_masked_as_the_text_it_is_written_as(address):
+    assert maskOne('digits', address) == maskOne('digits', str(address))
+    assert maskOne('key', address) == maskOne('key', str(address))
+    assert _redact({'strategy': 'redact', 'detect': ['ip']}, [address]) == _redact({'strategy': 'redact', 'detect': ['ip']}, [str(address)])
+
+
+def test_email_and_fpe_take_the_text_of_a_structured_value_too():
+    pytest.importorskip('cryptography')
+
+    assert maskOne('email', ['ann@corp.example']) == maskOne('email', '["ann@corp.example"]')
+    assert maskOne('fpe', ipaddress.ip_address('10.0.1.7')) == maskOne('fpe', '10.0.1.7')
+
+
+def test_a_value_of_any_other_type_is_still_refused_without_being_echoed():
+    with pytest.raises(MaskingError, match='the redact strategy needs text, got bytes') as error:
+        maskOne('redact', b'ann@corp.example')
+
+    assert 'ann' not in str(error.value)
+
+
+# --- json ----------------------------------------------------------------------
+
+def _json(policy, values, key=GOLDEN_KEY, extra=None):
+    columns = {'doc': dict(policy, strategy='json'), **(extra or {})}
+    names = list(columns)
+    return MaskingPlan(key, columns).bind(names).apply([tuple(value) if isinstance(value, tuple) else (value,) for value in values])
+
+
+def test_json_masks_each_named_field_with_its_own_policy_and_redacts_the_rest():
+    document = {'contact': {'alt_email': 'ann@corp.example', 'phone': '+1 555 010 9999'}, 'first_name': 'Ana', 'visits': 3,
+                'vip': True, 'tags': [{'note': 'call Ana', 'by': 'bob@corp.example'}], 'gone': None}
+
+    ((masked,),) = _json({'fields': {'contact.alt_email': 'email', 'first_name': 'fakeFirstName', 'tags[].note': 'null'}}, [document])
+
+    assert masked['contact']['alt_email'].endswith('@example.test')
+    assert masked['first_name'] not in ('Ana', None)
+    assert masked['tags'][0]['note'] is None
+    # Not named, so redacted: identifiers found by shape, the rest kept.
+    assert masked['contact']['phone'] != '+1 555 010 9999' and masked['tags'][0]['by'].endswith('@example.test')
+    assert (masked['visits'], masked['vip'], masked['gone']) == (3, True, None)
+    assert list(masked) == list(document)
+
+
+def test_a_json_field_masks_in_the_domain_it_names_so_it_matches_a_column():
+    ((document, customer),) = _json({'fields': {'owner.id': {'strategy': 'key', 'domain': 'customers'}}}, [({'owner': {'id': 7}}, 7)],
+                                    extra={'id': {'strategy': 'key', 'domain': 'customers'}})
+
+    assert document['owner']['id'] == customer != 7
+
+
+def test_json_text_comes_back_as_json_text_and_a_named_container_is_masked_whole():
+    ((masked,),) = _json({'fields': {'address': 'null'}, 'otherwise': 'keep'}, ['{"address": {"line1": "1 Main St"}, "plan": "gold"}'])
+
+    assert json.loads(masked) == {'address': None, 'plan': 'gold'}
+
+
+def test_json_refuses_shuffle_and_a_path_it_cannot_read():
+    for fields, message in (({'email': 'shuffle'}, 'shuffle moves values between rows'), ({'a..b': 'null'}, 'is not a path'), ({}, 'must map paths')):
+        with pytest.raises(ValueError, match=message):
+            validateColumnPolicy({'strategy': 'json', 'fields': fields})
+
+
+def test_json_refuses_what_is_not_a_document_without_echoing_it():
+    for value, message in (('ann@corp.example', 'this text is not one'), (42, 'got int')):
+        with pytest.raises(MaskingError, match=message) as error:
+            _json({'fields': {'a': 'null'}}, [value])
+        assert 'ann' not in str(error.value)

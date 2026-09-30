@@ -10,9 +10,10 @@ import datetime
 import re
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
-from ..configuration import DataJobConfig
+from ..configuration import ConnectionConfig, DataJobConfig
 from ..database.dialects import ForeignKey, bareName, unqualifiedName
 from ..generate.discovery import BUILTIN_RULES, DiscoveryRules, personalDataHint
+from ..jobs.fullRefresh import fullRefreshProblem
 from ..masking import MaskingError, MaskingPlan, changesValues, keyFingerprint, resolveStrategy
 
 SEVERITIES = ('error', 'warning', 'info')
@@ -301,6 +302,31 @@ def _auditOrdering(target: str, jobs: Mapping[str, DataJobConfig], foreignKeys: 
                 findings.append(Finding('warning', childName, message))
 
 
+def _auditUndeclared(target: str, jobs: Mapping[str, DataJobConfig], foreignKeys: Sequence[ForeignKey], declared: Sequence[ForeignKey],
+                     findings: List[Finding]) -> None:
+    """The keys a source declares between two tables copied into `target`
+    that `target` doesn't: nothing stops a copy that breaks them. A note,
+    since leaving keys off a copy is often deliberate; verify-references
+    counts the rows that break them either way.
+    """
+
+    loaded = {_tableName(job.targetTableFinal).upper() for job in jobs.values()}
+
+    def folded(foreignKey: ForeignKey) -> Tuple[Any, ...]:
+        return (_tableName(foreignKey.table).upper(), tuple(column.upper() for column in foreignKey.columns),
+                _tableName(foreignKey.referencedTable).upper(), tuple(column.upper() for column in foreignKey.referencedColumns))
+
+    own = {folded(foreignKey) for foreignKey in declared}
+    missing = sorted({'{}({}) -> {}'.format(_tableName(foreignKey.table), ', '.join(foreignKey.columns), _tableName(foreignKey.referencedTable))
+                      for foreignKey in foreignKeys
+                      if folded(foreignKey) not in own and folded(foreignKey)[0] in loaded and folded(foreignKey)[2] in loaded})
+
+    if missing:
+        findings.append(Finding('info', None, '{} does not declare {} foreign key(s) its sources do between the tables copied into it: {}. '
+                                'Nothing there stops a row that references nothing; bauta verify-references counts them'.format(
+                                    target, len(missing), '; '.join(missing))))
+
+
 def _auditSwaps(target: str, jobs: Mapping[str, DataJobConfig], declared: Sequence[ForeignKey], findings: List[Finding]) -> None:
     """A key follows the table it was declared on, not its name, so a swap
     leaves another table's key on the old table, now the stage. Every dialect
@@ -388,6 +414,11 @@ def _auditMaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence[s
     if redacted:
         findings.append(Finding('info', name, 'redact on {}: identifiers with a recognisable shape are removed, names are not'.format(
             ', '.join(redacted))))
+    documents = sorted(column for column, policy in plan.columns.items()
+                       if policy['strategy'] == 'json' and policy.get('otherwise', {'strategy': 'redact'})['strategy'] == 'redact')
+    if documents:
+        findings.append(Finding('info', name, 'json on {}: values no field names are redacted, which removes identifiers with a recognisable '
+                                'shape but not names; name each field that holds one'.format(', '.join(documents))))
 
     lenient = sorted(column for column, policy in plan.columns.items() if policy['strategy'] == 'fpe' and not policy.get('strict'))
     if lenient:
@@ -449,7 +480,10 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
               encryption: Optional[Mapping[str, Optional[bool]]] = None, unreachable: Optional[Mapping[str, str]] = None,
               targetColumns: Optional[Mapping[str, Sequence[str]]] = None, foreignKeys: Optional[Mapping[str, Sequence[ForeignKey]]] = None,
               declaredForeignKeys: Optional[Mapping[str, Sequence[ForeignKey]]] = None,
-              generatedAt: Optional[datetime.datetime] = None, rules: DiscoveryRules = BUILTIN_RULES) -> Dict[str, Any]:
+              generatedAt: Optional[datetime.datetime] = None, rules: DiscoveryRules = BUILTIN_RULES,
+              connections: Optional[Mapping[str, ConnectionConfig]] = None,
+              foreignKeysElsewhere: Optional[Mapping[str, Mapping[str, int]]] = None,
+              unreadableTargets: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """The audit report, as a JSON-ready dict.
 
     `returnedColumns` maps a masked job to the columns its query returns, so
@@ -462,12 +496,19 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
     checking that references still match once masked. `declaredForeignKeys`
     maps a target connection alias to the foreign keys it declares itself, for
     checking what a swap does to them. All of these come from connecting, and
-    all are optional.
+    all are optional. `connections`, the aliases' settings, say what kind of
+    target each job writes, for whether `run --full-refresh` can replace it.
+    `foreignKeysElsewhere` maps an alias whose jobs' schemas declare no foreign
+    keys to the other schemas that do, and how many each. `unreachable` maps a
+    job whose sourceQuery couldn't be run to why; `unreadableTargets` one
+    whose target table's columns couldn't be read, most often because it
+    doesn't exist yet.
     """
 
     returnedColumns = returnedColumns or {}
     encryption = encryption or {}
     unreachable = unreachable or {}
+    unreadableTargets = unreadableTargets or {}
     findings: List[Finding] = []
     usages: Dict[str, List[_Usage]] = {}
     maskedSources = {job.sourceConnection for job in jobs.values() if job.masking is not None}
@@ -480,6 +521,10 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
 
         if name in unreachable:
             findings.append(Finding('error', name, 'sourceQuery could not be checked: {}'.format(unreachable[name])))
+        if name in unreadableTargets:
+            findings.append(Finding('error', name, 'target table {} in {} could not be read, so its columns could not be matched to the '
+                                    'policy: {}. Create it with bauta schema, or name its columns in targetColumns'.format(
+                                        job.targetTableFinal, job.targetConnection, unreadableTargets[name])))
 
         if job.masking is not None:
             entry.update(_auditMaskedJob(name, job, returnedColumns.get(name), findings, usages, rules))
@@ -487,6 +532,14 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
                 findings.append(Finding('warning', name, 'reads unmasked data from {} over a connection that is not encrypted'.format(job.sourceConnection)))
         else:
             _auditUnmaskedJob(name, job, returnedColumns.get(name), maskedSources, findings, rules)
+
+        if job.watermarkColumn and connections is not None:
+            problem = fullRefreshProblem(job, connections.get(job.targetConnection))
+            if problem:
+                # A warning, so `audit --strict` in CI fails on it rather than
+                # the scheduled refresh, which refuses every job for one.
+                findings.append(Finding('warning', name, 'rows deleted from the source stay in its copy, and `run --full-refresh` cannot '
+                                        'remove them: it {}'.format(problem)))
 
         report.append(entry)
 
@@ -499,6 +552,14 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
             _auditOrdering(target, targetJobs, foreignKeys[target], findings)
         if declaredForeignKeys and declaredForeignKeys.get(target):
             _auditSwaps(target, targetJobs, declaredForeignKeys[target], findings)
+        if foreignKeys and declaredForeignKeys is not None and target in declaredForeignKeys:
+            _auditUndeclared(target, targetJobs, foreignKeys.get(target, []), declaredForeignKeys[target], findings)
+
+    for alias, schemas in sorted((foreignKeysElsewhere or {}).items()):
+        if schemas:
+            findings.append(Finding('warning', None, '{} declares no foreign keys in the schema(s) its jobs use, but {} in {}, so no reference '
+                                    'between the tables copied was checked. Set currentSchema on the connection, or qualify the jobs\' '
+                                    'tables with their schema'.format(alias, sum(schemas.values()), ', '.join(sorted(schemas)))))
 
     for alias, encrypted in sorted(encryption.items()):
         if encrypted is None and alias in maskedSources:

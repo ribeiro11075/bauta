@@ -76,11 +76,13 @@ def normalized(row):
 
 
 def connect(name, tmp_path_factory):
-    if name == 'sqlite':
-        return connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path_factory.mktemp('sqlite') / 'schema.db'))
-    if name == 'duckdb':
-        pytest.importorskip('duckdb')
-        return connectionConfig(type=DatabaseType.DUCKDB, path=str(tmp_path_factory.mktemp('duckdb') / 'schema.duckdb'))
+    if name in EMBEDDED:
+        if name == 'duckdb':
+            pytest.importorskip('duckdb')
+        settings = connectionConfig(type=DatabaseType(name), path=str(tmp_path_factory.mktemp(name) / ('schema.db' if name == 'sqlite' else 'schema.duckdb')))
+        # Created here, as a server's database exists before a test connects.
+        Database(connectionSettings=settings, create=True).close()
+        return settings
 
     driver, settings = SERVERS[name]
     try:

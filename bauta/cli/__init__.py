@@ -73,11 +73,11 @@ def _addManifestKeyArgument(parser: argparse.ArgumentParser) -> None:
 
 def _addLoggingArguments(parser: argparse.ArgumentParser) -> None:
 
-    parser.add_argument('--log', help='also write logs to this file (logs always go to stderr unless --quiet)')
+    parser.add_argument('--log', help='also write logs to this file (logs always go to stderr; --quiet leaves only errors there)')
     parser.add_argument('--log-level', default='info', choices=['debug', 'info', 'warning', 'error'], help='default: info')
     parser.add_argument('--log-format', default='text', choices=['text', 'json'],
                         help='json emits one object per record, carrying job/status/rowCount as fields a log collector can filter and alert on')
-    parser.add_argument('--quiet', action='store_true', help='do not log to stderr')
+    parser.add_argument('--quiet', action='store_true', help='log only errors to stderr, one line each, without tracebacks')
 
 
 def _positiveInteger(text: str) -> int:
@@ -112,6 +112,9 @@ def _addGeneratorArguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--sample', type=_positiveInteger, default=1000, help='rows sampled per table to classify columns (default: 1000)')
     parser.add_argument('--key-variable', default='MASKING_KEY', help='environment variable the generated jobs read the masking key from')
     parser.add_argument('--chunk-size', type=_positiveInteger, default=5000, help='chunkSize for the generated jobs (default: 5000)')
+    parser.add_argument('--self-contained', action='store_true',
+                        help='write the connections, insert strategy and key into every job rather than under defaults:, '
+                             'for jobs to paste into a file with defaults of its own')
     parser.add_argument('--mask-keys', action='store_true',
                         help='mask numeric surrogate keys too, in the domain each foreign key shares, instead of keeping them')
     parser.add_argument('--output', help='write the generated jobs here instead of stdout; must not already exist')
@@ -154,6 +157,9 @@ def _buildParser() -> argparse.ArgumentParser:
                            help='write a JSON record of what was masked, how, and under which key fingerprint (default: jobs.yaml\'s `manifest`)')
     _addManifestLocationArguments(runParser)
     _addManifestKeyArgument(runParser)
+    runParser.add_argument('--full-refresh', action='store_true',
+                           help='load every incremental job\'s whole source and replace its target, so rows deleted from the source '
+                                'leave the copy; implies --force. Database targets need targetTableStage')
     runParser.add_argument('--accept-key-change', action='store_true',
                            help='run upsert jobs even though their masking key changed since their last run')
     _addHistoryArguments(runParser)
@@ -216,14 +222,21 @@ def _buildParser() -> argparse.ArgumentParser:
     jobsParser.set_defaults(handler=_commandJobs)
 
     discoverParser = subparsers.add_parser('discover', help='propose a masking policy for tables, from their schema and a sample')
-    _addCommonArguments(discoverParser, jobs=False)
-    discoverParser.add_argument('--connection', required=True, help='the alias to read from')
+    _addCommonArguments(discoverParser, memory=False)
+    discoverParser.add_argument('--connection', help='the alias to read from; required unless --update')
     discoverParser.add_argument('--table', action='append', help='a table to propose a policy for (repeatable)')
     discoverParser.add_argument('--all-tables', action='store_true', help='every table in the database, instead of naming each with --table')
     discoverParser.add_argument('--schema', help='the schema --all-tables lists, instead of the connection\'s own')
-    discoverParser.add_argument('--target', help='the alias the generated jobs load into (default: --database, masking in place)')
+    discoverParser.add_argument('--target', help='the alias the generated jobs load into (default: --connection, masking in place)')
     _addGeneratorArguments(discoverParser)
     _addRulesArgument(discoverParser)
+    discoverParser.add_argument('--update', action='store_true',
+                                help='compare each masked job in the jobs file with what its sourceQuery returns now, and propose a policy '
+                                     'for each new column; exits 1 if any job has drifted')
+    discoverParser.add_argument('--job', action='append', help='with --update, only this job (repeatable)')
+    discoverParser.add_argument('--apply', action='store_true',
+                                help='with --update, write the proposals into the file each job is defined in, and drop the columns '
+                                     'its sourceQuery no longer returns')
     discoverParser.set_defaults(handler=_commandDiscover)
 
     subsetParser = subparsers.add_parser('subset', help='generate jobs that copy a referentially complete subset')
@@ -244,11 +257,13 @@ def _buildParser() -> argparse.ArgumentParser:
     _addCommonArguments(schemaParser, jobs=False)
     schemaParser.add_argument('--connection', required=True, help='the alias to read table definitions from')
     schemaParser.add_argument('--target', required=True, help='the alias the tables are for; its dialect decides the types')
-    schemaParser.add_argument('--table', action='append', required=True, help='a table to create (repeatable)')
+    schemaParser.add_argument('--table', action='append', help='a table to create (repeatable)')
+    schemaParser.add_argument('--all-tables', action='store_true', help='every table in the database, instead of naming each with --table')
+    schemaParser.add_argument('--schema', help='the schema --all-tables lists, instead of the connection\'s own')
     schemaParser.add_argument('--related', action='store_true', help='also every table a subset rooted at --table would copy')
     schemaParser.add_argument('--no-children', action='store_true', help='with --related, only the tables --table references')
     schemaParser.add_argument('--no-foreign-keys', action='store_true', help='leave foreign keys out of the generated tables')
-    schemaParser.add_argument('--stage-suffix', help='also create <table><suffix> stage tables, for swap jobs; alone if --target is --database')
+    schemaParser.add_argument('--stage-suffix', help='also create <table><suffix> stage tables, for swap jobs; alone if --target is --connection')
     schemaParser.add_argument('--apply', action='store_true', help='create the tables in --target, skipping any that already exist')
     schemaParser.add_argument('--output', help='write the SQL here instead of stdout; must not already exist')
     schemaParser.set_defaults(handler=_commandSchema)

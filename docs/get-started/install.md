@@ -11,13 +11,13 @@ pip install "bauta[postgresql,oracle]"
 | --- | --- | --- |
 | `mysql`, `mariadb` | mysql-connector-python | nothing |
 | `postgresql` | psycopg 3, with its own libpq | nothing |
-| `oracle` | oracledb, in thin mode | nothing — no Oracle client |
+| `oracle` | oracledb, in thin mode | nothing |
 | `mssql` | pymssql | nothing |
 | `sqlite` | Python's own `sqlite3` | nothing |
-| `duckdb` | duckdb, with pyarrow for fast loads | nothing; one process at a time per file, see [DuckDB](../reference/connections.md#duckdb) |
-| `files` | pyarrow, to write Parquet, CSV and JSON Lines, locally or to S3, GCS or Azure | nothing; see [files](../reference/connections.md#files) |
-| `iceberg` | pyiceberg, with its Glue and SQL catalogs | nothing; see [Iceberg](../reference/connections.md#iceberg) |
-| `fpe` | cryptography, for the `fpe` masking strategy | nothing; `oracle` already brings it |
+| `duckdb` | duckdb, with pyarrow for fast loads | nothing |
+| `files` | pyarrow, to write Parquet, CSV and JSON Lines, locally or to S3, GCS or Azure | nothing |
+| `iceberg` | pyiceberg, with its Glue and SQL catalogs | nothing |
+| `fpe` | cryptography, for the `fpe` masking strategy | nothing |
 | `native` | `bauta-rs`, the native masker (below) | nothing on Linux (x86-64, ARM) or macOS; elsewhere, [Rust](https://rustup.rs) 1.83 or newer |
 | `all` | every driver above | nothing |
 

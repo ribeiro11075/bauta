@@ -42,7 +42,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/ribeiro11075/bauta"
-Documentation = "https://github.com/ribeiro11075/bauta/tree/master/docs"
+Documentation = "https://ribeiro11075.github.io/bauta/"
 Issues = "https://github.com/ribeiro11075/bauta/issues"
 
 [project.scripts]

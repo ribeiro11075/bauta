@@ -21,7 +21,7 @@ Everything importable from `bauta` itself is the public API, and this page descr
 
 ## Configuration models
 
-`Configuration.validateConnectionConfiguration(raw)` and `Configuration.validateJobConfiguration(raw, DataJobsFile)` turn loaded YAML into these pydantic models, raising `ConfigurationError`; `Configuration.validateJobGraph(jobs, connections=...)` checks predecessors and aliases. `expandEnvironmentVariables(raw)` does what the CLI does to `${NAME}` first. The fields are the ones [configuration.md](configuration.md) describes.
+`Configuration.validateConnectionConfiguration(raw, directory=None)` and `Configuration.validateJobConfiguration(raw, DataJobsFile)` turn loaded YAML into these pydantic models, raising `ConfigurationError`. With `directory`, the one `connections.yaml` is in, a relative database path is taken relative to it, as the CLI does; without it, relative to the working directory. `readJobsFile(path)` reads a jobs file with `${NAME}` expanded and the files its [`include`](configuration.md#splitting-the-jobs-across-files) names merged in, returning a `JobsDocument` whose `content` is what to validate, `files` the files read, and `origins` the file each job came from; a mapping that still holds `include` is refused. `Configuration.validateJobGraph(jobs, connections=...)` checks predecessors and aliases. `expandEnvironmentVariables(raw)` does what the CLI does to `${NAME}` first. The fields are the ones [configuration.md](configuration.md) describes.
 
 | Model | Holds |
 | --- | --- |
@@ -36,17 +36,19 @@ A `Transformer` is any callable taking one value and returning one; a job names 
 ## Running jobs
 
 ```python
+from pathlib import Path
+
 import yaml
 from bauta import (Configuration, DataJobsFile, FileMemory,
-                   expandEnvironmentVariables, runDataJobs)
+                   expandEnvironmentVariables, readJobsFile, runDataJobs)
 
 def load(path):
     with open(path) as file:
         return expandEnvironmentVariables(yaml.safe_load(file))
 
 def main():
-    connections = Configuration.validateConnectionConfiguration(load('connections.yaml'))
-    jobsFile = Configuration.validateJobConfiguration(load('jobs.yaml'), DataJobsFile)
+    connections = Configuration.validateConnectionConfiguration(load('connections.yaml'), directory='.')
+    jobsFile = Configuration.validateJobConfiguration(readJobsFile(Path('jobs.yaml')).content, DataJobsFile)
     Configuration.validateJobGraph(jobsFile.jobs, connectionAliases=set(connections))
 
     result = runDataJobs(
@@ -79,7 +81,7 @@ runDataJobs(jobsFile, connectionConfiguration, memory,
 - **`logFormat='json'`** writes structured records — see [design.md](../concepts/how-it-works.md#structured-logs).
 - **`jobsFile.maskingThreads`** sets how many threads each job masks with, as in the CLI; see [masking threads](../guides/make-it-faster.md#masking-threads).
 
-To keep two runs that share run state from overlapping, as the CLI does, hold `exclusiveRun(path)` around the call. It raises `RunInProgressError` if another process holds the same lock file.
+To keep two runs that share run state from overlapping, as the CLI does, hold `exclusiveRun(path)` around the call. It raises `RunInProgressError` if another process holds the same lock file. `exclusiveRun(path, jobs=[...])` is what `run --job` holds: the lock shared, and each of those jobs' own exclusively, so runs of different jobs proceed together.
 
 Validation raises `ConfigurationError`. `runDataJobs` also raises it before starting any work if a job sets `watermarkColumn` against a backend that can't store watermarks, or if `maskingThreads` is more than the cores available, and `DependencyGraph` raises it for predecessors that form a cycle.
 
@@ -198,7 +200,9 @@ with Database(connectionSettings=connections['prod']) as database:
 | `auditJobs(jobs, returnedColumns=None, encryption=None, unreachable=None, targetColumns=None, foreignKeys=None, declaredForeignKeys=None, rules=...)`, `renderAudit(report)` | The `audit` report as a dict, and as text. The optional arguments carry what `audit --connect` learns from the databases: `foreignKeys` maps a target alias to its keys and its sources', `declaredForeignKeys` to the target's own. |
 | `bauta.review.coverage.coverageReport(alias, tables, jobs, acknowledged=None, columns=None, rules=...)`, `renderCoverage(report)` | What the jobs do with each of `tables`: `masked`, `copied`, `acknowledged` or `uncovered`, with a `summary` of each. `acknowledged` maps a table left out on purpose to why; `columns` maps a table to its columns, so an uncovered one can say which look like personal data. A table counts as covered when a job reading `alias` names it in its `sourceQuery`. |
 | `verifyReferences(database, alias, loaded, sourceKeys=())` | A `ReferenceResult` per foreign key on a table the jobs load: the key as the target spells it, whether the target declares it, and its orphaned rows, or the `problem` that stopped it being counted. `loaded` maps each table's upper-cased name to its `targetTableFinal`. From `bauta.review.references`, with `renderReferences(results)`. |
-| `Database.getForeignKeys()` | Every foreign key in the connection's current schema, as `ForeignKey(table, columns, referencedTable, referencedColumns, name)`. |
+| `Database.getForeignKeys(schema=None)` | Every foreign key on a table in `schema`, or in the connection's current schema, as `ForeignKey(table, columns, referencedTable, referencedColumns, name)`. A table is named as `listTables(schema)` names it: bare in the current schema, `schema.table` otherwise. |
+| `Database.getForeignKeysFor(tables)` | The foreign keys of every schema `tables` are in, a bare name being in the current schema. |
+| `Database.foreignKeysElsewhere(schemas)` | The other schemas that declare foreign keys, and how many each: where to look when `schemas` held none. |
 | `Database.listTables(schema=None)` | Every base table in the connection's schema, or in `schema`. Views and whatever the server ships are left out. Sorted, and each name in the spelling that reads back as the same table. |
 | `Database.sample(query, rows)` | Column names and at most `rows` rows, without reading the rest. |
 | `Database.isEncrypted()` | Whether the server reports the connection as encrypted; `None` if it can't say. |
@@ -222,6 +226,8 @@ with Database(connectionSettings=connections['app']) as database:
     for chunk in chunks:
         ...
 ```
+
+A SQLite or DuckDB file must already exist: `Database` refuses one that doesn't, rather than letting the driver create an empty database. Pass `create=True` where creating it is the point, as `schema --apply` and a job's target do: `Database(connectionSettings=..., create=True)`.
 
 `stream` returns the column names and a `RowStream`: an iterator of row lists, using each dialect's non-buffering cursor. It closes itself when exhausted; one you stop reading early, close with `chunks.close()` or a `with chunks:` block. Closing the `Database` closes any stream still open.
 

@@ -52,7 +52,7 @@ class _FakeDatabase:
     queryResult: List[Tuple[Any, ...]] = [(1, 'a'), (2, 'b')]
     columnNames: List[str] = ['id', 'name']
 
-    def __init__(self, connectionSettings: ConnectionConfig) -> None:
+    def __init__(self, connectionSettings: ConnectionConfig, create: bool = False) -> None:
         self.connectionSettings = connectionSettings
         self.calls: List[Tuple[Any, ...]] = []
 
@@ -117,7 +117,7 @@ def installFakeDatabase(monkeypatch):
         created: List[_FakeDatabase] = []
 
         class _Tracked(fake):  # type: ignore[misc, valid-type]
-            def __init__(self, connectionSettings: ConnectionConfig) -> None:
+            def __init__(self, connectionSettings: ConnectionConfig, create: bool = False) -> None:
                 super().__init__(connectionSettings)
                 created.append(self)
 
@@ -544,7 +544,7 @@ def test_execute_data_job_streams_rather_than_materializing_the_whole_extract(mo
 
     class _StreamingFake:
 
-        def __init__(self, connectionSettings: ConnectionConfig) -> None:
+        def __init__(self, connectionSettings: ConnectionConfig, create: bool = False) -> None:
             self.connectionSettings = connectionSettings
 
         def __enter__(self) -> '_StreamingFake':
@@ -614,7 +614,7 @@ def test_the_pipeline_can_be_turned_off(monkeypatch):
 
     class _StreamingFake:
 
-        def __init__(self, connectionSettings: ConnectionConfig) -> None:
+        def __init__(self, connectionSettings: ConnectionConfig, create: bool = False) -> None:
             self.connectionSettings = connectionSettings
 
         def __enter__(self) -> '_StreamingFake':
@@ -1763,3 +1763,15 @@ def test_the_pause_between_forever_cycles_lasts_as_long_as_asked_without_a_signa
     _sleepUnlessTerminated(0.3, {'terminating': False})
 
     assert 0.3 <= time.monotonic() - started < 1.0
+
+
+def test_a_key_changed_under_many_jobs_is_described_once_with_the_names_cut_short():
+    from bauta.jobs.keys import LISTED_JOBS, _describeChanges
+
+    changes = [('job{:02d}'.format(index), 'aaa', 'bbb') for index in range(LISTED_JOBS + 5)] + [('other', 'ccc', 'bbb')]
+    described = _describeChanges(changes)
+
+    assert described.count('was aaa, now bbb') == 1
+    assert '({} job(s); was aaa, now bbb)'.format(LISTED_JOBS + 5) in described
+    assert 'and 5 more' in described and 'job{:02d}'.format(LISTED_JOBS) not in described
+    assert 'other (1 job(s); was ccc, now bbb)' in described

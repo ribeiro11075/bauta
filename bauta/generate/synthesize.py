@@ -17,7 +17,7 @@ from typing import AbstractSet, Any, Callable, Dict, Iterator, List, NamedTuple,
 from ..database.dialects import ColumnDefinition, ForeignKey, quoteIdentifier
 from .discovery import BUILTIN_RULES, DiscoveryRules, nameWords
 from ..masking import STRATEGIES, KeyedHash, changesValues
-from .schema import INTEGER_BOOLEAN_NOTE, PortableType, portableType
+from .schema import INTEGER_BOOLEAN_NOTE, PortableType, portableType, tableKey
 
 DEFAULT_NULL_SHARE = 0.1
 
@@ -286,8 +286,10 @@ def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: 
     # regenerate the first run's values, which any UNIQUE column then refuses.
     existing = int(database.query('SELECT count(*) FROM {}'.format(table))[0][0])
     primaryKey = {column.upper() for column in database.getPrimaryColumnNames(table)}
-    foreignKeys = [foreignKey for foreignKey in (foreignKeys if foreignKeys is not None else database.getForeignKeys())
-                   if foreignKey.table.upper() == table.split('.')[-1].upper()]
+    # Matched schema and all: `app.orders` has the keys `app` declares, not
+    # those of an `orders` in the connection's own schema.
+    foreignKeys = [foreignKey for foreignKey in (foreignKeys if foreignKeys is not None else database.getForeignKeysFor([table]))
+                   if tableKey(foreignKey.table) == tableKey(table)]
     synthesizer = _Synthesizer(table, seed, nullShare, rules)
     spelled = {definition.name.upper(): definition.name for definition in definitions}
     generators: Dict[str, Generator] = {}

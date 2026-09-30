@@ -18,7 +18,7 @@ Each type takes only the settings that apply to it. A setting that belongs to an
 | --- | --- | --- | --- |
 | `type` | all | required | `postgresql`, `mysql`, `mariadb`, `mssql`, `oracle`, `sqlite` or `duckdb`, `files` for tables of files in a directory or a cloud bucket, or `iceberg` for Iceberg tables; see [files](#files) and [Iceberg](#iceberg) for their settings |
 | `database` | postgresql, mysql, mariadb, mssql | required | The database name. |
-| `path` | sqlite, duckdb | required | The database file, or `:memory:`. SQLite connections enforce declared foreign keys, as every other database does; SQLite itself leaves them off unless asked. See [DuckDB](#duckdb) for what differs there. |
+| `path` | sqlite, duckdb | required | The database file, or `:memory:`. A relative path is relative to `connections.yaml`, not to where the command starts. The file must exist, except for a job's target and `schema --apply`, which create it: a misspelled source path is an error rather than an empty database. SQLite connections enforce declared foreign keys, as every other database does; SQLite itself leaves them off unless asked. See [DuckDB](#duckdb) for what differs there. |
 | `host`, `user` | the five server types | required | |
 | `password` | the five server types | required, unless `passwordCommand` is set | Held as a secret, so it never appears in a log line or a traceback. |
 | `passwordCommand` | the five server types | optional | A command whose output is the password, run at every connection. A string is split as a shell would split it, without a shell; `validate` rejects one that names no program or has an unterminated quote. For credentials that expire; see [passwords that expire](#passwords-that-expire). |
@@ -62,7 +62,7 @@ A directory -- on this machine, or in Amazon S3, Google Cloud Storage or Azure B
 
 | Setting | Required or default | Meaning |
 | --- | --- | --- |
-| `root` | required | Where the tables go: a directory, created if missing; `s3://bucket[/prefix]`; `gs://bucket[/prefix]`; or on Azure `az://container[/prefix]` with `accountName`, or `abfss://container@account.dfs.core.windows.net[/prefix]` as Databricks and Synapse write it. A bucket or container must exist. Each job's `targetTableFinal` is a path under the root. Any other URL is refused rather than read as a directory. |
+| `root` | required | Where the tables go: a directory, created if missing, and relative to `connections.yaml` if the path is; `s3://bucket[/prefix]`; `gs://bucket[/prefix]`; or on Azure `az://container[/prefix]` with `accountName`, or `abfss://container@account.dfs.core.windows.net[/prefix]` as Databricks and Synapse write it. A bucket or container must exist. Each job's `targetTableFinal` is a path under the root. Any other URL is refused rather than read as a directory. |
 | `format` | `parquet` | `parquet`, `csv` or `ndjson` (JSON Lines: one JSON object per line). See [formats](../concepts/how-it-works.md#formats) for how each type is spelled in the two text formats. |
 | `compression` | `zstd` for Parquet, `gzip` for text | Parquet: `zstd`, `snappy` (for older readers), `gzip` or `none`. CSV and JSON Lines: `gzip` or `none`, the whole file compressed, and named `.gz` so readers know. |
 | `delimiter` | `,` | CSV's alone: one character, not a quote or a line break. |
@@ -102,7 +102,7 @@ Iceberg tables, found through a catalog, which Athena, Snowflake, Databricks, Bi
 | --- | --- | --- |
 | `catalog` | required | `glue` (AWS), `rest` -- the Iceberg REST protocol: BigLake on GCP, Databricks Unity Catalog, Snowflake Open Catalog (Polaris), S3 Tables, Lakekeeper, Nessie -- or `sql`, a catalog kept in a database of your own, SQLite or PostgreSQL, for a setup with no catalog service. |
 | `uri` | required for `rest` and `sql` | The REST catalog's URL, or the SQL catalog's database as SQLAlchemy names it: `sqlite:////srv/lake/catalog.db`, `postgresql+psycopg://user:password@host/catalog`. |
-| `warehouse` | required for `glue` and `sql` | Where a table the catalog creates keeps its files: a directory, `s3://`, `gs://`, `az://` (with `accountName`) or `abfss://`. For a REST catalog, what that catalog calls its warehouse, often a name. |
+| `warehouse` | required for `glue` and `sql` | Where a table the catalog creates keeps its files: a directory (relative to `connections.yaml` if the path is), `s3://`, `gs://`, `az://` (with `accountName`) or `abfss://`. For a REST catalog, what that catalog calls its warehouse, often a name. |
 | `namespace` | optional | The namespace -- Glue's database -- a table named without one is in. Created if missing. |
 | `credential`, `token` | `rest` only | The REST catalog's sign-in: `credential` as `clientId:clientSecret` for its OAuth2, or a bearer `token`. Held as secrets. |
 | `properties` | optional | Anything more for pyiceberg's catalog, as it names it -- `glue.id` for another account's Glue, `header.X-Iceberg-Access-Delegation: vended-credentials` for a REST catalog that hands out storage credentials -- over what bauta sets. |
@@ -131,6 +131,8 @@ staging:
 copyCountries: targetConnection "staging" is configured with requireMasking, and this job has no masking
 policy. Add one naming every column sourceQuery returns -- `keep` for the ones that need no masking
 ```
+
+A policy whose `defaultStrategy` copies values as they are -- `keep`, or a custom strategy that passes them through -- is refused the same way: it covers every column it doesn't name, one production adds later included, without anyone deciding about it. Name each column, with `keep` for the ones that need no masking, or give `defaultStrategy` one that masks.
 
 Set it on a target to say that the copy can only ever hold masked data, and on a source to say that nothing reads from it unmasked. Nothing overrides it: a job's own [`unmasked: true`](jobs.md#copying-without-masking) records a decision about that job, but `requireMasking` is the database's, and it wins.
 

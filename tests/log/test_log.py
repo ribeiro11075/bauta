@@ -197,3 +197,39 @@ def test_every_record_is_one_line_even_with_a_multiline_message(tmp_path):
     log.logging.info('line one\nline two')
 
     assert len(logPath.read_text().strip().split('\n')) == 1
+
+
+def test_an_error_stream_writes_each_error_once_on_one_line_and_nothing_below(restoreLogger):
+    import io
+
+    from bauta.log import ATTEMPT_FAILED
+
+    stream = io.StringIO()
+    log = Log()
+    log.addErrorStream(stream)
+    log.addErrorStream(stream)
+
+    log.logging.warning('a job was skipped')
+    try:
+        raise RuntimeError('boom')
+    except RuntimeError as error:
+        log.logging.error('Failed to complete job due to error boom', exc_info=error, extra={'event': ATTEMPT_FAILED})
+        log.logging.error('job failed after 0.0s: RuntimeError: boom', exc_info=error)
+
+    assert stream.getvalue() == '[ERROR] job failed after 0.0s: RuntimeError: boom\n'
+
+
+def test_an_error_stream_in_json_keeps_the_fields_but_not_the_traceback(restoreLogger):
+    import io
+
+    stream = io.StringIO()
+    log = Log(logFormat='json')
+    log.addErrorStream(stream)
+    try:
+        raise RuntimeError('boom')
+    except RuntimeError as error:
+        log.logging.error('job failed', exc_info=error, extra={'job': 'loadRows'})
+
+    record = json.loads(stream.getvalue())
+    assert (record['message'], record['job']) == ('job failed', 'loadRows')
+    assert 'exception' not in record

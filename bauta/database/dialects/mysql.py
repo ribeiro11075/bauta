@@ -88,13 +88,17 @@ class MySQLDialect(DatabaseDialect):
 
     def foreignKeysQuery(self) -> str:
 
-        return ("SELECT table_name, column_name, "
-                "CASE WHEN referenced_table_schema = DATABASE() THEN referenced_table_name "
-                "ELSE CONCAT(referenced_table_schema, '.', referenced_table_name) END, "
-                "referenced_column_name, constraint_name "
+        return ("SELECT table_schema, table_name, column_name, referenced_table_schema, referenced_table_name, "
+                "referenced_column_name, constraint_name, DATABASE() "
                 "FROM information_schema.key_column_usage "
-                "WHERE table_schema = DATABASE() AND referenced_table_name IS NOT NULL "
+                "WHERE table_schema = COALESCE({}, DATABASE()) AND referenced_table_name IS NOT NULL "
                 "ORDER BY table_name, constraint_name, ordinal_position")
+
+
+    def foreignKeyCountsQuery(self) -> str:
+
+        return ("SELECT constraint_schema, count(*), DATABASE() FROM information_schema.referential_constraints "
+                "WHERE constraint_schema NOT IN ('mysql', 'sys', 'performance_schema', 'information_schema') GROUP BY constraint_schema")
 
 
     def columnsQuery(self) -> str:

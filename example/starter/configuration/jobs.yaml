@@ -74,6 +74,11 @@ jobs:
     refresh: 5
     sourceQuery: select id, customerId, amount, updatedAt from orders where updatedAt > {{ watermark }} - interval 5 minute
     targetTableFinal: orders
+    # Where `bauta run --full-refresh` loads every row before swapping it in,
+    # which is what takes rows deleted from the source out of this copy: a
+    # watermark never sees a delete. Schedule it weekly, say; see
+    # docs/concepts/how-it-works.md#deletes. Normal runs upsert through it.
+    targetTableStage: ordersStage
     unmasked: true
     watermarkColumn: updatedAt
     # Unquoted, so YAML reads it as a timestamp: quoted it is text, which

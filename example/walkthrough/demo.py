@@ -163,6 +163,8 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> Dict[str, Any]:
 
     os.environ.setdefault('MASKING_KEY', DEMO_MASKING_KEY)
     os.environ.setdefault('BAUTA_MANIFEST_KEY', DEMO_SIGNING_KEY)
+    os.environ['WALKTHROUGH_PRODUCTION_PATH'] = str(production)
+    os.environ['WALKTHROUGH_STAGING_PATH'] = str(staging)
 
     # Commands run from the working directory, with the relative paths a
     # person would type.

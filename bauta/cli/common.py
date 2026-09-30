@@ -14,7 +14,7 @@ from typing import Any, Dict, Generator, List, Mapping, Optional, Sequence, Tupl
 import yaml
 
 from ..configuration import (Configuration, ConfigurationError, ConnectionConfig, DatabaseConfig, DataJobConfig, DataJobsFile, FilesConnection, IcebergConnection, isLake,
-                             StorageLocation, TableLocation, expandEnvironmentVariables)
+                             JobsDocument, StorageLocation, TableLocation, expandEnvironmentVariables, readJobsFile)
 from ..database import Database
 from ..log import Log
 from ..masking import MaskingError
@@ -56,6 +56,12 @@ def _loadYaml(path: Path) -> Any:
         raise UsageError('no such file: {}'.format(path)) from error
     except yaml.YAMLError as error:
         raise UsageError('{} is not valid YAML: {}'.format(path, error)) from error
+
+
+def _readJobs(jobsPath: Path) -> JobsDocument:
+    """The jobs file with the files its `include` names merged in."""
+
+    return readJobsFile(jobsPath, load=_loadYaml)
 
 
 CONNECTIONS_FILE = 'connections.yaml'
@@ -162,12 +168,16 @@ def _history(location: Location, connectionConfiguration: Dict[str, ConnectionCo
 
 
 def _configureLogging(arguments: argparse.Namespace) -> Log:
-    """stderr unless --quiet, where a container collects it; --log adds a file."""
+    """stderr, where a container collects it; --log adds a file. --quiet
+    leaves only errors on stderr, one line each.
+    """
 
     level = getattr(logging, arguments.log_level.upper())
     log = Log(logFile=arguments.log, level=level, logFormat=arguments.log_format)
 
-    if not arguments.quiet:
+    if arguments.quiet:
+        log.addErrorStream(stream=sys.stderr)
+    else:
         log.addStreamHandler(stream=sys.stderr, level=level)
 
     return log
@@ -177,14 +187,14 @@ def _loadConnections(arguments: argparse.Namespace) -> Dict[str, ConnectionConfi
 
     _, connectionsPath = _resolveConfigurationPaths(arguments)
 
-    return Configuration.validateConnectionConfiguration(_loadYaml(connectionsPath))
+    return Configuration.validateConnectionConfiguration(_loadYaml(connectionsPath), directory=str(connectionsPath.parent))
 
 
 def _loadDataJobs(arguments: argparse.Namespace) -> Tuple[DataJobsFile, Dict[str, ConnectionConfig]]:
 
     jobsPath, connectionsPath = _resolveConfigurationPaths(arguments)
-    connectionConfiguration = Configuration.validateConnectionConfiguration(_loadYaml(connectionsPath))
-    jobsFile = Configuration.validateJobConfiguration(_loadYaml(jobsPath), DataJobsFile)
+    connectionConfiguration = Configuration.validateConnectionConfiguration(_loadYaml(connectionsPath), directory=str(connectionsPath.parent))
+    jobsFile = Configuration.validateJobConfiguration(_readJobs(jobsPath).content, DataJobsFile)
     Configuration.validateJobGraph(jobsFile.jobs, connections=connectionConfiguration)
 
     unknown = ['{}: connection "{}" is not a known connection alias'.format(setting, location.connection)

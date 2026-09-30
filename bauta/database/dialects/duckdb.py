@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 from ..driver import Connection, Cursor
 from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType, DuckDBConnection
-from .base import ColumnCategory, ForeignKey, settingsOf, _OnConflictDialect, _groupForeignKeys, _renameInThreeSteps
+from .base import ColumnCategory, ForeignKey, settingsOf, _OnConflictDialect, _renameInThreeSteps, _schemaForeignKeys
 from .names import catalogTableName
 
 
@@ -358,20 +358,33 @@ class DuckDBDialect(_OnConflictDialect):
                 "AND table_catalog = current_database() ORDER BY table_name")
 
 
-    def foreignKeys(self, cursor: Cursor) -> List[ForeignKey]:
+    def foreignKeys(self, cursor: Cursor, schema: Optional[str] = None) -> List[ForeignKey]:
         """DuckDB lists a constraint's columns as arrays, in key order, and only
-        allows a foreign key within one schema.
+        allows a foreign key within one schema, so both ends are in the
+        table's.
         """
 
-        cursor.execute("SELECT table_name, constraint_column_names, referenced_table, referenced_column_names, constraint_name "
-                       "FROM duckdb_constraints() WHERE constraint_type = 'FOREIGN KEY' AND schema_name = current_schema() "
-                       "AND database_name = current_database() ORDER BY table_name, constraint_name")
+        cursor.execute("SELECT schema_name, table_name, constraint_column_names, referenced_table, referenced_column_names, constraint_name, "
+                       "current_schema() FROM duckdb_constraints() WHERE constraint_type = 'FOREIGN KEY' "
+                       "AND lower(schema_name) = lower(COALESCE(?, current_schema())) "
+                       "AND database_name = current_database() ORDER BY table_name, constraint_name", (schema,))
 
         rows: List[Tuple[Any, ...]] = []
-        for table, columns, referencedTable, referencedColumns, name in cursor.fetchall():
-            rows.extend((table, column, referencedTable, referencedColumn, name) for column, referencedColumn in zip(columns, referencedColumns))
+        for tableSchema, table, columns, referencedTable, referencedColumns, name, current in cursor.fetchall():
+            rows.extend((tableSchema, table, column, tableSchema, referencedTable, referencedColumn, name, current)
+                        for column, referencedColumn in zip(columns, referencedColumns))
 
-        return _groupForeignKeys(rows)
+        # Matched without regard to case, as DuckDB matches names, so the
+        # schema is the catalog's spelling of it, not the caller's.
+        scanned = rows[0][0] if schema is not None and rows else None
+
+        return _schemaForeignKeys(rows, scanned)
+
+
+    def foreignKeyCountsQuery(self) -> str:
+
+        return ("SELECT schema_name, count(*), current_schema() FROM duckdb_constraints() "
+                "WHERE constraint_type = 'FOREIGN KEY' AND database_name = current_database() GROUP BY schema_name")
 
 
     def swap(self, cursor: Cursor, targetTable: str, stageTable: str, tempTable: str) -> None:

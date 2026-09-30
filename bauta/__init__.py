@@ -7,7 +7,7 @@ documentation names it there, and may change in any release.
 """
 from .configuration import (Configuration, ConfigurationError, ConnectionConfig, DatabaseType, DataJobConfig, DataJobsFile, DiscoveryRulesFile,
                             DuckDBConnection, FilesConnection, InsertStrategy, MariaDBConnection, MaskingConfig, MSSQLConnection, MySQLConnection, OracleConnection,
-                            PostgreSQLConnection, SQLiteConnection, connectionConfig, expandEnvironmentVariables)
+                            PostgreSQLConnection, SQLiteConnection, connectionConfig, expandEnvironmentVariables, readJobsFile)
 from .database import Database
 from .jobs.dependencyGraph import DependencyGraph, JobOutcome, JobStatus
 from .database.dialects import ForeignKey
@@ -27,6 +27,7 @@ __all__ = [
     'auditJobs',
     'buildMaskingManifest',
     'Configuration',
+    'readJobsFile',
     'ConfigurationError',
     'Database',
     'DATABASE_HISTORY_SCHEMA',

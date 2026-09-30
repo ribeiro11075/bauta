@@ -325,3 +325,65 @@ def test_mask_keys_leaves_a_text_key_as_it_already_was():
     masked = suggestColumn('customers', 'reference', None, ['AB-1'], keyReference=('customers', False), maskKeys=True)
 
     assert plain.policy == masked.policy == {'strategy': 'key', 'domain': 'customers'}
+
+
+# --- values a driver returns structured -------------------------------------
+
+def test_an_inet_column_named_for_an_ip_address_is_masked():
+    """psycopg returns inet as IPv4Address, which the name rule's check of
+    what the column holds used to reject, leaving the column kept.
+    """
+    import ipaddress
+
+    from bauta.generate.discovery import suggestColumn
+
+    suggestion = suggestColumn('orders', 'ip_address', None, [ipaddress.ip_address('10.0.0.{}'.format(i)) for i in range(5)])
+
+    assert suggestion.policy == {'strategy': 'hash'}
+
+
+def test_an_email_inside_a_json_document_is_masked_at_its_path():
+    """psycopg returns jsonb as a dict, whose values were never sampled."""
+    from bauta.generate.discovery import suggestColumn
+
+    documents = [{'contact': {'alt_email': 'user{}@mail.example'.format(i)}, 'newsletter': True} for i in range(5)]
+    suggestion = suggestColumn('customers', 'preferences', None, documents)
+
+    assert suggestion.policy == {'strategy': 'json', 'fields': {'contact.alt_email': {'strategy': 'email'}}}
+
+
+def test_json_text_is_read_as_a_document_and_its_proposal_is_valid_yaml_for_a_job():
+    """MySQL and DuckDB return JSON as text. A path through an array is
+    quoted in the flow mapping written to jobs.yaml, and reads back as the
+    same policy.
+    """
+    from bauta.configuration.models import MaskingConfig
+    from bauta.generate.discovery import _flow, suggestColumn
+
+    suggestion = suggestColumn('customers', 'profile', None, ['{"first_name": "Ana", "tags": [{"email": "a@b.example"}], "theme": "dark"}'] * 5)
+
+    assert suggestion.policy == {'strategy': 'json', 'fields': {'first_name': {'strategy': 'fakeFirstName'}, 'tags[].email': {'strategy': 'email'}}}
+    written = yaml.safe_load(_flow(suggestion.policy))
+    assert MaskingConfig(key='k' * 32, columns={'profile': written}).columns['profile'] == suggestion.policy
+
+
+def test_a_json_document_with_nothing_personal_is_kept_for_review():
+    from bauta.generate.discovery import suggestColumn
+
+    assert suggestColumn('accounts', 'settings', None, [{'theme': 'dark', 'pageSize': 3}] * 5).policy == {'strategy': 'keep'}
+
+
+@pytest.mark.parametrize('column', ['cvv', 'CVV2', 'card_cvc', 'cardSecurityCode', 'csc'])
+def test_a_card_security_code_is_nulled_and_a_kept_one_is_questioned(column):
+    """Three digits pass for nothing in particular, so only the name can tell."""
+    from bauta.generate.discovery import personalDataHint
+
+    suggestion = suggestColumn('payment_cards', column, None, ['123', '045', '999'])
+
+    assert suggestion.policy == {'strategy': 'null'}
+    assert 'PCI DSS' in personalDataHint(column)
+
+
+@pytest.mark.parametrize('column', ['cid', 'security_code', 'pan_region'])
+def test_names_that_only_look_like_a_card_security_code_are_left_alone(column):
+    assert suggestColumn('things', column, None, ['123', '045']).policy['strategy'] != 'null'

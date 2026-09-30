@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 from types import TracebackType
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type
 
 from .driver import Connection, Cursor
 from .values import WANTS_COLUMN_TYPES, ValuePreparer, prepareParameters
-from ..configuration import WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseConfig, DatabaseType, FilesConnection, IcebergConnection
+from ..configuration import (WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseConfig, DatabaseType, DuckDBConnection, FilesConnection,
+                             IcebergConnection, SQLiteConnection, isSchemePath)
 from .dialects import ColumnDefinition, DatabaseDialect, DuckDBDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
     SQLiteDialect, catalogName, quoteFoldedTable, quoteIdentifier, splitTableName, suffixedName, tooLongName
 
@@ -98,7 +100,14 @@ class RowStream:
 
 class Database:
 
-    def __init__(self, connectionSettings: ConnectionConfig) -> None:
+    def __init__(self, connectionSettings: ConnectionConfig, create: bool = False) -> None:
+        """`create` lets a SQLite or DuckDB file that doesn't exist yet be
+        created, as their drivers otherwise would for any connection. Only
+        what may create tables asks for it: `schema --apply`, and a job's
+        target, whose preTargetAdhocQueries can. Anything else is refused
+        instead, or a misspelled source path would open an empty database,
+        and discover, coverage or a job would report it as one.
+        """
 
         if isinstance(connectionSettings, (FilesConnection, IcebergConnection)):
             # A job writes files through bauta.lake; anything else that asks
@@ -116,10 +125,17 @@ class Database:
         # One per table loaded, so each learns from its table's chunks.
         self._preparers: Dict[str, ValuePreparer] = {}
         self._streams: Set[RowStream] = set()
+        self._create = create
         self.connect()
 
 
     def connect(self) -> None:
+
+        settings = self.connectionSettings
+        if (not self._create and isinstance(settings, (SQLiteConnection, DuckDBConnection)) and settings.path != ':memory:'
+                and not isSchemePath(settings.path) and not os.path.exists(settings.path)):
+            raise ConfigurationError('{} does not exist. A relative path in connections.yaml is relative to that file; '
+                                     'check the path, or create the database first'.format(settings.describeTarget()))
 
         self.connection: Connection
         self.cursor: Cursor
@@ -376,7 +392,9 @@ class Database:
         names = [self._asWritten(name) for name in self.dialect.listTables(self.cursor, schema)]
 
         if schema is not None:
-            qualifier = self._asWritten(schema)
+            # As the catalog holds it, as each name is: `other` written bare
+            # is OTHER on Oracle, and quoting it as written names another schema.
+            qualifier = self._asWritten(catalogName(self.type, schema))
             names = ['{}.{}'.format(qualifier, name) for name in names]
 
         # Sorted here rather than left to the server: each orders by its own
@@ -404,10 +422,41 @@ class Database:
         return quoteIdentifier(self.type, name)
 
 
-    def getForeignKeys(self) -> List[ForeignKey]:
-        """Every foreign key in the current schema -- what subsetting follows."""
+    def getForeignKeys(self, schema: Optional[str] = None) -> List[ForeignKey]:
+        """Every foreign key on a table in `schema`, or in the current schema
+        without one -- what subsetting follows. A table is named as
+        listTables(schema) names it: bare in the current schema, and
+        `schema.table` in the one named.
+        """
 
-        return self.dialect.foreignKeys(self.cursor)
+        return self.dialect.foreignKeys(self.cursor, schema)
+
+
+    def getForeignKeysFor(self, tables: Sequence[str]) -> List[ForeignKey]:
+        """The foreign keys of every schema `tables` are in, a table written
+        bare being in the current schema, so a job's `app.orders` is matched
+        with the keys `app` declares rather than the current schema's.
+        """
+
+        schemas = sorted({splitTableName(table)[0] or '' for table in tables}) or ['']
+        keys = []
+
+        for schema in schemas:
+            keys.extend(self.getForeignKeys(schema or None))
+
+        return keys
+
+
+    def foreignKeysElsewhere(self, schemas: Sequence[Optional[str]]) -> Dict[str, int]:
+        """The schemas other than `schemas` (None being the current one) that
+        declare foreign keys, and how many each: where to look when a check
+        found none in the schemas it read.
+        """
+
+        counts, current = self.dialect.foreignKeyCounts(self.cursor)
+        read = {current if schema is None else catalogName(self.type, schema) for schema in schemas}
+
+        return {schema: count for schema, count in sorted(counts.items()) if schema not in read and count}
 
 
     def getColumnDefinitions(self, table: str) -> List[ColumnDefinition]:

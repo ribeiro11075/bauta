@@ -626,7 +626,7 @@ def clearTables(database: Any, tables: Sequence[str]) -> List[Tuple[str, int]]:
     reached empty, and running it again finishes it.
     """
 
-    order = clearOrder(tables, database.getForeignKeys())
+    order = clearOrder(tables, database.getForeignKeysFor(tables))
     cleared = []
     commitEach = not database.dialect.checksForeignKeysWithinTransaction()
 

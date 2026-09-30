@@ -112,7 +112,7 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> List[Optional[st
     watermarks: List[Optional[str]] = []
     memory = FileMemory(memoryFile=memoryPath)
 
-    with Database(connectionSettings=connectionConfiguration['demo']) as database:
+    with Database(connectionSettings=connectionConfiguration['demo'], create=True) as database:
 
         for table in ('ordersSource', 'ordersTarget'):
             database.alter('CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR(50), updatedAt TEXT)'.format(table))

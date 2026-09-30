@@ -32,7 +32,7 @@ def connectionSettings(databaseName, tmp_path):
 @pytest.fixture
 def liveDatabase(connectionSettings):
 
-    with Database(connectionSettings=connectionSettings) as database:
+    with Database(connectionSettings=connectionSettings, create=True) as database:
         yield database
 
 

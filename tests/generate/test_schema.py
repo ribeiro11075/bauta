@@ -451,7 +451,7 @@ def test_read_table_rejects_a_missing_table(sqliteDatabase):
 def test_generated_sqlite_ddl_round_trips(sqliteDatabase, tmp_path):
     definitions = [readTable(sqliteDatabase, name, sqliteDatabase.getForeignKeys()) for name in ('orders', 'customers')]
 
-    with Database(connectionSettings=connectionConfig(type=SQLITE, path=str(tmp_path / 'copy.db'))) as copy:
+    with Database(connectionSettings=connectionConfig(type=SQLITE, path=str(tmp_path / 'copy.db')), create=True) as copy:
         for statement in createStatements(SQLITE, SQLITE, definitions):
             copy.alter(statement.sql)
 

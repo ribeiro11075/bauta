@@ -1,9 +1,11 @@
 # The databases the walkthrough runs against: SQLite files it builds in
-# transaction/. Every command runs from there, so these relative paths land in
-# it too. Only this file is written by hand; `subset` generates the jobs.
+# transaction/. A relative path here is relative to this file, so by default
+# they are ../transaction/; the demo points them at its working directory
+# through the environment. Only this file is written by hand; `subset`
+# generates the jobs.
 production:
   type: sqlite
-  path: production.db
+  path: ${WALKTHROUGH_PRODUCTION_PATH:-../transaction/production.db}
 staging:
   type: sqlite
-  path: staging.db
+  path: ${WALKTHROUGH_STAGING_PATH:-../transaction/staging.db}

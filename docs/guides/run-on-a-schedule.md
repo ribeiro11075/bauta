@@ -18,7 +18,10 @@ manifest:
 
 ```cron
 */15 * * * *  bauta run --config /etc/etl --log-format json --log /var/log/etl/etl.log --quiet
+0 3 * * 0     bauta run --config /etc/etl --full-refresh --log-format json --log /var/log/etl/etl.log --quiet
 ```
+
+The second line is a weekly [full refresh](../concepts/how-it-works.md#deletes): incremental jobs reload their whole source and swap it in, so rows deleted in production leave the copy within a week. It shares the run lock, so a 15-minute run that starts while it's going exits with status 1 rather than overlapping it.
 
 With `BAUTA_NOTIFY_URL` set in the environment, a failed run also posts to the team's channel. `bauta history --config /etc/etl` answers what happened overnight, and `bauta verify-manifest --config /etc/etl` checks the latest manifest.
 
@@ -35,7 +38,7 @@ With `BAUTA_NOTIFY_URL` set in the environment, a failed run also posts to the t
 
 Watermarks in a table are stored as text with a type beside them, and read back as the same type: dates, timestamps, times, integers, floats, decimals, and bytes such as SQL Server's `rowversion`. See [tables](../reference/tables.md) for its definition.
 
-**Overlapping runs.** `run` holds a lock beside the memory file (`memory.yaml.run.lock`) for as long as it runs, and a second run that finds it held exits with status 1. With run state in a table, the lock is `memory.run.lock` where the memory file would have been, so it only separates runs on one machine. Across machines, let the scheduler do it: a Kubernetes CronJob with `concurrencyPolicy: Forbid`, or Airflow's `max_active_runs=1`.
+**Overlapping runs.** `run` holds a lock beside the memory file (`memory.yaml.run.lock`) for as long as it runs, and a second run that finds it held exits with status 1. A `run --job` locks only the jobs it runs, so runs of different jobs go side by side, as an [orchestrator's task per job](run-from-an-orchestrator.md) does, while the same job never runs twice at once and a run of every job waits for none. With run state in a table, the lock is `memory.run.lock` where the memory file would have been, so it only separates runs on one machine. Across machines, let the scheduler do it: a Kubernetes CronJob with `concurrencyPolicy: Forbid`, or Airflow's `max_active_runs=1`.
 
 
 ## After a failed cycle

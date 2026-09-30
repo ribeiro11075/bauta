@@ -25,6 +25,7 @@ bauta audit --connect --strict   # also asks the databases; fails on warnings
 | --- | --- |
 | error | A masked query returns a column the policy doesn't cover, or names one it doesn't return (`--connect`). |
 | error | A masked query couldn't be run to check (`--connect`). |
+| error | A masked job's target table couldn't be read, so its columns couldn't be matched to the policy: most often it doesn't exist yet. Create it with [`schema`](../reference/commands/schema.md), or name its columns in `targetColumns` (`--connect`). |
 | error | A `swap` job replaces a table that a foreign key declared in the target references, or one an earlier swap left on its stage table. The key stays on the old table, now the stage, and the next run can't empty the stage (`--connect`). |
 | warning | A `swap` job replaces a table that declares foreign keys of its own. Its stage table has none, so after a run the copy stops enforcing them (`--connect`). |
 | warning | A column is kept unmasked although its name suggests personal data (`email`, `ssn`, `phone`, ...), by the built-in rules or [your own](propose-a-policy.md#your-own-rules-discoveryyaml). |
@@ -32,16 +33,20 @@ bauta audit --connect --strict   # also asks the databases; fails on warnings
 | warning | A job copies from a database without masking while other jobs mask what they read from it. |
 | warning | A masked job reads over a connection that isn't encrypted, as the server reports it (`--connect`). |
 | warning | `shuffle` on an incremental job, whose small chunks leave values near their own rows. |
+| warning | An incremental job that [`run --full-refresh`](../concepts/how-it-works.md#deletes) can't replace, so rows deleted from its source stay in the copy: a database target with no `targetTableStage`, or a files target, which it can't overwrite without changing the layout its readers expect. A scheduled refresh refuses to run at all while any job is like this, so `--strict` in CI catches it first. |
 | warning | A domain is masked two ways, or under two keys, in one target database, so its masks won't match across the columns that share it. Copies in different target databases may use different keys. |
 | warning | A foreign-key column isn't masked exactly like the key it references (strategy, options, domain and key), so the copied references won't match (`--connect`). |
 | warning | A foreign key and the key it references are both masked with `shuffle`, which moves values between rows, so the references point at other rows (`--connect`). |
 | warning | A job copies only part of a table that another job's table references (it has a `watermarkColumn`, or its `sourceQuery` has a `WHERE`), and the referencing job isn't limited to match, so the copy can reference rows it lacks (`--connect`). A query counts as partial when it has a `WHERE`, `LIMIT`, `TOP` or `FETCH FIRST`, or joins another table. |
 | warning | A job's table references another job's table, and the job can load before the other: it doesn't wait for it through `predecessors`, the other is inactive, or a job on the way has a longer `refresh` (`--connect`). |
+| warning | A database declares no foreign keys in the schemas its jobs use, but does in others, so no reference between the tables copied was checked: set `currentSchema` on the connection, or qualify the jobs' tables with their schema (`--connect`). |
 | note | Columns that fall to `defaultStrategy`, by name (`--connect`). |
+| note | A target doesn't declare foreign keys its sources do between the tables copied into it, so nothing there stops a row that references nothing; [`verify-references`](copy-a-subset.md#verify-references-checking-the-copys-references) counts them (`--connect`). |
+| note | `redact`, or `json` redacting what its fields don't name, which removes identifiers with a recognisable shape but not names. |
 
 Without `--connect`, columns are shown as declared. With it, each masked query is run for a single row, discarded unexamined, to list the columns it really returns and the policy each one gets.
 
-The foreign-key check reads the foreign keys of each target database and of the sources copied into it, since a copy often declares none. A key's tables are matched to jobs by `targetTableFinal`'s name, without its schema, and a masked job's target columns to its query's columns by position, as the load matches them. A job that doesn't mask copies every column as it is, and so does `keep`; a reference masked with `null` points at nothing, so it can't break.
+The foreign-key check reads the foreign keys of each target database and of the sources copied into it, since a copy often declares none, each from the schemas its jobs use, as [`verify-references`](copy-a-subset.md#verify-references-checking-the-copys-references) reads them. A key's tables are matched to jobs by `targetTableFinal`'s name, without its schema, and a masked job's target columns to its query's columns by position, as the load matches them. A job that doesn't mask copies every column as it is, and so does `keep`; a reference masked with `null` points at nothing, so it can't break.
 
 The check for a parent copied in part uses the same keys and the same matching by table name. It doesn't parse SQL. A pair of jobs counts as matched when either query names the other's table: a child limited by `EXISTS` over its parent, as [`subset`](copy-a-subset.md) generates, or a parent that also selects what its children reference, as in [tables that reference each other](../concepts/how-it-works.md#tables-that-reference-each-other). A table that references itself is left to `subset`, which reports it as a cycle. Whether a job waits for another is decided as a run decides it: through active predecessors only, and in the cycles each runs in (see [refresh and predecessors](../concepts/how-it-works.md#refresh-and-predecessors)).
 

@@ -122,7 +122,7 @@ Four checks stand between production and an unmasked copy, from the narrowest to
 | **Every column must be covered** | A column the query returns that the policy doesn't name — including one production gained since the policy was written | The job fails before writing anything |
 | **`audit --connect --strict`** | A job with no masking policy, a kept column that looks personal, references that stop matching once masked | Offline in CI, exit 1 |
 | **[`bauta coverage`](../guides/prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover)** | A table in production that **no job reads at all**, which `audit` cannot see, because a table with no job has nothing to audit | Exit 1 on anything uncovered |
-| **[`requireMasking`](../reference/connections.md#requiring-masking)** | Any job reading from or writing to that database without a masking policy | `bauta validate`, before anything connects |
+| **[`requireMasking`](../reference/connections.md#requiring-masking)** | Any job reading from or writing to that database without a masking policy, or with a `defaultStrategy` that copies the columns it doesn't name as they are | `bauta validate`, before anything connects |
 
 The first three can be argued with; the fourth cannot. `requireMasking: true` on a target alias is the statement that **this database can only ever hold masked data**, and nothing overrides it — not a job's own `unmasked: true`, which records a reviewed decision about one job, and not a declaration in `acknowledged`.
 
@@ -184,7 +184,7 @@ Keep the configuration directory writable only by the people who may run jobs ag
 - **Access control** on the copies, and their retention and deletion.
 - **Protection from someone who holds the key**, production access, or the machine running the jobs.
 - **Side channels** such as timing, and the security of the database servers and drivers themselves.
-- **Hard deletes** in production reaching incremental copies (see [deletes](how-it-works.md#deletes)): a deleted person stays in the copy until it's refreshed in full.
+- **Hard deletes** in production reaching incremental copies as they happen (see [deletes](how-it-works.md#deletes)): a deleted person stays in the copy until its next `run --full-refresh`, so schedule one within the time your policy allows for erasure.
 
 
 ## Checklist for a deployment
@@ -200,3 +200,4 @@ Keep the configuration directory writable only by the people who may run jobs ag
 9. Webhook notifications and run history treated as sensitive: driver error text is scrubbed of the values it quotes in known formats, not all formats.
 10. The configuration directory, run state and history writable only by the operators.
 11. Masked copies handled as personal data: pseudonymized, not anonymized.
+12. `bauta run --full-refresh` scheduled for incremental jobs, often enough that a row deleted in production leaves the copy within your erasure deadline.

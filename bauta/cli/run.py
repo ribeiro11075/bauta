@@ -22,7 +22,7 @@ from ..jobs.runner import RunResult, runDataJobs
 from ..log.scrubbing import describeError
 from .common import (DEFAULT_TABLES, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, NOTIFY_URL_VARIABLE, _Connections, Location,
                      UsageError, _checkColumnCounts, _checkMaskingCoverage, _describeLocation, _discoveryRulesFile, _history, _loadConnections,
-                     _loadDataJobs, _memoryBackend, _memoryLocation, _resolveConfigurationPaths, _resolveLocation, _selectJobs, _settingsFor,
+                     _loadDataJobs, _memoryBackend, _memoryLocation, _readJobs, _resolveConfigurationPaths, _resolveLocation, _selectJobs, _settingsFor,
                      _sourceQueryColumns, _toolVersion)
 
 
@@ -94,6 +94,14 @@ def _commandRun(arguments: argparse.Namespace, log: Log) -> int:
     jobsFile, connectionConfiguration = _loadDataJobs(arguments)
     jobsFile = _applyJobSelection(jobsFile, arguments, log)
 
+    if arguments.full_refresh:
+        if arguments.forever:
+            raise UsageError('--full-refresh replaces every incremental target, so it runs once; schedule it, rather than with --forever')
+        from ..jobs.fullRefresh import fullRefreshJobs
+
+        jobs = {name: job.model_copy(update={'refresh': None}) for name, job in jobsFile.jobs.items()}
+        jobsFile = jobsFile.model_copy(update={'jobs': fullRefreshJobs(jobs, connectionConfiguration)})
+
     if arguments.dry_run:
         return _dryRunDataJobs(jobsFile, connectionConfiguration, log)
 
@@ -101,7 +109,8 @@ def _commandRun(arguments: argparse.Namespace, log: Log) -> int:
     lockFile.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with memory, exclusiveRun(lockFile):
+        # A --job run locks only its jobs, so an orchestrator's task per job can run side by side.
+        with memory, exclusiveRun(lockFile, jobs=sorted(jobsFile.jobs) if arguments.job else None):
             result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=connectionConfiguration, logFile=arguments.log,
                                  memory=memory, runForever=arguments.forever,
                                  logLevel=getattr(logging, arguments.log_level.upper()), logFormat=arguments.log_format,
@@ -127,8 +136,12 @@ def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile
 
     jobsPath, _ = _resolveConfigurationPaths(arguments)
     manifest = result.maskingManifest(jobsFile.jobs)
-    manifest.update(tool={'name': 'bauta', 'version': _toolVersion()},
-                    configuration={'jobsFile': str(jobsPath), 'sha256': hashlib.sha256(jobsPath.read_bytes()).hexdigest()})
+    configuration: Dict[str, Any] = {'jobsFile': str(jobsPath), 'sha256': hashlib.sha256(jobsPath.read_bytes()).hexdigest()}
+    included = _readJobs(jobsPath).files[1:]
+    if included:
+        # Each file's digest, since the jobs file's alone no longer says what ran.
+        configuration['includes'] = [{'file': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in included]
+    manifest.update(tool={'name': 'bauta', 'version': _toolVersion()}, configuration=configuration)
 
     signingKey = os.environ.get(arguments.manifest_key_variable)
     manifest = sealManifest(manifest, signingKey=signingKey)
@@ -274,6 +287,13 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
         raise ConfigurationError('invalid configuration:\n' + '\n'.join(problems))
 
     print('configuration is valid: {} connection(s), {} job(s)'.format(len(connectionConfiguration), len(jobsFile.jobs)))
+    jobsPath, _ = _resolveConfigurationPaths(arguments)
+    document = _readJobs(jobsPath)
+    if len(document.files) > 1:
+        counts = {path: 0 for path in document.files}
+        for path in document.origins.values():
+            counts[path] += 1
+        print('jobs from {} file(s): {}'.format(len(counts), ', '.join('{} ({})'.format(path, count) for path, count in counts.items())))
     print('run state: {}'.format(_describeLocation(_memoryLocation(arguments, jobsFile))))
     for setting, missing in (('history', 'not recorded'), ('manifest', 'not written')):
         location = _resolveLocation(arguments, setting, getattr(jobsFile, setting))

@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import argparse
 import datetime
-from typing import Dict, List, Sequence, Tuple
+import sys
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from ..configuration import isLake
 from ..database import Database
@@ -13,7 +14,7 @@ from ..database.dialects import catalogTable, quoteIdentifier, quoteTableName
 from ..log import Log
 from ..log.scrubbing import describeError
 from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadConnections, _loadDataJobs, _memoryBackend,
-                     _requireDatabase, _selectJobs, _writeOutput)
+                     _readJobs, _requireDatabase, _resolveConfigurationPaths, _selectJobs, _writeOutput)
 
 
 def _generatedHeading(command: str, source: str, target: str) -> List[str]:
@@ -29,10 +30,13 @@ def _generatedHeading(command: str, source: str, target: str) -> List[str]:
         ]
 
 
-def _nextSteps(source: str, target: str, tables: Sequence[str], related: bool = False) -> List[str]:
-    """How to create the tables the generated jobs load, and how to refresh them."""
+def _nextSteps(source: str, target: str, tables: Sequence[str], related: bool = False, allTables: Optional[str] = None) -> List[str]:
+    """How to create the tables the generated jobs load, and how to refresh
+    them. `allTables`, when every table was asked for, is the arguments that
+    say so again, rather than one --table per table.
+    """
 
-    tableArguments = ' '.join('--table {}'.format(table) for table in tables)
+    tableArguments = allTables if allTables is not None else ' '.join('--table {}'.format(table) for table in tables)
     if source == target:
         return [
             'Masking in place loads through <table>_masked_stage. Create the stage tables with:',
@@ -65,6 +69,13 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
 
     from ..generate.discovery import JobDraft, proposeTable, renderJobs
 
+    if arguments.update:
+        return _discoverUpdate(arguments, log)
+    if arguments.apply or arguments.job:
+        raise UsageError('--apply and --job go with --update')
+    if not arguments.connection:
+        raise UsageError('name the database to read with --connection, or pass --update to check the jobs file against its sources')
+
     _requireTableSelection(arguments)
     connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
@@ -74,10 +85,6 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
 
     drafts = []
     with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
-        try:
-            foreignKeys = database.getForeignKeys()
-        except NotImplementedError:
-            foreignKeys = []
         # Named as the catalog holds them, so a table written in quotes -- the
         # only way to name a reserved word -- matches its own foreign keys, and
         # gives a job and a key domain the same name a bare one would.
@@ -85,6 +92,12 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
         if not requestedTables:
             raise UsageError('{} holds no tables{}'.format(
                 arguments.connection, ' in schema {}'.format(arguments.schema) if arguments.schema else ''))
+        # The keys of the schema the tables are in, which --schema or a
+        # qualified --table names, not only the connection's own.
+        try:
+            foreignKeys = database.getForeignKeys(arguments.schema) if arguments.all_tables else database.getForeignKeysFor(requestedTables)
+        except NotImplementedError:
+            foreignKeys = []
         tables = [catalogTable(database.type, table) for table in requestedTables]
         requested = {table.upper(): table for table in tables}
         for table in tables:
@@ -98,10 +111,84 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
             drafts.append(JobDraft(table=table, sourceQuery='SELECT * FROM {}'.format(database.statementName(table)),
                                    predecessors=parents, proposal=proposal))
 
-    heading = _generatedHeading('discover', arguments.connection, target) + _nextSteps(arguments.connection, target, requestedTables)
+    allTables = None
+    if arguments.all_tables:
+        allTables = '--all-tables' + (' --schema {}'.format(arguments.schema) if arguments.schema else '')
+    heading = _generatedHeading('discover', arguments.connection, target) + _nextSteps(arguments.connection, target, requestedTables,
+                                                                                       allTables=allTables)
     _writeOutput(renderJobs(drafts, arguments.connection, target, heading, keyVariable=arguments.key_variable,
-                            chunkSize=arguments.chunk_size, targetType=targetSettings.type), arguments.output)
+                            chunkSize=arguments.chunk_size, targetType=targetSettings.type,
+                            selfContained=arguments.self_contained), arguments.output)
 
+    return EXIT_SUCCESS
+
+
+def _discoverUpdate(arguments: argparse.Namespace, log: Log) -> int:
+    """Each masked job in the jobs file against what its sourceQuery returns
+    now: the columns it doesn't cover, proposed as discover would, and the
+    ones it names that are gone. Exits 1 when any job has drifted and the
+    change wasn't applied, so it can gate a pipeline as coverage does.
+    """
+
+    from ..generate.drift import DriftError, _wholeTable, applyDrift, findDrift, renderDrift
+
+    for flag, given in (('--connection', arguments.connection), ('--table', arguments.table), ('--all-tables', arguments.all_tables),
+                        ('--target', arguments.target), ('--output', arguments.output)):
+        if given:
+            raise UsageError('{} names what to discover afresh; --update reads the jobs file instead'.format(flag))
+
+    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
+    jobsPath, _ = _resolveConfigurationPaths(arguments)
+    document = _readJobs(jobsPath)
+    rules = _discoveryRules(arguments)
+    jobs = {name: job for name, job in _selectJobs(jobsFile.jobs, arguments.job, log).items()
+            if job.masking is not None and not isLake(connectionConfiguration.get(job.sourceConnection))}
+
+    drifts = []
+    for alias in sorted({job.sourceConnection for job in jobs.values()}):
+        _requireDatabase(connectionConfiguration, alias)
+        with Database(connectionSettings=connectionConfiguration[alias]) as database:
+            # The keys of each schema a job reads whole, where a new key
+            # column finds the domain its reference shares.
+            wholeTables = [table for table in (_wholeTable(job.sourceQuery) for job in jobs.values() if job.sourceConnection == alias) if table]
+            try:
+                foreignKeys = database.getForeignKeysFor(wholeTables)
+            except NotImplementedError:
+                foreignKeys = []
+            for name in sorted(name for name, job in jobs.items() if job.sourceConnection == alias):
+                drift = findDrift(database, name, jobs[name], rules=rules, sampleSize=arguments.sample, maskKeys=arguments.mask_keys,
+                                  foreignKeys=foreignKeys)
+                if drift.any():
+                    drifts.append(drift)
+
+    if not drifts:
+        print('{} masked job(s) checked: every policy names exactly the columns its sourceQuery returns'.format(len(jobs)))
+        return EXIT_SUCCESS
+
+    sys.stdout.write(renderDrift(drifts, document.origins))
+    if not arguments.apply:
+        print('{} of {} masked job(s) have drifted. Review the proposals above, then apply them with --apply'.format(len(drifts), len(jobs)))
+        return EXIT_JOBS_DID_NOT_SUCCEED
+
+    # One file at a time, every edit to it made before it is written, so a
+    # failure part-way leaves each file as it was or wholly updated.
+    failed = []
+    for path in dict.fromkeys(document.origins[drift.job] for drift in drifts):
+        text = path.read_text()
+        try:
+            for drift in drifts:
+                if document.origins[drift.job] == path:
+                    text = applyDrift(text, drift)
+        except DriftError as error:
+            failed.append('{}: {}'.format(path, error))
+            continue
+        path.write_text(text)
+        log.logging.info('Updated {}'.format(path))
+
+    if failed:
+        raise UsageError('could not apply every proposal; nothing was written to these files:\n' + '\n'.join(failed))
+
+    print('Applied to {} job(s). Review the lines marked "proposed by discover --update" before the next run'.format(len(drifts)))
     return EXIT_SUCCESS
 
 
@@ -119,10 +206,11 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
     targetSettings = _requireDatabase(connectionConfiguration, arguments.target)
 
     if arguments.target == arguments.connection:
-        raise UsageError('--target must differ from --database: a subset is loaded into another database, not over its source')
+        raise UsageError('--target must differ from --connection: a subset is loaded into another database, not over its source')
 
     with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
-        foreignKeys = database.getForeignKeys()
+        # The root's schema's keys: a subset follows references within it.
+        foreignKeys = database.getForeignKeysFor([arguments.root])
 
         try:
             plan = planSubset(foreignKeys, root=arguments.root, where=arguments.where, followChildren=not arguments.no_children,
@@ -149,7 +237,8 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
         '',
         ] + _nextSteps(arguments.connection, arguments.target, [arguments.root], related=True)
     _writeOutput(renderJobs(drafts, arguments.connection, arguments.target, heading, keyVariable=arguments.key_variable,
-                            chunkSize=arguments.chunk_size, targetType=targetSettings.type), arguments.output)
+                            chunkSize=arguments.chunk_size, targetType=targetSettings.type,
+                            selfContained=arguments.self_contained), arguments.output)
 
     return EXIT_SUCCESS
 
@@ -164,6 +253,9 @@ def _commandSchema(arguments: argparse.Namespace, log: Log) -> int:
     from ..generate.schema import SchemaError, createStatements, readTable, renderScript
     from ..generate.subset import relatedTables
 
+    _requireTableSelection(arguments)
+    if arguments.all_tables and arguments.related:
+        raise UsageError('--related adds the tables related to --table; --all-tables already takes every table')
     connectionConfiguration = _loadConnections(arguments)
     sourceSettings = _requireDatabase(connectionConfiguration, arguments.connection)
     targetSettings = _requireDatabase(connectionConfiguration, arguments.target)
@@ -173,8 +265,16 @@ def _commandSchema(arguments: argparse.Namespace, log: Log) -> int:
         raise UsageError('--target is the source database, so its tables already exist; pass --stage-suffix to create stage tables for them')
 
     with Database(connectionSettings=sourceSettings) as source:
-        foreignKeys = source.getForeignKeys()
-        tables = relatedTables(foreignKeys, arguments.table, followChildren=not arguments.no_children) if arguments.related else arguments.table
+        foreignKeys = source.getForeignKeys(arguments.schema) if arguments.all_tables else source.getForeignKeysFor(arguments.table)
+        if arguments.all_tables:
+            tables = [catalogTable(source.type, table) for table in source.listTables(schema=arguments.schema)]
+            if not tables:
+                raise UsageError('{} holds no tables{}'.format(
+                    arguments.connection, ' in schema {}'.format(arguments.schema) if arguments.schema else ''))
+        elif arguments.related:
+            tables = relatedTables(foreignKeys, arguments.table, followChildren=not arguments.no_children)
+        else:
+            tables = arguments.table
         try:
             definitions = [readTable(source, table, foreignKeys) for table in tables]
             statements = createStatements(sourceSettings.type, targetSettings.type, definitions, includeForeignKeys=not arguments.no_foreign_keys,
@@ -193,7 +293,7 @@ def _commandSchema(arguments: argparse.Namespace, log: Log) -> int:
         return EXIT_SUCCESS
 
     created = skipped = 0
-    with Database(connectionSettings=targetSettings) as target:
+    with Database(connectionSettings=targetSettings, create=True) as target:
         for statement in statements:
             if target.tableExists(statement.table):
                 log.logging.info('{}: already exists, left as it is'.format(statement.table))
@@ -250,7 +350,7 @@ def _commandSynthesize(arguments: argparse.Namespace, log: Log) -> int:
             ', '.join(requested)))
 
     with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
-        foreignKeys = database.getForeignKeys()
+        foreignKeys = database.getForeignKeysFor(list(requested))
         try:
             order = orderParentsFirst(requested, foreignKeys)
         except SchemaError as error:
@@ -322,7 +422,7 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
                                  'or leave its job out with --job'.format(alias, ', '.join(missing)))
             try:
                 if arguments.dry_run:
-                    print('{}: would empty, in order: {}'.format(alias, ', '.join(clearOrder(tables, database.getForeignKeys()))))
+                    print('{}: would empty, in order: {}'.format(alias, ', '.join(clearOrder(tables, database.getForeignKeysFor(tables)))))
                     continue
                 cleared = clearTables(database, tables)
             except SchemaError as error:

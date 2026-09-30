@@ -299,3 +299,25 @@ def test_a_mixed_case_column_created_quoted_loads(server):
     database.upsert(table=target, data=[(1, 5)], chunkSize=10, columns=['id', 'customerid'])
 
     assert [tuple(row) for row in database.query('SELECT id, {} FROM {}'.format(column, target))] == [(1, 5)]
+
+
+def test_foreign_keys_are_read_from_the_schema_named(server, otherSchema):
+    """Every dialect read the connection's own schema's keys whatever was
+    asked, so discover --schema, schema --schema and verify-references on
+    `other.orders` found none. Named as listTables(schema) names tables.
+    """
+    serverName, database, table = server
+    parent = table('(id INT PRIMARY KEY)', schema=otherSchema)
+    child = table('(id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES {}(id))'.format(parent), schema=otherSchema)
+
+    def pairs(keys):
+        return {(key.table.lower(), key.referencedTable.lower()) for key in keys if key.table.lower() == child.lower()}
+
+    assert pairs(database.getForeignKeys(otherSchema)) == {(child.lower(), parent.lower())}
+    assert pairs(database.getForeignKeysFor([child])) == {(child.lower(), parent.lower())}
+    assert {name.lower() for name in database.listTables(schema=otherSchema)} >= {child.lower(), parent.lower()}
+    if serverName != 'mssql':
+        # SQL Server reads every schema's keys where none is named, as it always has.
+        assert pairs(database.getForeignKeys()) == set()
+    assert database.foreignKeysElsewhere([None]).get(otherSchema.upper() if serverName == 'oracle' else otherSchema) == 1
+    assert otherSchema.lower() not in {schema.lower() for schema in database.foreignKeysElsewhere([otherSchema])}

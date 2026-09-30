@@ -17,6 +17,7 @@ The walkthrough runs the `bauta` command itself. The other demos call the Python
 | [`walkthrough/`](#walkthrough) | the whole workflow, through the commands a person would type |
 | [`incremental/`](#incremental) | streaming, and incremental loads that extract only what changed |
 | [`masking/`](#masking) | masking, discovery and subsetting, from Python |
+| [`orchestrators/`](#orchestrators) | bauta under Airflow and Dagster: a DAG, a DAG with a task per job, and Dagster assets, with a demo that runs a task per job without either |
 | [`native-masking/`](#native-masking) | Python against Rust on a narrow table, and Rust on one core against all of them on a wide one: the speed, and identical results |
 | [`starter/`](#starter) | not a demo: a configuration to copy for your own databases |
 
@@ -72,6 +73,26 @@ Builds a "production" and a "staging" SQLite database, then:
 It uses a throwaway key unless `MASKING_KEY` is already set.
 
 Tested by `tests/examples/test_masking_demo.py`.
+
+
+## orchestrators
+
+```
+python example/orchestrators/demo.py
+```
+
+Working files for running bauta under an orchestrator, and a demo of what they do:
+
+| File | What it is |
+| --- | --- |
+| `bautaTasks.py` | the job graph, read without secrets, and the command each task runs; both orchestrators' files import it |
+| `airflowDag.py` | one task a run, every 15 minutes, and a weekly full refresh after `audit --strict` and `discover --update` |
+| `airflowDagPerJob.py` | a task per bauta job, downstream of its predecessors, in a pool standing in for `workers` |
+| `dagsterDefinitions.py` | an asset per bauta job, and an incremental and a full-refresh job over them |
+
+The demo builds throwaway SQLite databases, then runs a `bauta run --job` process per job, each as soon as its predecessors finish, the way both orchestrators do: the two jobs that wait for nothing run side by side. It deletes an order in production, which an incremental run leaves in the copy, and the weekly checks and full refresh take it out. See [run from Airflow or Dagster](../docs/guides/run-from-an-orchestrator.md).
+
+Tested by `tests/examples/test_orchestrators.py`, which runs the demo and loads each orchestrator's file against stand-ins that record its DAGs, tasks, assets and schedules, since Airflow and Dagster are too heavy to install for the suite.
 
 
 ## native-masking

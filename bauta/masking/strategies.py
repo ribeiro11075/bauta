@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import ipaddress
+import json
 import math
 import random
 import re
@@ -143,6 +145,30 @@ def _typeName(value: Any) -> str:
     return type(value).__name__
 
 
+_ADDRESS_TYPES = (ipaddress.IPv4Address, ipaddress.IPv6Address, ipaddress.IPv4Interface, ipaddress.IPv6Interface,
+                  ipaddress.IPv4Network, ipaddress.IPv6Network)
+
+
+def structuredText(value: Any) -> Optional[str]:
+    """The text a strategy that masks text reads from a value a driver returns
+    structured, or None for any other value: a JSON document -- PostgreSQL's
+    json and jsonb, Oracle's JSON, DuckDB's STRUCT, LIST and MAP -- as JSON, in
+    the key order it came in and spaced as PostgreSQL prints it; and an IP
+    address or network -- PostgreSQL's inet and cidr -- as it is written.
+
+    The masked text is what's loaded, which a JSON or an inet column takes as
+    it would the literal. Only strategies that refused these values call this,
+    so no mask made before changes.
+    """
+
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    if isinstance(value, _ADDRESS_TYPES):
+        return str(value)
+
+    return None
+
+
 class KeepStrategy(Strategy):
     """Leave the column as it is. The explicit way to say a column was reviewed."""
 
@@ -220,7 +246,10 @@ class EmailStrategy(Strategy):
     def mask(self, value: Any) -> Any:
 
         if not isinstance(value, str):
-            raise MaskingError('the email strategy needs text, got {}'.format(_typeName(value)))
+            text = structuredText(value)
+            if text is None:
+                raise MaskingError('the email strategy needs text, got {}'.format(_typeName(value)))
+            value = text
 
         address = value.strip()
         local = 'u' + self.keyedHash.digest(address.lower().encode('utf-8')).hex()[:self.options.get('length', 12)]
@@ -280,7 +309,10 @@ class DigitsStrategy(Strategy):
             return int(masked) * (-1 if value < 0 else 1)
 
         if not isinstance(value, str):
-            raise MaskingError('the digits strategy needs text or an integer, got {}'.format(_typeName(value)))
+            structured = structuredText(value)
+            if structured is None:
+                raise MaskingError('the digits strategy needs text or an integer, got {}'.format(_typeName(value)))
+            value = structured
 
         if any(not character.isascii() and character.isdigit() and unicodedata.decimal(character, None) is None for character in value):
             raise MaskingError('the digits strategy masks decimal digits, and this value has other digit characters '
@@ -724,8 +756,9 @@ class KeyStrategy(Strategy):
         if isinstance(value, uuid.UUID):
             return uuid.UUID(self._maskText(str(value), 'hex'))
 
-        if isinstance(value, str):
-            return self._maskText(value, self.options.get('charset', 'alphanumeric'))
+        text = value if isinstance(value, str) else structuredText(value)
+        if text is not None:
+            return self._maskText(text, self.options.get('charset', 'alphanumeric'))
 
         raise MaskingError('the key strategy needs an integer or text, got {}'.format(_typeName(value)))
 
@@ -836,8 +869,9 @@ class FPEStrategy(Strategy):
         if isinstance(value, uuid.UUID):
             return uuid.UUID(self._maskText(str(value), 'hex'))
 
-        if isinstance(value, str):
-            return self._maskText(value, self.options.get('charset', 'alphanumeric'))
+        text = value if isinstance(value, str) else structuredText(value)
+        if text is not None:
+            return self._maskText(text, self.options.get('charset', 'alphanumeric'))
 
         raise MaskingError('the fpe strategy needs an integer or text, got {}'.format(_typeName(value)))
 
@@ -983,7 +1017,10 @@ class RedactStrategy(Strategy):
     def mask(self, value: Any) -> Any:
 
         if not isinstance(value, str):
-            raise MaskingError('the redact strategy needs text, got {}'.format(_typeName(value)))
+            text = structuredText(value)
+            if text is None:
+                raise MaskingError('the redact strategy needs text, got {}'.format(_typeName(value)))
+            value = text
 
         pieces = []
         position = 0
@@ -1013,10 +1050,141 @@ class ShuffleStrategy(Strategy):
         return shuffled
 
 
+# A path into a JSON document: keys joined with dots, `[]` for every element
+# of an array: `contact.alt_email`, `orders[].card`, `[].email`.
+_JSON_PATH = re.compile(r'^(?:[^.\[\]]+|\[\])(?:\.[^.\[\]]+|\[\])*$')
+
+
+def _jsonPolicy(value: Any) -> Dict[str, Any]:
+    """A policy for part of a JSON document: any column policy but `shuffle`,
+    which moves values between rows, and a single value has none to move to.
+    """
+
+    from .core import validateColumnPolicy
+
+    policy = validateColumnPolicy(value)
+    if policy['strategy'] == 'shuffle':
+        raise ValueError('shuffle moves values between rows, so it would leave a value inside a document where it is')
+
+    return policy
+
+
+def _jsonFields(value: Any) -> Dict[str, Dict[str, Any]]:
+
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError('must map paths in the document, such as contact.email or items[].card, to a policy each')
+
+    fields = {}
+    for path, policy in value.items():
+        if not isinstance(path, str) or not _JSON_PATH.match(path):
+            raise ValueError('{!r} is not a path: name keys with dots and every element of an array with [], as in items[].card'.format(path))
+        try:
+            fields[path] = _jsonPolicy(policy)
+        except ValueError as error:
+            raise ValueError('{}: {}'.format(path, error)) from None
+
+    return fields
+
+
+def _pathText(path: Tuple[str, ...]) -> str:
+
+    return '.'.join(path).replace('.[]', '[]')
+
+
+class JsonStrategy(Strategy):
+    """Masks inside a JSON document: each path `fields` names with its own
+    policy, and every other value with `otherwise` -- by default `redact`,
+    which masks the identifiers it finds by their shape in text and leaves
+    numbers and booleans as they are. A policy named for a path holding an
+    object or an array applies to it whole, so `null` drops it.
+
+    A field masks in the domain it names, or in its last key's, as a column
+    masks in its name's: `contact.customer_id: {strategy: key, domain:
+    customers}` matches the customers table's masked ids.
+
+    The document comes back as it came: an object or array as one, and JSON
+    text, as MySQL and DuckDB return it, as text.
+    """
+
+    NAME = 'json'
+    OPTIONS = {'fields': _jsonFields, 'otherwise': _jsonPolicy}
+    REQUIRED = ('fields',)
+
+    def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
+
+        super().__init__(keyedHash, options)
+        otherwise = self.options.get('otherwise', {'strategy': 'redact', 'replacement': 'mask'})
+        self._otherwise = self._build(keyedHash, otherwise)
+        self._fields: Optional[Dict[str, Strategy]] = None
+
+
+    @staticmethod
+    def _build(keyedHash: KeyedHash, policy: Mapping[str, Any]) -> Strategy:
+
+        from .core import POLICY_FIELDS, resolveStrategy
+
+        strategy = resolveStrategy(policy['strategy'])(keyedHash, {name: value for name, value in policy.items() if name not in POLICY_FIELDS})
+
+        return strategy
+
+
+    def bindKey(self, key: str) -> None:
+
+        self._fields = {}
+        for path, policy in self.options['fields'].items():
+            domain = policy.get('domain') or next(part for part in reversed(path.replace('[]', '.').split('.')) if part).lower()
+            self._fields[path] = self._build(KeyedHash(key, domain), policy)
+            self._fields[path].bindKey(key)
+        self._otherwise.bindKey(key)
+
+
+    def _maskPart(self, strategy: Strategy, value: Any) -> Any:
+
+        if isinstance(strategy, RedactStrategy) and not isinstance(value, str):
+            return value
+
+        return strategy.maskColumn([value], 0)[0]
+
+
+    def _walk(self, node: Any, path: Tuple[str, ...]) -> Any:
+
+        assert self._fields is not None
+        if path:
+            strategy = self._fields.get(_pathText(path))
+            if strategy is not None:
+                return self._maskPart(strategy, node)
+        if isinstance(node, dict):
+            return {key: self._walk(value, path + (str(key),)) for key, value in node.items()}
+        if isinstance(node, list):
+            return [self._walk(value, path + ('[]',)) for value in node]
+        if node is None:
+            return None
+
+        return self._maskPart(self._otherwise, node)
+
+
+    def mask(self, value: Any) -> Any:
+
+        if self._fields is None:
+            raise MaskingError('the json strategy masks its fields under the masking key, which only a masking plan gives it')
+
+        if isinstance(value, str):
+            try:
+                document = json.loads(value)
+            except ValueError:
+                raise MaskingError('the json strategy needs a JSON document, and this text is not one') from None
+            return json.dumps(self._walk(document, ()), ensure_ascii=False)
+
+        if isinstance(value, (dict, list)):
+            return self._walk(value, ())
+
+        raise MaskingError('the json strategy needs a JSON document, got {}'.format(_typeName(value)))
+
+
 STRATEGIES: Dict[str, Type[Strategy]] = {
     strategy.NAME: strategy for strategy in (
         KeepStrategy, NullStrategy, ConstantStrategy, HashStrategy, EmailStrategy, DigitsStrategy, NumberStrategy, DateShiftStrategy,
         FakeFirstNameStrategy, FakeLastNameStrategy, FakeNameStrategy, FakeCityStrategy, FakeCompanyStrategy, FakeStreetAddressStrategy,
-        KeyStrategy, FPEStrategy, RedactStrategy, ShuffleStrategy,
+        KeyStrategy, FPEStrategy, RedactStrategy, ShuffleStrategy, JsonStrategy,
         )
     }

@@ -58,6 +58,9 @@ NAME_RULES: Tuple[Tuple[str, Tuple[str, ...], Dict[str, Any], str], ...] = (
                     'licensenumber', 'licencenumber', 'driverslicense'),
      {'strategy': 'key'}, 'name suggests a government identifier; key keeps it unique and shaped'),
     ('card', ('creditcard', 'cardnumber', 'ccnumber', 'pan'), {'strategy': 'digits', 'keepTrailing': 4}, 'name suggests a card number'),
+    # Not `cid` or a bare `security_code`, which name other things as often.
+    ('cardSecurityCode', ('cvv', 'cvv2', 'cvc', 'cvc2', 'csc', 'cardsecuritycode', 'cardverificationcode', 'cardverificationvalue'),
+     {'strategy': 'null'}, 'name suggests a card security code, which PCI DSS forbids storing at all'),
     ('bankAccount', ('iban', 'accountnumber', 'routingnumber', 'bankaccount', 'sortcode'), {'strategy': 'digits'}, 'name suggests a bank account'),
     ('phone', ('phone', 'phonenumber', 'mobile', 'cell', 'fax', 'telephone', 'tel'), {'strategy': 'digits'}, 'name suggests a phone number'),
     ('firstName', ('firstname', 'givenname', 'forename'), {'strategy': 'fakeFirstName'}, 'name suggests a first name'),

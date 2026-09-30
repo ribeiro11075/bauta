@@ -59,7 +59,7 @@ Every run then writes a record of what was masked, how, and under which key fing
 - `columns` lists the columns the query actually returned, and the policy applied to each. `source` says whether a column was listed in `columns` or fell to `defaultStrategy`.
 - A masked job that failed or was skipped is still listed, with its status and no columns. "This copy was not refreshed" belongs in the record too.
 - The manifest is written even when the run fails. It never contains a value or the key.
-- `configuration` names the jobs file and its SHA-256, so a reviewer can tell which policy produced the run.
+- `configuration` names the jobs file and its SHA-256, so a reviewer can tell which policy produced the run. When the jobs file [includes others](../reference/configuration.md#splitting-the-jobs-across-files), `includes` lists each of them with its own SHA-256, since the jobs file's digest alone no longer covers every policy.
 - `maskedBy` is `python`, or the native masker and its version.
 
 From Python, `RunResult.maskingManifest(jobsFile.jobs)` returns the manifest before sealing, without `tool`, `configuration` or `integrity`; `sealManifest` adds the last.

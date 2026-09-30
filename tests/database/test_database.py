@@ -455,6 +455,35 @@ def test_list_tables_qualifies_names_only_when_a_schema_was_asked_for(tmp_path):
         assert database.catalogColumns('extra.orders') == ['id', 'customerId']
 
 
+def test_foreign_keys_of_an_attached_schema_are_named_as_list_tables_names_its_tables(tmp_path):
+    """Keys used to be read from the connection's own schema whatever was
+    asked, so discover --schema and schema --schema lost every one.
+    """
+    from bauta.database import Database
+
+    settings = _sqliteWithTables(tmp_path)
+    other = _sqliteWithTables(tmp_path, name='other.db')
+
+    with Database(connectionSettings=settings) as database:
+        database.cursor.execute("ATTACH DATABASE '{}' AS extra".format(other.path))
+
+        assert [(key.table, key.referencedTable) for key in database.getForeignKeys()] == [('orders', 'customers')]
+        assert [(key.table, key.referencedTable) for key in database.getForeignKeys('extra')] == [('extra.orders', 'extra.customers')]
+        assert [key.table for key in database.getForeignKeysFor(['extra.orders', 'orders'])] == ['orders', 'extra.orders']
+        assert database.foreignKeysElsewhere([None]) == {'extra': 1}
+
+
+def test_a_key_is_named_bare_only_in_the_current_schema_unless_that_schema_was_named():
+    from bauta.database.dialects.base import _relativeName
+
+    assert _relativeName('public', 'orders', 'public', None) == 'orders'
+    assert _relativeName('app', 'orders', 'public', None) == 'app.orders'
+    assert _relativeName('app', 'orders', 'public', 'app') == 'app.orders'
+    assert _relativeName('public', 'customers', 'public', 'app') == 'customers'
+    # Named explicitly, as listTables(schema='public') qualifies its tables.
+    assert _relativeName('public', 'orders', 'public', 'public') == 'public.orders'
+
+
 def test_sqlite_foreign_keys_and_list_tables_agree_on_which_tables_exist(tmp_path):
     """foreignKeys walks the tables listTables returns, so the two must not
     drift apart -- SQLite's own tables have no foreign keys to read.
@@ -466,3 +495,37 @@ def test_sqlite_foreign_keys_and_list_tables_agree_on_which_tables_exist(tmp_pat
 
         assert [key.table for key in keys] == ['orders']
         assert set(key.table for key in keys) <= set(database.listTables())
+
+
+def test_processes_opening_a_new_sqlite_file_at_once_all_switch_it_to_wal(tmp_path):
+    """The switch takes an exclusive lock without waiting for it, so all but
+    one of several connections to a new file used to fail with "database is
+    locked". A barrier opens them together, on a few new files.
+    """
+    import multiprocessing
+
+    context = multiprocessing.get_context('spawn')
+    with context.Manager() as manager:
+        for round in range(5):
+            path = str(tmp_path / 'new{}.db'.format(round))
+            barrier = manager.Barrier(4)
+            with context.Pool(4) as pool:
+                modes = pool.starmap(_openAndReadJournalMode, [(path, barrier)] * 4)
+            assert modes == ['wal'] * 4
+
+
+def _openAndReadJournalMode(path, barrier):
+    from bauta.configuration import connectionConfig
+    from bauta.database import Database
+
+    barrier.wait()
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=path), create=True) as database:
+        return database.query('PRAGMA journal_mode')[0][0]
+
+
+def test_an_in_memory_sqlite_database_opens_though_it_cannot_use_wal():
+    from bauta.configuration import connectionConfig
+    from bauta.database import Database
+
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=':memory:')) as database:
+        assert database.query('PRAGMA journal_mode')[0][0] == 'memory'

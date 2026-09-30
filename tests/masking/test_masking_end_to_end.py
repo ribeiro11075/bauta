@@ -40,7 +40,7 @@ def databases(tmp_path):
         }
 
     for alias in settings:
-        with Database(connectionSettings=settings[alias]) as database:
+        with Database(connectionSettings=settings[alias], create=True) as database:
             for table in ('customers', 'customers_stage'):
                 database.alter('CREATE TABLE {} (id INT PRIMARY KEY, email TEXT, phone TEXT, birth_date TEXT, notes TEXT)'.format(table))
             database.alter('CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT, amount TEXT)')

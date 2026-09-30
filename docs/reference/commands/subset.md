@@ -24,6 +24,7 @@ See [Copy a subset](../../guides/copy-a-subset.md) for how to use it.
 | `--sample SAMPLE` | `1000` | Rows sampled per table to classify columns. |
 | `--key-variable KEY_VARIABLE` | `MASKING_KEY` | Environment variable the generated jobs read the masking key from. |
 | `--chunk-size CHUNK_SIZE` | `5000` | chunkSize for the generated jobs. |
+| `--self-contained` | off | Write the connections, insert strategy and key into every job rather than under defaults:, for jobs to paste into a file with defaults of its own. |
 | `--mask-keys` | off | Mask numeric surrogate keys too, in the domain each foreign key shares, instead of keeping them. |
 | `--output OUTPUT` |  | Write the generated jobs here instead of stdout; must not already exist. |
 | `--rules FILE` | discovery.yaml in the configuration directory, if there is one | Your own rules for recognising personal data, ahead of the built-in ones. |

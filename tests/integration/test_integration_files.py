@@ -47,7 +47,7 @@ def test_each_databases_decimals_and_times_arrive_exact(databaseName, tmp_path):
     settings = serverSettings(databaseName, tmp_path)
     table = 'files_{}'.format(uuid.uuid4().hex[:8])
 
-    with Database(connectionSettings=settings) as database:
+    with Database(connectionSettings=settings, create=True) as database:
         database.alter('CREATE TABLE {} (id INT PRIMARY KEY, amount DECIMAL(12,2), name VARCHAR(50), stamp {})'.format(
             table, TIMESTAMP.get(databaseName, 'TIMESTAMP')))
         database.insert(table, [(1, decimal.Decimal('12.30'), 'ann', AT), (2, None, None, None)], columns=['id', 'amount', 'name', 'stamp'])

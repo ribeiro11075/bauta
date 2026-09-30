@@ -34,11 +34,14 @@ def serverSettings(name, tmp_path=None):
     running, or its driver isn't installed.
     """
 
-    if name == 'sqlite':
-        return connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'test.db'))
-    if name == 'duckdb':
-        pytest.importorskip('duckdb')
-        return connectionConfig(type=DatabaseType.DUCKDB, path=str(tmp_path / 'test.duckdb'))
+    if name in EMBEDDED:
+        if name == 'duckdb':
+            pytest.importorskip('duckdb')
+        settings = connectionConfig(type=DatabaseType(name), path=str(tmp_path / ('test.db' if name == 'sqlite' else 'test.duckdb')))
+        # Created here, as a server's database exists before a test connects:
+        # a connection refuses a file that doesn't exist.
+        Database(connectionSettings=settings, create=True).close()
+        return settings
 
     driver, settings = SERVERS[name]
     try:

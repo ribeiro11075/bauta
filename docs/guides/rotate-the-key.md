@@ -9,6 +9,7 @@ The masking key is a credential, so a security policy usually says to change it 
 | --- | --- |
 | Does not mask the target's primary key | `bauta run --accept-key-change`. Each row is matched on its unchanged key and rewritten under the new one. |
 | Masks the target's primary key | `bauta clear`, then `bauta run --force`. |
+| Is incremental, with a `targetTableStage` | `bauta run --full-refresh`, either way: the target is [replaced whole](../concepts/how-it-works.md#deletes) under the new key, with no moment when it's empty. |
 
 **The second case cannot be acknowledged away, and `run` refuses it whatever flags are given.** An upsert matches rows on the primary key. When the key is masked, a new masking key gives every row a new primary key, so the run inserts a second generation of rows beside the first rather than updating it — and where a new key lands on one already there, it overwrites a different row's data. The result is a target holding two key generations at once, whose foreign keys still all resolve, so [`bauta verify-references`](copy-a-subset.md#verify-references-checking-the-copys-references) reports it clean.
 

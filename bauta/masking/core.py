@@ -434,6 +434,13 @@ class Strategy:
         """Cross-option rules, for the strategies that have any."""
 
 
+    def bindKey(self, key: str) -> None:
+        """Called by a plan, once built, with the masking key itself: for a
+        strategy that masks parts of a value in domains of their own, as
+        `json` masks its fields. The rest need only their own KeyedHash.
+        """
+
+
     def maskColumn(self, values: Sequence[Any], chunkIndex: int) -> List[Any]:
 
         if self._native is not None:
@@ -663,7 +670,9 @@ class BoundMasking:
             strategyType = resolveStrategy(policy['strategy'])
             domain = policy.get('domain', column.lower())
             options = {name: value for name, value in policy.items() if name not in POLICY_FIELDS}
-            self.strategies.append(strategyType(KeyedHash(key, domain), options))
+            strategy = strategyType(KeyedHash(key, domain), options)
+            strategy.bindKey(key)
+            self.strategies.append(strategy)
             self.manifest.append(ColumnMasking(column=column, strategy=policy['strategy'], domain=domain if strategyType.KEYED else None, source=source))
 
         self._chunkIndex = 0

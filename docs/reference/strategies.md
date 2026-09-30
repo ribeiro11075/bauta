@@ -17,6 +17,7 @@ A NULL stays NULL under every strategy except `constant` and `null`.
 | `fpe` | Like `key`, but using NIST's FF1 format-preserving encryption, for policies that must name a standard. See below. | `charset`: `alphanumeric` (default), `digits`, `hex`; `strict` |
 | `fakeName`, `fakeFirstName`, `fakeLastName`, `fakeCity`, `fakeCompany`, `fakeStreetAddress` | Realistic values from bundled lists. Not unique. | `maxLength`; `locale`, below |
 | `redact` | Free text with each recognisable identifier replaced: emails, phone numbers, US SSNs, card numbers and IBANs (both checksum-verified), IPv4 addresses. **Names aren't found.** See below. | `replacement`: `label` (default) or `mask`; `detect`: a list of `email`, `phone`, `ssn`, `card`, `iban`, `ip`; `patterns`: extra regular expressions |
+| `json` | A JSON document with each path `fields` names masked by its own policy, and every other value by `otherwise`. See below. | `fields` (required): path → column policy; `otherwise`: a policy, default `redact` with `replacement: mask` |
 | `shuffle` | The column's values rearranged among rows in the same chunk. **Not anonymization:** every real value is still in the table, and a small chunk barely moves them. It moves values between rows rather than mapping them, so it breaks a key and its references even where both are shuffled alike; `audit` warns. See [limits](#limits). | none |
 
 A value a strategy can't handle fails the job, for example text given to `number`. The error names the column and the value's type, never the value itself.
@@ -86,6 +87,31 @@ columns:
 - Phone detection is broad on purpose: any run of 7–15 digits that isn't a date counts, order numbers included. Leave `phone` out of `detect` where that removes too much.
 - **It can't recognise names, addresses written in words, or anything else without a fixed shape.** "Call Maria about her divorce" passes through unchanged. Where text may hold that, use `null`. `audit` notes every `redact` column for this reason.
 
+## `json`
+
+`json` masks inside a JSON document -- PostgreSQL's `json` and `jsonb`, Oracle's `JSON`, MySQL's `JSON`, or text holding one -- field by field:
+
+```yaml
+columns:
+  preferences:
+    strategy: json
+    fields:
+      contact.alt_email: email
+      contact.owner_id: { strategy: key, domain: customers }   # matches customers.id masked in domain customers
+      family[].first_name: fakeFirstName
+      address: 'null'                                           # an object, dropped whole
+    otherwise: { strategy: redact, replacement: mask }         # the default
+```
+
+- **Paths** join keys with dots, and name every element of an array with `[]`: `orders[].card`, or `[].email` for a document that is an array.
+- **A field's policy** is any column policy but `shuffle`, which has only the one value to move. It masks in the `domain` it names or, like a column, in its own name's: the path's last key. A policy on an object or an array applies to it whole.
+- **`otherwise`** masks every value no field names. The default, `redact`, masks identifiers it finds by shape in text and leaves numbers and booleans as they are, so **a name no field names passes through**; `audit` notes each `json` column this applies to. `otherwise: 'null'` removes every value no field names instead.
+- The document comes back in the form it came: an object as an object, JSON text as JSON text, keys in their order.
+
+[`discover`](../guides/propose-a-policy.md) proposes a `json` policy for a JSON column whose sampled documents hold personal data, naming each path it found.
+
+`email`, `digits`, `key`, `fpe` and `redact` also take a JSON document or an IP address -- a document as its JSON text, an `inet` value as it is written -- and return masked text, which a JSON or `inet` column loads as it would the literal.
+
 ## Your own strategies
 
 A policy can name a class of your own as `module.path:ClassName`:
@@ -111,6 +137,8 @@ columns:
 Derive anything random from `self.keyedHash` (`digest`, `below`, `unit`, `permute`), so the mask stays keyed, consistent within its domain, and reproducible. Key it on `canonical(value)`, the bytes the built-in strategies key on, so the same id masks the same way whether a driver returned it as a number or as text. `validate` imports the class and checks its options; the module must also be importable wherever jobs run. The manifest records the strategy by the name the policy used.
 
 If `mask()` depends on nothing but the value, set `CACHEABLE = True` on the class, and repeated values are remembered rather than masked again. It's off by default, since a strategy could depend on something else. A strategy that returns every value exactly as it was given, as `keep` does, sets `PASSTHROUGH = True`: its columns are carried through untouched, and checks that refuse a masked watermark column or a masked primary key treat them as unmasked.
+
+A strategy that masks parts of a value in domains other than its column's, as `json` masks its fields, overrides `bindKey(self, key)`: a masking plan calls it once, after building the strategy, with the masking key, to build a `KeyedHash(key, domain)` for each. The rest need only `self.keyedHash`.
 
 
 ## Limits

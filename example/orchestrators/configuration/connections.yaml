@@ -1,0 +1,8 @@
+# The databases the orchestrator examples run against: SQLite files the demo
+# builds in ../transaction/. A relative path here is relative to this file.
+prod:
+  type: sqlite
+  path: ${ORCHESTRATOR_DEMO_PROD_PATH:-../transaction/prod.db}
+staging:
+  type: sqlite
+  path: ${ORCHESTRATOR_DEMO_STAGING_PATH:-../transaction/staging.db}
