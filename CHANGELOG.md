@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.3 — 2026-09-30
 
 Configuration scales to hundreds of tables: jobs split across files, generated jobs that share their settings through `defaults`, and `discover --update` to bring policies up to date when production's columns change. `run --full-refresh` takes rows deleted in production out of incremental copies. Foreign keys are read from the schema a table is in, and JSON and `inet` columns are masked and discovered. The documentation is a website, at [ribeiro11075.github.io/bauta](https://ribeiro11075.github.io/bauta/), one copy per release. **Read Breaking before upgrading: relative database paths move, and `requireMasking` refuses a `defaultStrategy: keep`.** No mask changes.
 
