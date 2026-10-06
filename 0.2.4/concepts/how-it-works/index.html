@@ -1,0 +1,3314 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Safe, realistic copies of production across databases">
+      
+      
+      
+        <link rel="canonical" href="https://ribeiro11075.github.io/bauta/0.2.4/concepts/how-it-works/">
+      
+      
+        <link rel="prev" href="../../reference/python-api/">
+      
+      
+        <link rel="next" href="../security/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>How it works, and why - bauta</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Hanken+Grotesk:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Hanken Grotesk";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/bauta.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="bauta" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#how-it-works-and-why" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the documentation for an older release of bauta.
+  <a href="../../.."><strong>Go to the latest release.</strong></a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="bauta" class="md-header__button md-logo" aria-label="bauta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 30"><path fill="currentColor" fill-rule="evenodd" d="M13 1C6.4 1 2 5.6 2 12.2c0 4.6 1.2 8.4 3.2 11.2L4 28.4c3-.6 6-.9 9-.9s6 .3 9 .9l-1.2-5C22.8 20.6 24 16.8 24 12.2 24 5.6 19.6 1 13 1ZM8.6 10.7c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7S6 13.3 6 12.4s1.2-1.7 2.6-1.7Zm8.8 0c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7-2.6-.8-2.6-1.7 1.2-1.7 2.6-1.7Z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            bauta
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              How it works, and why
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="bauta" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Dark"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Light"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ribeiro11075/bauta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ribeiro11075/bauta
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="bauta" class="md-nav__button md-logo" aria-label="bauta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 30"><path fill="currentColor" fill-rule="evenodd" d="M13 1C6.4 1 2 5.6 2 12.2c0 4.6 1.2 8.4 3.2 11.2L4 28.4c3-.6 6-.9 9-.9s6 .3 9 .9l-1.2-5C22.8 20.6 24 16.8 24 12.2 24 5.6 19.6 1 13 1ZM8.6 10.7c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7S6 13.3 6 12.4s1.2-1.7 2.6-1.7Zm8.8 0c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7-2.6-.8-2.6-1.7 1.2-1.7 2.6-1.7Z"/></svg>
+
+    </a>
+    bauta
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ribeiro11075/bauta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ribeiro11075/bauta
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Get started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get-started/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/mask-a-table/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mask a table
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/keep-joins-intact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keep joins intact
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cover-every-column/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cover every column
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/propose-a-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Propose a policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/copy-a-subset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Copy a subset
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/generate-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generate data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/prove-the-copy-is-safe/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prove the copy is safe
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/keep-a-manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keep a masking manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/run-on-a-schedule/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run on a schedule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/run-from-an-orchestrator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run from Airflow or Dagster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/watch-what-ran/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Watch what ran
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/rotate-the-key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rotate the masking key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/make-it-faster/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Make it faster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    connections.yaml
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    jobs.yaml
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/strategies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masking strategies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/commands/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commands
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Commands
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/validate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    validate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    jobs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/history/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    history
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/discover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    discover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/subset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    subset
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/synthesize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    synthesize
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/clear/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    clear
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/verify-manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    verify-manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commands/verify-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    verify-references
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/tables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    State tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/python-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How it works, and why
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How it works, and why
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-a-data-job-moves-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a data job moves rows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-a-swap-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a swap works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#incremental-loads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incremental loads
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incremental loads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-the-lookback-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why the lookback window
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#crash-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Crash safety
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deletes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deletes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tables-that-reference-each-other" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tables that reference each other
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-watermarks-are-kept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where watermarks are kept
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#refresh-and-predecessors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        refresh and predecessors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#single-runs-not-a-daemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single runs, not a daemon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#partitions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Partitions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#structured-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Structured logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#masking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Masking
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#moving-values-between-drivers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Moving values between drivers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-names-are-written" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How names are written
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#files-as-a-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Files as a target
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Files as a target">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-a-run-leaves-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a run leaves where
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-an-overwrite-jobs-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading an overwrite job's table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appends-and-duplicate-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appends and duplicate rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#column-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Column types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#formats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formats
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#iceberg-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iceberg tables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Iceberg tables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#one-commit-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One commit a run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-tables-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The table's schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#old-snapshots" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Old snapshots
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#catalogs-and-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalogs and storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Project
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-a-data-job-moves-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a data job moves rows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-a-swap-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a swap works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#incremental-loads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incremental loads
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incremental loads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-the-lookback-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why the lookback window
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#crash-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Crash safety
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deletes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deletes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tables-that-reference-each-other" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tables that reference each other
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-watermarks-are-kept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where watermarks are kept
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#refresh-and-predecessors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        refresh and predecessors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#single-runs-not-a-daemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single runs, not a daemon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#partitions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Partitions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#structured-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Structured logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#masking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Masking
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#moving-values-between-drivers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Moving values between drivers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-names-are-written" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How names are written
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#files-as-a-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Files as a target
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Files as a target">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-a-run-leaves-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a run leaves where
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-an-overwrite-jobs-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading an overwrite job's table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appends-and-duplicate-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appends and duplicate rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#column-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Column types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#formats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formats
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#iceberg-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iceberg tables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Iceberg tables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#one-commit-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One commit a run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-tables-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The table's schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#old-snapshots" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Old snapshots
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#catalogs-and-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalogs and storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="./" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Concepts
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+  
+  
+  
+  
+    <div class="bauta-kind">
+      <span class="bauta-kind__label bauta-kind__label--concepts">Concept</span>
+      
+    </div>
+  
+  
+                  
+
+
+  
+    <a href="https://github.com/ribeiro11075/bauta/edit/master/docs/concepts/how-it-works.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="how-it-works-and-why">How it works, and why<a class="headerlink" href="#how-it-works-and-why" title="Permanent link">#</a></h1>
+<p>The behaviour behind the fields in <a href="../../reference/configuration/">configuration.md</a>, and the consequences worth knowing before you rely on it.</p>
+<ul>
+<li><a href="#how-a-data-job-moves-rows">How a data job moves rows</a></li>
+<li><a href="#how-a-swap-works">How a swap works</a></li>
+<li><a href="#incremental-loads">Incremental loads</a></li>
+<li><a href="#refresh-and-predecessors">refresh and predecessors</a></li>
+<li><a href="#single-runs-not-a-daemon">Single runs, not a daemon</a></li>
+<li><a href="#workers">Workers</a></li>
+<li><a href="#partitions">Partitions</a></li>
+<li><a href="#retries">Retries</a></li>
+<li><a href="#structured-logs">Structured logs</a></li>
+<li><a href="#masking">Masking</a></li>
+<li><a href="#moving-values-between-drivers">Moving values between drivers</a></li>
+<li><a href="#files-as-a-target">Files as a target</a></li>
+<li><a href="#iceberg-tables">Iceberg tables</a></li>
+</ul>
+<h2 id="how-a-data-job-moves-rows">How a data job moves rows<a class="headerlink" href="#how-a-data-job-moves-rows" title="Permanent link">#</a></h2>
+<p>Extracts are <strong>streamed</strong>. A data job pulls <code>chunkSize</code> rows, transforms them, writes them, and only then pulls the next chunk — it never holds the whole result set. Peak memory is about <code>chunkSize</code> × row width whether the source has ten thousand rows or ten billion.</p>
+<p>Streaming is per-driver, because <code>fetchmany()</code> bounds nothing if the driver has already pulled every row off the socket:</p>
+<table>
+<thead>
+<tr>
+<th>Dialect</th>
+<th>Cursor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>mysql, mariadb</td>
+<td>unbuffered</td>
+</tr>
+<tr>
+<td>postgresql</td>
+<td>server-side (named)</td>
+</tr>
+<tr>
+<td>oracle</td>
+<td><code>arraysize</code> tuned to the chunk</td>
+</tr>
+<tr>
+<td>mssql, sqlite, duckdb</td>
+<td>plain — all three already stream</td>
+</tr>
+</tbody>
+</table>
+<p>Loads are written a chunk at a time too, each chunk in its own transaction. The MySQL, MariaDB and Oracle drivers already send a chunk in a few round trips; psycopg, pymssql and DuckDB send one statement per row, so those three get a bulk path:</p>
+<ul>
+<li><strong>PostgreSQL uses <code>COPY</code></strong>, about 100 times faster on 50,000 rows. An upsert copies into a temporary table and merges it with one <code>INSERT ... ON CONFLICT</code>. A chunk holding a value <code>COPY</code> can't spell safely (an array, a JSON object, an interval) goes row by row instead.</li>
+<li><strong>SQL Server uses multi-row statements</strong> of up to a thousand rows: about 6 times faster for inserts and 28 for upserts.</li>
+<li><strong>DuckDB loads each chunk as an Arrow table</strong>, with one <code>INSERT ... SELECT</code>, or <code>INSERT ... ON CONFLICT</code> for an upsert: 50,000 rows took 13 seconds row by row, and a tenth of a second this way. A column Arrow can't give one type -- SQLite hands back numbers and text together -- goes as text, which DuckDB casts to the column's type; only a column holding something else besides, such as bytes beside text, sends its chunk row by row.</li>
+</ul>
+<p>One statement can't update a row twice, so for all three, rows repeating a key within a chunk are first reduced to the last of them — what applying them in turn would leave.</p>
+<p><strong>A <code>sourceQuery</code> that repeats a key</strong> is a question the two upsert paths answer differently, so it is worth not writing one. A stage-less <code>upsert</code> keeps the last row of each key, as above. An <code>upsert</code> with a <code>targetTableStage</code> loads every row into the stage first, and the stage carries the target's primary key, so the database refuses the repeat there — loudly, and before anything reaches the target. Deduplicate in the query instead.</p>
+<p>Where the <a href="../../guides/make-it-faster/#the-native-masker">native masker</a> is installed, the three stages overlap rather than taking turns: masking moves to a worker thread while the reader and writer keep the database connections, which they must — <code>mysqlclient</code> and PyMySQL forbid a connection being used by a thread other than its own, and SQLite enforces the same. Drivers release the GIL while they wait on a socket and the native masker releases it for a whole chunk, so the waiting and the masking genuinely overlap. A job then holds about four chunks rather than one: one being read, two masked or being masked ahead of the writer, and one being written. Pure-Python masking is slow enough to swamp any wait worth hiding, so it stays sequential; <code>BAUTA_PIPELINE</code> overrides either default.</p>
+<p>One chunk is still masked at a time, and chunks are written in the order they were read. The native masker takes the whole chunk in one call and masks its columns at once, so the GIL changes hands once a chunk rather than once a column; with <a href="../../guides/make-it-faster/#masking-threads"><code>maskingThreads</code></a> above 1, the columns and their distinct values are spread over several threads, which changes how fast the chunk is masked, not the result. A stage-less upsert writes straight into the live target, where one statement can't update the same row twice, so a key repeating across chunks has to arrive as it was read.</p>
+<p><strong>One consequence to know before sizing a job:</strong> extract and load interleave, so a source that fails part-way leaves the rows it already yielded written.</p>
+<ul>
+<li><strong>Invisible</strong> for <code>swap</code>, and for <code>upsert</code> with a <code>targetTableStage</code> — both write to the stage table, and <code>targetTableFinal</code> is only touched in the last step.</li>
+<li><strong>Visible</strong> for a stage-less <code>upsert</code>, which writes partial results straight into the live target. Use a stage table for anything large.</li>
+</ul>
+<p>Masking is a stage of this same pipeline (transform, then mask, then load), so a masked job streams like any other. See <a href="#masking">masking</a>.</p>
+<h2 id="how-a-swap-works">How a swap works<a class="headerlink" href="#how-a-swap-works" title="Permanent link">#</a></h2>
+<p><code>swap</code> exchanges <code>targetTableStage</code> and <code>targetTableFinal</code> by renaming them, through a temporary <code>&lt;target&gt;_tmp</code> name. A rename never moves a table between schemas, so the two must share one; validation checks. Names may be schema-qualified (<code>sales.orders</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Dialect</th>
+<th>Atomic</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>mysql, mariadb</td>
+<td>yes: one <code>RENAME TABLE</code> statement</td>
+</tr>
+<tr>
+<td>postgresql, mssql, sqlite, duckdb</td>
+<td>yes: the renames run in one transaction</td>
+</tr>
+<tr>
+<td>oracle</td>
+<td><strong>no</strong>: Oracle commits each DDL statement on its own</td>
+</tr>
+</tbody>
+</table>
+<p>On Oracle, a rename that fails — another session holding the table, which is <code>ORA-00054</code> — undoes the renames that already went through, so both tables end where they started and the next run swaps normally. The job still fails, and says which statement failed. A process killed between two of the renames can't undo anything, and leaves a table under the temporary name for someone to rename back.</p>
+<p><strong>Views.</strong> PostgreSQL ties a view to the table itself, not to its name, so after the renames a view over the target would read what is now the stage table. The swap takes care of it: each view built directly on the target is recreated from its own definition in the same transaction, so it reads the new target, and keeps its grants and the views built on it. SQLite has the opposite habit — it rewrites the views that <em>name</em> a renamed table, to follow it — so the swap renames with <code>legacy_alter_table</code> on, which leaves them naming the target. The remaining dialects resolve views by name and need nothing.</p>
+<p><strong>DuckDB can't swap a table in a foreign key, or one with an index.</strong> It refuses to rename a table with an index or one another references, and renaming one that references another leaves the other naming it by its old name, after which it can't be dropped. A swap job whose target or stage is either fails before renaming anything, saying to use <code>upsert</code>. A primary key is no obstacle.</p>
+<p><strong>What isn't rebound on PostgreSQL:</strong> materialized views, which keep reading the old table until recreated.</p>
+<p><strong>What isn't rebound anywhere:</strong> foreign keys in other tables that reference the target. Every database ties them to the table, not its name, so they move with the old table to the stage's name and stop checking the new target. The next run then can't empty the stage: PostgreSQL, SQL Server, Oracle, MySQL and MariaDB refuse to truncate a referenced table, and SQLite refuses to delete rows still referenced. Recreate those keys in <code>postTargetAdhocQueries</code>, or use <code>upsert</code> with a stage table instead of <code>swap</code>. <code>audit --connect</code> <a href="../../guides/prove-the-copy-is-safe/#reviewing-policies-audit">reports</a> a swap job whose target such a key references.</p>
+<p><strong>A <code>postTargetAdhocQuery</code> that fails after the swap</strong> fails the job, but the swap has already happened: the target holds the new rows. The failure says so, and reports the rows loaded rather than none, so a copy that was in fact rebuilt doesn't read as a job that moved nothing.</p>
+<p><strong>The swapped table keeps its primary key and unique keys.</strong> Before the stage is loaded, the job gives it whichever of the target's it lacks -- a stage made with <code>CREATE TABLE ... AS SELECT</code>, say, or the unique constraints <a href="../../guides/copy-a-subset/#schema-creating-the-targets-tables"><code>--stage-suffix</code></a> leaves out -- so the live table has them after every swap, not every other one, and a source repeating a key fails the load before anything reaches the target. A stage that already has them, as every stage after the first swap does, is left as it is.</p>
+<ul>
+<li><strong>Each is added unnamed</strong>, so the database names it as it would any constraint, and no name can collide with one the target already has. The two tables then trade constraint names at every swap, as they trade table names.</li>
+<li><strong>PostgreSQL, MySQL, MariaDB, Oracle and SQL Server</strong> add them to the empty stage with <code>ALTER TABLE</code>; SQL Server first makes a key column NOT NULL, restating its type and collation, since it refuses a key over a column that allows NULL. <strong>SQLite and DuckDB</strong>, which can't add one that way, create the empty stage again from its own definition with the keys added, and SQLite its indexes after it.</li>
+<li><strong>Not copied:</strong> a unique index on an expression, a partial or filtered one, or one over a prefix of a column, which a column list can't recreate; plain indexes, which change no result; and a DuckDB <code>CREATE UNIQUE INDEX</code>, since DuckDB won't swap a table with an index at all.</li>
+<li><strong>A key that can't be added</strong> -- no privilege to alter the stage, say -- is a warning, and the swap goes ahead as it would have.</li>
+</ul>
+<p><strong>The swapped table's foreign keys alternate.</strong> A stage is given none of them, for the reason <code>--stage-suffix</code> gives it none: a key follows the table it was declared on, so a key on the stage of a parent that is swapped too would check the emptied old table. After a swap the live table is the former stage, without them, and after the next the original is back with them; between the two, the copy enforces none, and no load fails to tell you. <code>audit --connect</code> <a href="../../guides/prove-the-copy-is-safe/#reviewing-policies-audit">warns</a> about a swap job whose table declares foreign keys. Recreate them in <code>postTargetAdhocQueries</code>, or use <code>upsert</code> with a stage table for any table whose references matter.</p>
+<h2 id="incremental-loads">Incremental loads<a class="headerlink" href="#incremental-loads" title="Permanent link">#</a></h2>
+<p>By default a job re-extracts its whole source every run. Set <code>watermarkColumn</code> and it extracts only rows past where the last <strong>successful</strong> run got to:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">loadOrders</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">sourceQuery</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span>
+<span class="w">    </span><span class="no">select id, customerId, amount, updatedAt from orders</span>
+<span class="w">    </span><span class="no">where updatedAt &gt; {{ watermark }} - interval 5 minute</span>
+<span class="w">  </span><span class="nt">watermarkColumn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">updatedAt</span>
+<span class="w">  </span><span class="nt">watermarkInitial</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1970-01-01 00:00:00</span><span class="w">    </span><span class="c1"># unquoted: YAML reads it as a timestamp</span>
+<span class="w">  </span><span class="nt">insertStrategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">upsert</span>
+<span class="w">  </span><span class="c1"># ...</span>
+</code></pre></div>
+<ul>
+<li><strong><code>{{ watermark }}</code></strong> is a bound parameter, not text substitution. It can go anywhere a value can, including a join or subquery, and is rewritten to each dialect's own placeholder, so one query works on all seven.</li>
+<li><strong><code>watermarkColumn</code></strong> is read from the <em>raw</em> rows, before transforms run. A transform may reformat the column, and the next run's predicate needs a value the source can still compare against.</li>
+<li><strong><code>watermarkInitial</code> is bound as whatever YAML made of it.</strong> Written without quotes, <code>1970-01-01 00:00:00</code> is a timestamp, which is what a timestamp column and the lookback arithmetic below both want. In quotes it is text, and PostgreSQL, Oracle and DuckDB refuse to subtract an interval from text — on the first run, every run, so the job never advances. Quote it only where the column really is text.</li>
+<li><strong><code>insertStrategy: upsert</code></strong> is required, or <code>append</code> into a files connection. <code>swap</code> or <code>overwrite</code> would replace the target with only the rows that changed, deleting everything else. An append keeps no key, so the overlap below is loaded twice there; see <a href="#appends-and-duplicate-rows">appends and duplicate rows</a>.</li>
+</ul>
+<h3 id="why-the-lookback-window">Why the lookback window<a class="headerlink" href="#why-the-lookback-window" title="Permanent link">#</a></h3>
+<p>The <code>- interval 5 minute</code> above closes the hole that silently loses data in incremental pipelines:</p>
+<blockquote>
+<p>A transaction that <strong>starts before</strong> your run and <strong>commits after</strong> it, carrying a timestamp from before your run, was never visible to your query — but the watermark has already moved past it. The row is skipped for good.</p>
+</blockquote>
+<p>Re-reading a small overlap every run closes it, and costs nothing <em>because</em> <code>upsert</code> makes reloading an existing row a no-op. That's why the two go together.</p>
+<p>The library never does arithmetic on a watermark, so write the lookback in your own dialect:</p>
+<table>
+<thead>
+<tr>
+<th>Dialect</th>
+<th>Lookback</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>mysql, mariadb</td>
+<td><code>{{ watermark }} - interval 5 minute</code></td>
+</tr>
+<tr>
+<td>postgresql</td>
+<td><code>{{ watermark }} - interval '5 minutes'</code></td>
+</tr>
+<tr>
+<td>oracle</td>
+<td><code>{{ watermark }} - numtodsinterval(5, 'minute')</code></td>
+</tr>
+<tr>
+<td>mssql</td>
+<td><code>dateadd(minute, -5, {{ watermark }})</code></td>
+</tr>
+<tr>
+<td>sqlite</td>
+<td><code>datetime({{ watermark }}, '-5 minutes')</code></td>
+</tr>
+<tr>
+<td>duckdb</td>
+<td><code>{{ watermark }} - interval '5 minutes'</code></td>
+</tr>
+<tr>
+<td>numeric id</td>
+<td><code>{{ watermark }} - 5</code></td>
+</tr>
+</tbody>
+</table>
+<p>Take watermarks from the <strong>database's</strong> clock, not the ETL host's, or clock skew becomes data loss.</p>
+<h3 id="crash-safety">Crash safety<a class="headerlink" href="#crash-safety" title="Permanent link">#</a></h3>
+<p>On success, each step commits before the next:</p>
+<div class="highlight"><pre><span></span><code>load committed  →  record watermark  →  record run  →  report completion
+</code></pre></div>
+<p>So every point a job can die at falls <em>backwards</em>, into re-reading rows already loaded — harmless under <code>upsert</code>. Nothing is recorded for a failed job: an advanced watermark there would skip rows permanently, the one unrecoverable direction. A run that finds no new rows leaves the stored watermark where it is.</p>
+<h3 id="deletes">Deletes<a class="headerlink" href="#deletes" title="Permanent link">#</a></h3>
+<p><strong>Watermarks cannot see hard deletes.</strong> A deleted row has no <code>updatedAt</code> to pass the watermark; it just stops appearing, and the target keeps it. Soft deletes — a flag whose change bumps <code>updatedAt</code> — work fine.</p>
+<p><strong><code>bauta run --full-refresh</code> removes them</strong>, scheduled as often as a deleted row may outlive its source, weekly say. It runs each incremental job over its whole source and replaces the target, rather than upserting into it:</p>
+<ul>
+<li>Its query is bound to <code>watermarkInitial</code>, the value a first run binds, so it returns every row without being rewritten. What it reads up to is recorded as the watermark, and the next incremental run carries on from there.</li>
+<li>A database target is loaded into its <code>targetTableStage</code> and <a href="#how-a-swap-works">swapped</a> in, so readers see the old copy until the new one is whole. That needs <code>targetTableStage</code> on the job, and the stage table created (<code>bauta schema --stage-suffix</code>); a job without one is refused, with every other such job, before anything runs. <a href="../../guides/prove-the-copy-is-safe/#reviewing-policies-audit"><code>bauta audit</code></a> warns of each such job, so <code>audit --strict</code> in CI finds one before the scheduled refresh does. An Iceberg target takes one overwrite commit. Incremental jobs writing files are refused: their appended parts and an overwrite's snapshot directories are different layouts to a reader.</li>
+<li>Refresh windows are ignored, as with <code>--force</code>. Jobs that aren't incremental run as they always do.</li>
+<li>Since the target is replaced whole, a masking key changed since the last run is no reason to stop: a full refresh is also how an incremental job's copy moves to a new key without <code>bauta clear</code>.</li>
+</ul>
+<p>It costs a full extract per refresh, and room for two copies of each table while it swaps. Change-data-capture, which this library doesn't do, is the alternative that costs neither.</p>
+<p>A reasonable split: <code>swap</code> for small tables; watermarked <code>upsert</code> for large append-and-update tables, with <code>--full-refresh</code> scheduled where deletes matter.</p>
+<h3 id="tables-that-reference-each-other">Tables that reference each other<a class="headerlink" href="#tables-that-reference-each-other" title="Permanent link">#</a></h3>
+<p>A watermarked parent holds only the rows changed since <code>watermarkInitial</code>. A new order for a customer who hasn't changed since then references a customer the parent job never selects. With the foreign key declared in the target, the child job fails on every run, because a failed job's watermark doesn't advance. Without it, the orders load with references that point at nothing. Copy the parent whole, or have its query also select what new child rows reference:</p>
+<div class="highlight"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">from</span><span class="w"> </span><span class="n">customers</span><span class="w"> </span><span class="k">c</span>
+<span class="k">where</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">updatedAt</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="err">{{</span><span class="w"> </span><span class="n">watermark</span><span class="w"> </span><span class="err">}}</span>
+<span class="w">   </span><span class="k">or</span><span class="w"> </span><span class="k">exists</span><span class="w"> </span><span class="p">(</span><span class="k">select</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">from</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="n">o</span><span class="w"> </span><span class="k">where</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">customerId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">id</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">updatedAt</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="err">{{</span><span class="w"> </span><span class="n">watermark</span><span class="w"> </span><span class="err">}}</span><span class="p">)</span>
+</code></pre></div>
+<p><code>audit --connect</code> <a href="../../guides/prove-the-copy-is-safe/#reviewing-policies-audit">warns about a parent copied in part</a> whose child isn't limited to match, and <a href="../../guides/copy-a-subset/#verify-references-checking-the-copys-references"><code>verify-references</code></a> counts the rows a copy already holds that point at nothing.</p>
+<h3 id="where-watermarks-are-kept">Where watermarks are kept<a class="headerlink" href="#where-watermarks-are-kept" title="Permanent link">#</a></h3>
+<p>In run state: <code>jobs.yaml</code>'s <code>memory</code>, a file or a table (see <a href="../../guides/run-on-a-schedule/#run-state">run state</a>); from Python, a <code>MemoryBackend</code>. <code>FileMemory</code> writes each update to a temporary file and renames it into place, so a process killed mid-write leaves the previous version rather than a file nothing can parse. It assumes a filesystem that persists between runs and is shared by every worker. Where that's false — a container without a volume, anything scaled across machines, serverless — use <code>DatabaseMemory</code>. <code>FileMemory</code> there doesn't fail loudly: it silently forgets every watermark and re-extracts from <code>watermarkInitial</code>. See <a href="../../reference/python-api/#memory-backends">library.md</a>.</p>
+<h2 id="refresh-and-predecessors"><code>refresh</code> and predecessors<a class="headerlink" href="#refresh-and-predecessors" title="Permanent link">#</a></h2>
+<p><strong><code>refresh</code> decides whether a job is in a cycle at all. <code>predecessors</code> only orders jobs within a cycle.</strong> So a predecessor sitting inside its own refresh window is not waited for.</p>
+<p>A job with <code>refresh: 5</code> whose predecessor has <code>refresh: 60</code> runs alone for 11 cycles in 12, and waits for its predecessor on the 12th. That's deliberate — otherwise <code>refresh: 5</code> would silently behave as <code>refresh: 60</code> — and it's what lets an hourly dimension load and a 5-minute fact load coexist.</p>
+<p>The trade-off is freshness, not correctness: between windows the dependent reads output up to an hour old. That's fine for a durable table, and wrong if the predecessor produces something transient the dependent consumes. Give both the same <code>refresh</code> in that case.</p>
+<p>It's wrong too when the dependent's table references the predecessor's: in the cycles the predecessor sits out, new orders load before the customers they reference. <code>audit --connect</code> <a href="../../guides/prove-the-copy-is-safe/#reviewing-policies-audit">warns about this</a>, and about a referencing job that doesn't wait at all.</p>
+<p><code>bauta jobs</code> shows which jobs are due and which are throttled.</p>
+<h2 id="single-runs-not-a-daemon">Single runs, not a daemon<a class="headerlink" href="#single-runs-not-a-daemon" title="Permanent link">#</a></h2>
+<p><code>bauta run</code> makes one pass and exits, because it should compose with whatever already schedules work — cron, a systemd timer, a Kubernetes CronJob, an Airflow task — rather than compete with it. Those give you alerting, backfill and calendar-aware schedules that <code>refresh</code> can't express; <code>refresh</code> is a throttle, not a schedule. <a href="../../guides/run-from-an-orchestrator/">Run from Airflow or Dagster</a> has working examples.</p>
+<p><code>refresh</code> still works across separate invocations, since it's checked against the durable memory backend. Running every 5 minutes with <code>refresh: 60</code> correctly skips 11 runs in 12:</p>
+<div class="highlight"><pre><span></span><code>*/5 * * * *  cd /srv/etl &amp;&amp; bauta run
+</code></pre></div>
+<p><code>--forever</code> keeps the process resident, for freshness below cron's one-minute floor or where there's no scheduler.</p>
+<p><strong>Stopping.</strong> On <code>SIGINT</code> or <code>SIGTERM</code>, a run starts no new jobs, lets the running ones finish, reports the rest as skipped, and exits with status 130. Killing jobs mid-load instead would leave a streaming cursor or a half-loaded table for the database to clean up. A container's grace period has to cover the longest job for this to finish; give long jobs a <code>timeoutSeconds</code> shorter than that grace period, so a hung one can't hold the shutdown. Between <code>--forever</code> cycles, a signal ends the pause within a second, however long <code>cycleSleepSeconds</code> is.</p>
+<p><strong>Overlapping runs.</strong> <code>run</code> holds a lock (<code>memory.yaml.run.lock</code>, beside the run state file; see <a href="../../guides/run-on-a-schedule/#run-state">run state</a> for run state in a table) for as long as it runs. A second invocation sharing that memory file exits with status 1 instead of running the same jobs at the same time, which a cron interval shorter than a slow run would otherwise cause. The operating system releases the lock if the process dies.</p>
+<p>A skipped job exits non-zero just as a failed one does: it didn't run, so its data isn't there.</p>
+<h2 id="workers">Workers<a class="headerlink" href="#workers" title="Permanent link">#</a></h2>
+<p>Each job runs in a process of its own, as soon as its predecessors have completed, one of the <code>workers</code> slots is free, and each connection it uses is below its <a href="../../reference/connections/"><code>maxConcurrentJobs</code></a> -- always 1 for DuckDB, which one process at a time may open. A job held back by a connection doesn't hold back the jobs behind it that use others. Starting a process costs a fraction of a second, which is noise next to a database load, and it lets each job be ended on its own:</p>
+<ul>
+<li><strong>A job that dies</strong> — killed for memory, crashed in a driver — fails, and only that job. Its dependents are skipped, and the run still ends; it doesn't wait for an outcome that will never come.</li>
+<li><strong>A job past its <code>timeoutSeconds</code></strong> is sent <code>SIGTERM</code>, then <code>SIGKILL</code> five seconds later if it hasn't exited. It fails with a <code>Timeout</code> error and its dependents are skipped. Its database connections close with it, so each server rolls back whatever the job hadn't committed; what it had committed stays, as for any failure part-way (see <a href="#how-a-data-job-moves-rows">how a data job moves rows</a>). The timeout covers the whole job, retries included.</li>
+</ul>
+<p>Within its process, a job masks on one thread, or on several with <a href="../../guides/make-it-faster/#masking-threads"><code>maskingThreads</code></a>; <code>auto</code> divides half the cores between the jobs running when each starts.</p>
+<p>Processes are started with Python's <code>spawn</code> method on every platform, so a program embedding the library needs an <code>if __name__ == '__main__':</code> guard; see <a href="../../reference/python-api/#running-jobs">library.md</a>.</p>
+<p><strong>Logs from jobs</strong> are sent back to the main process and written by its handlers, so they follow <code>--log</code>, <code>--log-format</code> and <code>--quiet</code> like everything else.</p>
+<p><strong>Ctrl-C</strong> reaches every process in the terminal's group; jobs ignore it and leave the decision to the main process, as described under stopping above.</p>
+<p><strong>A run killed outright</strong> — <code>kill -9</code>, an out-of-memory kill, a scheduler that doesn't wait — takes its jobs with it. Each job watches a pipe the run holds the other end of and never writes to, so it reads end-of-file the moment the run dies, and ends there: no unwinding, no further rows, and each server rolls back what it hadn't committed. It matters because the run lock is held by that process and dies with it, so the next <code>bauta run</code> can start immediately; a job left loading would have written over it.</p>
+<h2 id="partitions">Partitions<a class="headerlink" href="#partitions" title="Permanent link">#</a></h2>
+<p>A job reads its <code>sourceQuery</code> as one stream, on one connection, so a table of a few billion rows takes as long as one connection takes to read, mask and write it. <code>partitions</code> divides the job into slices that run at once:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">copyEvents</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">sourceQuery</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">select id, accountId, payload, createdAt from events</span>
+<span class="w">  </span><span class="nt">insertStrategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">swap</span>
+<span class="w">  </span><span class="nt">targetTableStage</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">events_stage</span>
+<span class="w">  </span><span class="nt">partitions</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">id</span>
+<span class="w">    </span><span class="nt">count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
+<span class="w">  </span><span class="c1"># ...</span>
+</code></pre></div>
+<p><strong>How the rows are divided.</strong> The job first asks for the column's smallest and largest value over the whole query, divides that range into <code>count</code> ranges, and reads each through the query wrapped in a derived table:</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="p">(</span><span class="k">select</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">accountId</span><span class="p">,</span><span class="w"> </span><span class="n">payload</span><span class="p">,</span><span class="w"> </span><span class="n">createdAt</span><span class="w"> </span><span class="k">from</span><span class="w"> </span><span class="n">events</span><span class="p">)</span><span class="w"> </span><span class="n">bauta_partition</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="ss">"id"</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">250000</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="ss">"id"</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">375000</span>
+</code></pre></div>
+<p>Ranges rather than a modulo: a range is read from an index on the column, so each slice reads only its own rows, where <code>MOD(id, 8) = 3</code> would have every slice scan the whole table — and has no one spelling, since Oracle has no <code>%</code> and SQL Server no <code>MOD</code>. The first slice has no lower bound and takes the rows where the column is null as well; the last has no upper bound. So every row is read exactly once, a row added beyond the bounds after they were read included. Slices are only as even as the values: a key with a large gap gives the slices around it fewer rows. There are fewer slices where the column has fewer integers between its bounds than <code>count</code>, and one, the query as it is, where the query returns no rows.</p>
+<p>The column must be among those the query returns, and numeric -- an integer key is the natural choice. A text or date column fails the job before its target is touched, naming the column's type, never a value; the bounds are data, so they are never logged either.</p>
+<p><strong>What it costs.</strong> The bounds query: next to nothing where the column is indexed and the query reads one table, and a whole extra pass where the database has to evaluate a join or an aggregate to answer it. And the derived table: SQL Server refuses one holding an <code>ORDER BY</code> (without <code>TOP</code>) or a <code>WITH</code> clause, so write a partitioned job's query without them there.</p>
+<p><strong>Each slice is a reader, masker and writer of its own</strong>, on threads of the job's process, with a source and a target connection of its own: a connection serves one thread, and SQLite and the MySQL drivers refuse any other. Every slice writes into the one table the job loads: its <code>targetTableStage</code> for <code>swap</code> and for <code>upsert</code> with a stage, and the live table for a stage-less <code>upsert</code>. Files and Iceberg targets refuse <code>partitions</code>, since what they publish is what one writer wrote.</p>
+<p><strong>All or nothing.</strong> The job succeeds only once every slice has loaded. The first slice to fail stops the others before their next write, and its error is the job's: nothing is swapped in or upserted from the stage, no watermark or run is recorded, and a <a href="#retries">retry</a> starts every slice over, as it starts any job over. A stage-less upsert keeps what its slices wrote before the failure, as it would unpartitioned. An incremental job's watermark is the highest any slice read.</p>
+<p><strong>Masks are the same.</strong> Every mask is derived from its value alone, so a partitioned copy is byte for byte the copy one stream makes. <code>shuffle</code>, which shuffles values within a chunk, is the exception, since a slice's chunks hold other rows; each slice numbers its chunks apart from every other's, so no two chunks of a job are shuffled alike.</p>
+<p><strong>No longer one snapshot.</strong> Each slice reads in a transaction of its own, so the copy is not one consistent view of the source, and a row whose partition column changes during the run can be read twice or not at all. Partition on a column that doesn't change, such as the primary key. Several connections upserting into one table at once can deadlock on SQL Server and MySQL; a deadlock fails the attempt as any database error does, and the job is retried, but a stage table avoids it.</p>
+<p><strong>Workers, connections and threads.</strong> A partitioned job is one job: one <code>workers</code> slot, one process, one <code>timeoutSeconds</code> for all its slices. It holds a place in each connection's <a href="../../reference/connections/"><code>maxConcurrentJobs</code></a> for every slice, though, since each slice opens a connection there; a job with more slices than a connection allows is refused by <code>validate</code>, and so is any partitioned job on DuckDB, which allows one. With <code>maskingThreads: 1</code> each slice masks on its own thread; above 1, the slices share the job's masking threads, except that where <code>maskingThreads: auto</code> gave the job no more threads than it has slices, each slice masks on its own thread instead (<a href="../../guides/make-it-faster/#partitions-auto">partitions: auto</a>). Masking in Python holds Python's interpreter lock, so slices overlap their reading and writing but not their masking; with the <a href="../../guides/make-it-faster/#the-native-masker">native masker</a> they overlap that too. See <a href="../../guides/make-it-faster/#partitions">partitions</a> for what it gains.</p>
+<h2 id="retries">Retries<a class="headerlink" href="#retries" title="Permanent link">#</a></h2>
+<p>A data job with <code>retries: 3</code> gets up to four attempts. The delay starts at <code>retryDelaySeconds</code> and doubles, so a database that's down isn't hit at a fixed interval while it recovers, up to five minutes between attempts.</p>
+<p>Retrying a whole job is safe because both strategies converge on a re-run: <code>swap</code> restages and re-swaps, and <code>upsert</code> reapplies existing rows as a no-op.</p>
+<p><strong>What isn't retried:</strong> configuration errors (including a target without a primary key), transform errors, unresolvable transformer references and masking errors. All of them come from this package and fail the same way every time; retrying would only delay the failure and bury the message under repeats. Everything a database driver raises <em>is</em> retried — transient and permanent database errors can't be told apart reliably across seven drivers, and a needless retry costs far less than losing a load to one dropped connection.</p>
+<p>Masked data jobs retry like any other data job. The watermark is read again on each attempt, so a <code>DatabaseMemory</code> that fails once is retried too.</p>
+<h2 id="structured-logs">Structured logs<a class="headerlink" href="#structured-logs" title="Permanent link">#</a></h2>
+<p><code>--log-format json</code> writes one object per line, for a log collector (for history and alerts, see <a href="../../guides/run-on-a-schedule/">operations.md</a>):</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"timestamp"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-09-16 01:00:12.514"</span><span class="p">,</span><span class="w"> </span><span class="nt">"level"</span><span class="p">:</span><span class="w"> </span><span class="s2">"INFO"</span><span class="p">,</span><span class="w"> </span><span class="nt">"logger"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bauta"</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Completed loadOrders (4200 row(s))"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"file"</span><span class="p">:</span><span class="w"> </span><span class="s2">"pipeline.py"</span><span class="p">,</span><span class="w"> </span><span class="nt">"line"</span><span class="p">:</span><span class="w"> </span><span class="mi">397</span><span class="p">,</span><span class="w"> </span><span class="nt">"job"</span><span class="p">:</span><span class="w"> </span><span class="s2">"loadOrders"</span><span class="p">,</span><span class="w"> </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"completed"</span><span class="p">,</span><span class="w"> </span><span class="nt">"rowCount"</span><span class="p">:</span><span class="w"> </span><span class="mi">4200</span><span class="p">,</span><span class="w"> </span><span class="nt">"attempts"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
+</code></pre></div>
+<p>The fields are the point. Completions, failures and skips carry <code>job</code> and <code>status</code>; completions add <code>rowCount</code> and <code>attempts</code>, failures <code>error</code> and <code>durationSeconds</code>, and each cycle's summary its totals. A collector can alert on <code>status="failed"</code> or chart rows per job without parsing messages. Logs go to stderr; <code>--log FILE</code> adds a file. <code>--quiet</code> leaves only errors on stderr, one line each without a traceback, and a job's failure once rather than again for its last attempt: under cron, that is a mail when a run fails and none when it succeeds, while <code>--log</code> still records everything.</p>
+<h2 id="masking">Masking<a class="headerlink" href="#masking" title="Permanent link">#</a></h2>
+<p>Masking is a stage of a data job, between transform and load, rather than a separate kind of job. That one decision does most of the work:</p>
+<ul>
+<li><strong>Unmasked rows never reach the target</strong>, not even its stage table. Masking happens in the ETL process's memory, a few chunks at a time.</li>
+<li><strong>It streams.</strong> Memory stays bounded by <code>chunkSize</code>, however large the table.</li>
+<li><strong>It gets retries, watermarks, <code>--dry-run</code> and structured logs</strong>, because data jobs already have them.</li>
+<li><strong>Masking in place is a <code>swap</code>.</strong> Rows load into a stage table, which is then swapped with the original, so a failed run leaves the original untouched.</li>
+</ul>
+<p>Every mask is derived from <code>HMAC(key, domain, value)</code>, keyed on the value itself rather than on the row's position. The same value therefore masks the same way in every table and on every run, which keeps joins working and makes runs reproducible. Keys are masked with a keyed permutation (a Feistel network), which can't produce collisions.</p>
+<p>A policy must list <strong>every column the query returns</strong>, or the job fails before writing anything. A new production column should stop the job, not flow into a non-production copy unmasked.</p>
+<p><a href="../../guides/mask-a-table/">masking.md</a> has the strategies, the key, the manifest, <code>audit</code>, <code>discover</code>, <code>subset</code>, <code>schema</code>, <code>synthesize</code> and <code>clear</code>.</p>
+<h2 id="moving-values-between-drivers">Moving values between drivers<a class="headerlink" href="#moving-values-between-drivers" title="Permanent link">#</a></h2>
+<p>Copying between different databases means one driver's values have to be accepted by another. Two connection settings make that work, and both apply to every job:</p>
+<ul>
+<li><strong>Oracle.</strong> CLOB and BLOB columns are fetched as plain text and bytes rather than as LOB handles, which no other driver can load. The session's date formats are set to ISO 8601, so text such as <code>'2026-01-02 03:04:05'</code> loads into a <code>DATE</code> or <code>TIMESTAMP</code> column; that includes SQLite's dates and a <code>watermarkInitial</code> compared against a date column. This changes Oracle's implicit conversions between dates and text in both directions, so a <code>sourceQuery</code> that relied on the default <code>DD-MON-RR</code> format, or that calls <code>TO_CHAR</code> on a date without a format, now sees ISO text. Dates that arrive as datetime objects are unaffected.</li>
+<li><strong>DuckDB.</strong> Each session's time zone is UTC. DuckDB's default is the machine's own, which it converts through when a time-zone-aware value meets a column without one, so the same job stored different times on machines in different zones.</li>
+<li><strong>Lists, dictionaries, UUIDs and times.</strong> A PostgreSQL array, a JSON document or DuckDB's LIST, STRUCT and MAP arrive as lists and dictionaries, which SQLite's, MySQL's, Oracle's and SQL Server's drivers can't bind; they are written as JSON text, which is what <code>schema</code> maps them to. PostgreSQL writes a list as JSON into a <code>json</code> or <code>jsonb</code> column and as an array elsewhere. A UUID and a time of day are written as text for the drivers that refuse them.</li>
+<li><strong>SQLite.</strong> <code>Decimal</code> values, which other drivers return for <code>NUMERIC</code> columns, are written as their exact text — and kept that way only by a column SQLite gives text affinity, which is what <code>schema</code> creates for a decimal. A column declared <code>DECIMAL(38,10)</code> has <em>numeric</em> affinity, and SQLite converts the text to an integer or a float as it stores it: <code>123456789012345678.1234567890</code> comes back as <code>123456789012345680</code>. Dates, timestamps and UUIDs are stored as ISO text, replacing Python's built-in converters, which are deprecated since 3.12.</li>
+</ul>
+<p><code>tests/integration/test_integration_schema.py</code> copies the same rows between every pair of the seven databases to keep this true.</p>
+<h2 id="how-names-are-written">How names are written<a class="headerlink" href="#how-names-are-written" title="Permanent link">#</a></h2>
+<p>A table name lives in two places, and they want opposite things. A statement needs it quoted, or a table called <code>group</code> is a syntax error. A catalog lookup — the primary key an upsert matches on, the columns a load fills, whether the table is there at all — binds it as a <em>value</em>, and a catalog holds names bare, so quoting one hides the table completely.</p>
+<p>So a name given to bauta is read before it is used. It is split on the dot that separates schema from table, ignoring dots inside quotes; each part is then unquoted, or, if it was written plainly, folded the way that database folds an unquoted name — upper case on Oracle, lower case on PostgreSQL, unchanged elsewhere. That spelling is what a lookup binds. To build a statement, it is quoted again in that database's own style. A name no database would accept unquoted, such as one with a space, is taken as it is written, since it has no unquoted spelling to fold.</p>
+<p>Two things follow. Writing <code>orders</code> means whatever the database means by <code>orders</code>, on all seven. Writing <code>"Orders"</code> means that exact table, and is the only way to name one whose case the database would otherwise fold.</p>
+<p>A name longer than the target keeps is refused rather than used. Every database but SQLite and DuckDB, which have none, cuts one to its limit — 63 bytes on PostgreSQL, 64 characters on MySQL and MariaDB, 128 on Oracle and SQL Server — and none of them says so, so two names alike up to the limit are one table: two jobs would load over each other, and the second swap would rename over the first's rows.</p>
+<p>The same reading builds the temporary name a swap renames through, so the suffix goes inside the quotes — <code>[group_tmp]</code>, never <code>[group]_tmp</code>, which SQL Server's parser refuses. <code>bauta schema</code> quotes the tables it creates as it already quoted their columns, and <code>subset</code> and <code>discover</code> quote the names they write into the jobs and queries they generate.</p>
+<h2 id="files-as-a-target">Files as a target<a class="headerlink" href="#files-as-a-target" title="Permanent link">#</a></h2>
+<p>A <code>files</code> connection is a directory, on this machine or in S3, Google Cloud Storage or Azure Blob Storage, that jobs write tables of files into -- Parquet, CSV or JSON Lines -- for a lake that Athena, Snowflake or Databricks reads, or a handoff. The pipeline is the same as for a database -- streamed, transformed, masked, a chunk at a time -- and only the load differs.</p>
+<h3 id="what-a-run-leaves-where">What a run leaves where<a class="headerlink" href="#what-a-run-leaves-where" title="Permanent link">#</a></h3>
+<div class="highlight"><pre><span></span><code>&lt;root&gt;/
+  _bauta_staging/&lt;run&gt;/                    a run's parts while it writes; gone when it ends
+  crm/customer_events/                     append: every run's parts, side by side
+    part-20260926T120000Z-a1b2c3-00001.parquet
+    part-20260926T130000Z-d4e5f6-00001.parquet
+  crm/customers/                           overwrite: one directory per complete snapshot
+    snapshot=20260926T120000Z-a1b2c3/
+      _SUCCESS                             what the run wrote: rows, files, column types
+      part-20260926T120000Z-a1b2c3-00001.parquet
+      part-20260926T120000Z-a1b2c3-00002.parquet
+  exports/customers.parquet                singleFile: one file, replaced whole
+</code></pre></div>
+<p>A part's name ends in its format's extension: <code>.parquet</code>, <code>.csv</code> or <code>.ndjson</code>, and <code>.gz</code> after a text format's when it is gzipped, which is how Athena and Spark tell.</p>
+<p>A run's name begins with when it started, in UTC, so names sort by time, and ends in six random characters so two runs in one second differ.</p>
+<p><strong>Nothing is visible until the job succeeds.</strong> Parts are written under <code>_bauta_staging</code>, outside every table's directory; an engine discovering the whole tree -- Spark, Hive, pyarrow -- skips it too, as it skips any name beginning with <code>_</code> or <code>.</code>, which is why a table's own path may not begin with either. <code>_SUCCESS</code> is skipped the same way, so it is never read as data. Once every row is written they are moved into place, and a failed job's staging is removed. A failure leaves the table as it was, and a retry starts over under a new run name. A process killed outright leaves its staging directory behind, out of sight; delete it when no run is going.</p>
+<p>Locally, moving is a rename, so a reader opens a part whole or not at all. An <code>append</code> that fails <em>while</em> moving its parts in has published some of them; see <a href="#appends-and-duplicate-rows">duplicates</a>.</p>
+<p><strong>In a cloud</strong> the same holds, by other means. An object store has no rename: a part is moved by copying it within the bucket and deleting the staged one, and an object appears only whole, once its copy completes. pyarrow does that itself on S3 and GCS; on Azure without a hierarchical namespace it can't move at all, so bauta copies and deletes, and on an account with one (ADLS Gen2) a move is a rename, as on disk. The copy bounds a part's size where it is one request: 5 GiB on S3, and 256 MiB on Azure with pyarrow before 19, which bounds <code>fileSize</code> and a <code>singleFile</code> table; GCS, and Azure from pyarrow 19, copy any size.</p>
+<p>Staging matters more in a cloud than on disk: an upload pyarrow is made to stop is completed rather than abandoned, in all three -- it has no way to abort one -- so a part written in its final place would appear, cut short, whenever its job failed. Written in staging, the cut-short part is deleted with it.</p>
+<p>Object stores have no directories, and nothing bauta does creates the empty objects some tools write to stand for them, which readers may list as files -- with one exception: pyarrow, deleting the last object under a prefix, may leave one in its place. Only staging is emptied that way, so the one it leaves is <code>&lt;root&gt;/_bauta_staging/</code>, outside every table. For the same reason, bauta finds a table's snapshots from the files under it rather than asking for directories.</p>
+<p><strong>Parts and row groups.</strong> A job holds rows until they reach <code>rowGroupSize</code> in memory, then writes them as one row group; a part is closed when it reaches <code>fileSize</code> on disk and the next begun. Memory stays at about one row group plus the pipeline's chunks, however large the table. Row groups are what engines skip by, using the minimum and maximum each records for every column, so a job copying in a useful order -- by date, say -- lets a reader's filter skip most of the table.</p>
+<h3 id="reading-an-overwrite-jobs-table">Reading an overwrite job's table<a class="headerlink" href="#reading-an-overwrite-jobs-table" title="Permanent link">#</a></h3>
+<p>Each run of an <code>overwrite</code> job publishes a complete snapshot of the table beside the previous ones, writes its <code>_SUCCESS</code> last, and then removes all but the newest <code>keepSnapshots</code>, along with any older snapshot a crashed run left without a <code>_SUCCESS</code>. The table is never half-replaced; the price is that a reader must choose a snapshot. Pointed at the table's directory as a whole, a reader sees every snapshot kept, each row once per snapshot.</p>
+<ul>
+<li><strong>Athena, Spark, Databricks, Trino:</strong> declare <code>snapshot</code> as a partition column (it is a Hive-style <code>name=value</code> directory) and read <code>where snapshot = (select max(snapshot) ...)</code>, or keep a view that does.</li>
+<li><strong>Snowflake:</strong> an external table over the table's directory with <code>snapshot</code> derived from the file path, filtered the same way; or load the newest snapshot's path with <code>COPY INTO</code>.</li>
+<li><strong>Anything reading one file:</strong> <code>singleFile: true</code>, where the table is small enough to be one file. It is replaced by a rename, or on S3 a copy that replaces the object as it completes, so a reader sees the old file or the new one.</li>
+</ul>
+<p><code>keepSnapshots: 1</code> removes the previous snapshot as soon as the new one is complete, and a query still reading it then fails; the default of 2 leaves it for the next run to remove.</p>
+<p>Atomic replacement of a table read in place, and upserts, are what table formats such as Iceberg and Delta Lake are for; plain Parquet has neither.</p>
+<h3 id="appends-and-duplicate-rows">Appends and duplicate rows<a class="headerlink" href="#appends-and-duplicate-rows" title="Permanent link">#</a></h3>
+<p>An <code>append</code> job adds new parts each run and never rewrites old ones, so nothing stops a row from arriving twice:</p>
+<ul>
+<li>the <a href="#why-the-lookback-window">lookback window</a> of an incremental job re-reads its overlap every run, on purpose;</li>
+<li>a job that fails after moving some of its parts in, or dies between publishing and recording its watermark, is run again from the old watermark.</li>
+</ul>
+<p>Against a database, <code>upsert</code> makes both harmless. In an append-only table, readers take the latest version of each key, by the watermark column:</p>
+<div class="highlight"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">from</span><span class="w"> </span><span class="p">(</span>
+<span class="w">  </span><span class="k">select</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">row_number</span><span class="p">()</span><span class="w"> </span><span class="n">over</span><span class="w"> </span><span class="p">(</span><span class="n">partition</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="k">order</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="n">updatedAt</span><span class="w"> </span><span class="k">desc</span><span class="p">)</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">newest</span>
+<span class="w">  </span><span class="k">from</span><span class="w"> </span><span class="n">customer_events</span>
+<span class="p">)</span><span class="w"> </span><span class="k">where</span><span class="w"> </span><span class="n">newest</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+</code></pre></div>
+<p>Hard deletes are as invisible as in any incremental load.</p>
+<h3 id="column-types">Column types<a class="headerlink" href="#column-types" title="Permanent link">#</a></h3>
+<p>A Parquet file has one schema, and a table's parts should share it, so each column's type is fixed before the first row group is written and never changes:</p>
+<ul>
+<li><strong>declared</strong> in <code>targetColumnTypes</code>, or else</li>
+<li><strong>settled by the first chunk that holds a value in the column</strong>, from the Python values the driver returned, after transforms and masking:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Values</th>
+<th>Written as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>int</code></td>
+<td><code>int64</code>, or <code>decimal(38,0)</code> where one is past 64 bits</td>
+</tr>
+<tr>
+<td><code>float</code>, or <code>float</code> with <code>int</code></td>
+<td><code>float64</code></td>
+</tr>
+<tr>
+<td><code>Decimal</code>, or <code>Decimal</code> with <code>int</code></td>
+<td><code>decimal(p,s)</code> as the driver reports it (PostgreSQL, Oracle, DuckDB), else <code>decimal(38,s)</code>, <code>s</code> the larger of 10 and the widest scale in that chunk</td>
+</tr>
+<tr>
+<td><code>str</code>, or text with numbers (SQLite)</td>
+<td><code>string</code></td>
+</tr>
+<tr>
+<td><code>bytes</code></td>
+<td><code>binary</code></td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>date</code></td>
+<td><code>date</code></td>
+</tr>
+<tr>
+<td><code>datetime</code> without a time zone</td>
+<td><code>timestamp</code>, the wall-clock value as the source held it</td>
+</tr>
+<tr>
+<td><code>datetime</code> with a time zone</td>
+<td><code>timestamptz</code>, converted to UTC</td>
+</tr>
+<tr>
+<td><code>time</code></td>
+<td><code>time</code></td>
+</tr>
+<tr>
+<td>a JSON document or list, a UUID, an interval</td>
+<td><code>string</code>: JSON text, the UUID's text, <code>HH:MM:SS[.ffffff]</code></td>
+</tr>
+</tbody>
+</table>
+<p>A value that doesn't fit its column's type fails the job, naming the column and the type to declare, never the value. That includes a float in an integer column -- which pyarrow on its own would write as its truncation -- a decimal with more places than its scale, and a time with a time zone in a column without one. A declared <code>decimal</code> takes floats, by their shortest text (<code>0.1</code> is <code>0.1</code>), and a declared <code>string</code> takes numbers and dates as their text.</p>
+<p>A column with no value in the rows before the first row group is written has nothing to be settled by. It is written as <code>string</code>, with a warning naming it; a later value there that isn't text fails the job, rather than becoming its text unseen. Declare such a column's type if it holds anything else.</p>
+<p><code>targetColumnTypes</code> names columns as the file does -- after <code>targetColumns</code> -- matched ignoring case, and naming one the table doesn't have is an error.</p>
+<h3 id="formats">Formats<a class="headerlink" href="#formats" title="Permanent link">#</a></h3>
+<p><code>format</code> is a connection's: every table it holds is written one way. Parquet keeps each column's type; CSV and JSON Lines are text, so every type is spelled one way in both, and a reader told the column types reads it back exact:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>CSV</th>
+<th>JSON Lines</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>null</td>
+<td>an empty, unquoted field</td>
+<td><code>null</code></td>
+</tr>
+<tr>
+<td>empty text</td>
+<td><code>""</code>, quoted, so it isn't read as null</td>
+<td><code>""</code></td>
+</tr>
+<tr>
+<td>decimal</td>
+<td>its digits, to the column's scale: <code>12.30</code></td>
+<td>a string, <code>"12.30"</code>: a JSON number is a float to most readers, and money would lose cents</td>
+</tr>
+<tr>
+<td>float</td>
+<td><code>1.5</code>, <code>nan</code>, <code>inf</code></td>
+<td><code>1.5</code>; JSON has no NaN or infinity, so <code>"NaN"</code>, <code>"Infinity"</code>, <code>"-Infinity"</code>, as BigQuery and Snowflake read them</td>
+</tr>
+<tr>
+<td>timestamp</td>
+<td><code>2026-01-02 03:04:05.000006</code></td>
+<td>the same, as a string</td>
+</tr>
+<tr>
+<td>timestamptz</td>
+<td><code>2026-01-02 03:04:05.000006Z</code>, in UTC</td>
+<td>the same, as a string</td>
+</tr>
+<tr>
+<td>date, time</td>
+<td><code>2026-01-02</code>, <code>03:04:05.000000</code></td>
+<td>the same, as strings</td>
+</tr>
+<tr>
+<td>bool</td>
+<td><code>true</code>, <code>false</code></td>
+<td><code>true</code>, <code>false</code></td>
+</tr>
+<tr>
+<td>binary</td>
+<td>base64</td>
+<td>base64, as a string</td>
+</tr>
+<tr>
+<td>a JSON document or list</td>
+<td>its JSON text</td>
+<td>nested, as itself</td>
+</tr>
+</tbody>
+</table>
+<p>A timestamp has a space where ISO 8601 has a <code>T</code>: it is what Hive, Athena and Spark read as a timestamp in text, and Snowflake and BigQuery read either.</p>
+<p>CSV quotes every text value, doubles a quote within one, and writes a header in every part, so each part reads on its own. JSON Lines writes every column in every line, in the table's order.</p>
+<p>A JSON document is nested only in a column that has held one -- a dictionary or list from the driver, such as PostgreSQL's <code>jsonb</code> -- and only where its text is a JSON object or array; anything else there, and every other text column, is written as a string.</p>
+<h2 id="iceberg-tables">Iceberg tables<a class="headerlink" href="#iceberg-tables" title="Permanent link">#</a></h2>
+<p>An <code>iceberg</code> connection writes Iceberg tables through a catalog, with pyiceberg: no JVM and no Spark. The rows go through the same pipeline and the same <a href="#column-types">column types</a> as a files connection; only the commit differs.</p>
+<h3 id="one-commit-a-run">One commit a run<a class="headerlink" href="#one-commit-a-run" title="Permanent link">#</a></h3>
+<p><code>append</code> and <code>overwrite</code> write the run's Parquet parts straight into the table's data directory, a row group at a time, with the writer a files connection uses, and register them all in one commit at the end -- <code>overwrite</code> deleting the table's rows in that same commit. A reader sees the run whole or not at all, and never the table empty between the delete and the add. A table that isn't there is created by that commit, so a failed first run leaves no table either.</p>
+<p>Nothing needs staging, as files do: a data file no commit names is never read. A run that fails deletes the parts it wrote on its way out. A process killed outright leaves them: never read, but taking room until a tool that removes a table's orphan files -- Spark's <code>remove_orphan_files</code>, a catalog's maintenance -- deletes them.</p>
+<p><code>upsert</code> is the exception. pyiceberg merges a table held in memory, so a run merges -- and commits -- a row group at a time, keeping the last row of a key that repeats within one. A run that fails part-way leaves the row groups it merged, as a stage-less upsert into a database does; the next run, from the same watermark, merges them again, harmlessly.</p>
+<h3 id="the-tables-schema">The table's schema<a class="headerlink" href="#the-tables-schema" title="Permanent link">#</a></h3>
+<p>A table that exists decides how each column is written: its own types, spelled as it spells them, whatever the query's values would settle. A declared <code>targetColumnTypes</code> it disagrees with, a column it requires that the query doesn't return, and a column the query returns that it lacks are each refused before a row is written -- the last unless the connection says <code>evolveSchema</code>, which adds it.</p>
+<p>A table bauta creates takes the columns' settled types, with the integers Iceberg has no type for written as the nearest it has: <code>int8</code> and <code>int16</code> as <code>int</code>, <code>uint32</code> as <code>long</code>, <code>uint64</code> as <code>decimal(20,0)</code>. Its identifier fields are <code>targetKey</code>, and a key column can't be null. It deletes its oldest metadata files as it commits (<code>write.metadata.delete-after-commit.enabled</code>), which pyiceberg otherwise keeps forever.</p>
+<h3 id="old-snapshots">Old snapshots<a class="headerlink" href="#old-snapshots" title="Permanent link">#</a></h3>
+<p>After each run the table keeps its newest <code>keepSnapshots</code> snapshots and expires the rest -- and bauta deletes the data files only the expired ones referenced, which pyiceberg leaves behind. Without that, a row deleted or overwritten would stay readable in them: someone's data a request asked to remove, or a value masked under a key since rotated. A query still reading an expired snapshot fails, so <code>keepSnapshots</code> is also how long a slow reader has.</p>
+<h3 id="catalogs-and-storage">Catalogs and storage<a class="headerlink" href="#catalogs-and-storage" title="Permanent link">#</a></h3>
+<p>Glue, REST and SQL catalogs are loaded with pyiceberg's own; the connection's cloud settings reach them under pyiceberg's names, and <code>properties</code> pass anything else through. Files are written with pyarrow's filesystems, as a files connection's are, for every cloud: pyiceberg would otherwise reach for fsspec's for Azure, which needs another package, and hands pyarrow an Azure path it can't read -- <code>bauta.lake.iceberg.FileIO</code> corrects that one spelling. An <code>az://</code> warehouse is given to pyiceberg as the <code>abfss://</code> URL it stands for.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../../reference/python-api/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Python API">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Python API
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../security/" class="md-footer__link md-footer__link--next" aria-label="Next: Security model">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Security model
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      MIT licensed
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ribeiro11075/bauta" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://pypi.org/project/bauta/" target="_blank" rel="noopener" title="pypi.org" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.8 200.5c-7.7-30.9-22.3-54.2-53.4-54.2h-40.1v47.4c0 36.8-31.2 67.8-66.8 67.8H172.7c-29.2 0-53.4 25-53.4 54.3v101.8c0 29 25.2 46 53.4 54.3 33.8 9.9 66.3 11.7 106.8 0 26.9-7.8 53.4-23.5 53.4-54.3v-40.7H226.2v-13.6h160.2c31.1 0 42.6-21.7 53.4-54.2 11.2-33.5 10.7-65.7 0-108.6M286.2 444.7a20.4 20.4 0 1 1 0-40.7 20.4 20.4 0 1 1 0 40.7M167.8 248.1h106.8c29.7 0 53.4-24.5 53.4-54.3V91.9c0-29-24.4-50.7-53.4-55.6-35.8-5.9-74.7-5.6-106.8.1-45.2 8-53.4 24.7-53.4 55.6v40.7h106.9v13.6h-147c-31.1 0-58.3 18.7-66.8 54.2-9.8 40.7-10.2 66.1 0 108.6 7.6 31.6 25.7 54.2 56.8 54.2H101v-48.8c0-35.3 30.5-66.4 66.8-66.4m-6.6-183.4a20.4 20.4 0 1 1 0 40.8 20.4 20.4 0 1 1 0-40.8"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.indexes", "navigation.path", "navigation.footer", "navigation.top", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
