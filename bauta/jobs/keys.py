@@ -1,5 +1,6 @@
-"""The checks made before a run starts that a masked upsert job's key hasn't
-changed under it, which would leave two keys' masks in one target.
+"""The checks made before a run starts that the key of a masked job that adds
+to its target -- an upsert, or an append to files or Iceberg -- hasn't changed
+under it, which would leave two keys' masks in one target.
 """
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, InsertStrategy
 from ..database import Database
 from ..log import LOGGER_NAME
+from ..log.scrubbing import describeError
 from ..masking import changesValues, keyFingerprint, maskingImplementation, policyFor, splitMaskingIdentity
 from .memory import MemoryBackend
 
@@ -17,6 +19,11 @@ logger = logging.getLogger(LOGGER_NAME)
 
 # How many job names a message lists for one change before it counts the rest.
 LISTED_JOBS = 10
+
+# The insert strategies that keep a target's rows from one run to the next, so
+# a new key's masks land beside the old one's. swap and overwrite replace the
+# whole target, and need no check.
+ADDING_STRATEGIES = frozenset({InsertStrategy.UPSERT, InsertStrategy.APPEND})
 
 
 def _describeChanges(changes: Sequence[Tuple[str, str, str]]) -> str:
@@ -73,7 +80,7 @@ def _refuseAcceptedKeyChangeThatWouldDuplicateRows(changed: Sequence[Tuple[str, 
             with Database(connectionSettings=settings) as database:
                 primaryKeyColumns = database.getPrimaryColumnNames(table=jobConfig.targetTableFinal)
         except Exception as error:
-            logger.warning('{}: could not check whether the masking key change is safe to accept -- {}'.format(name, error))
+            logger.warning('{}: could not check whether the masking key change is safe to accept -- {}'.format(name, describeError(error)))
             continue
 
         masked = _maskedPrimaryKeyColumns(jobConfig, primaryKeyColumns)
@@ -90,14 +97,15 @@ def _refuseAcceptedKeyChangeThatWouldDuplicateRows(changed: Sequence[Tuple[str, 
 
 def _requireUnchangedMaskingKeys(jobsFile: DataJobsFile, memory: MemoryBackend, acceptKeyChange: bool,
                                  connectionConfiguration: Optional[Mapping[str, ConnectionConfig]] = None) -> None:
-    """Refuses to run an upsert job whose masking key changed since it last
-    completed: its target's existing rows would no longer join with new ones.
-    A swap job replaces its whole target, so it isn't checked.
+    """Refuses to run an upsert or append job whose masking key changed since
+    it last completed: its target's existing rows would no longer join with new
+    ones. A swap or overwrite job replaces its whole target, so it isn't checked.
 
-    `--accept-key-change` acknowledges that for jobs where re-loading under a
-    new key merely rewrites the rows. Where the policy masks the target's
-    primary key it does not, and the change is refused whatever the flag says;
-    see _refuseAcceptedKeyChangeThatWouldDuplicateRows.
+    `--accept-key-change` acknowledges that for upsert jobs where re-loading
+    under a new key merely rewrites the rows, and for append jobs whose old
+    files were removed -- `bauta clear` empties only database tables. Where an
+    upsert's policy masks the target's primary key, the change is refused
+    whatever the flag says; see _refuseAcceptedKeyChangeThatWouldDuplicateRows.
     """
 
     recorded = memory.readKeyFingerprints()
@@ -106,7 +114,7 @@ def _requireUnchangedMaskingKeys(jobsFile: DataJobsFile, memory: MemoryBackend, 
     reimplemented: List[Tuple[str, str, str]] = []
 
     for name, job in sorted(jobsFile.jobs.items()):
-        if not job.active or job.masking is None or job.insertStrategy != InsertStrategy.UPSERT:
+        if not job.active or job.masking is None or job.insertStrategy not in ADDING_STRATEGIES:
             continue
 
         if recorded.get(name) is None:
@@ -134,12 +142,25 @@ def _requireUnchangedMaskingKeys(jobsFile: DataJobsFile, memory: MemoryBackend, 
 
     if acceptKeyChange:
         if connectionConfiguration is not None:
-            _refuseAcceptedKeyChangeThatWouldDuplicateRows(changedJobs, connectionConfiguration)
+            upsertJobs = [(name, job) for name, job in changedJobs if job.insertStrategy == InsertStrategy.UPSERT]
+            _refuseAcceptedKeyChangeThatWouldDuplicateRows(upsertJobs, connectionConfiguration)
         logger.warning('Masking key changed for {}; continuing, as acknowledged'.format(_describeChanges(changed)))
         return
 
-    raise ConfigurationError(
-        'the masking key changed since the last run of upsert job(s) {}. Their targets still hold rows masked under the old key, '
-        'which would no longer match rows masked under the new one. Empty those targets with `bauta clear`, which also forgets '
-        'the old key, and run again. Where re-loading under the new key merely rewrites the rows -- the target\'s primary key is '
-        'not masked -- --accept-key-change runs them as they are instead'.format(_describeChanges(changed)))
+    strategies = {name: job.insertStrategy for name, job in changedJobs}
+    problems = []
+    upserts = [change for change in changed if strategies[change[0]] == InsertStrategy.UPSERT]
+    appends = [change for change in changed if strategies[change[0]] == InsertStrategy.APPEND]
+    if upserts:
+        problems.append(
+            'upsert job(s) {}: their targets still hold rows masked under the old key, which would no longer match rows masked under '
+            'the new one. Empty those targets with `bauta clear`, which also forgets the old key, and run again. Where re-loading under '
+            'the new key merely rewrites the rows -- the target\'s primary key is not masked -- --accept-key-change runs them as they '
+            'are instead'.format(_describeChanges(upserts)))
+    if appends:
+        problems.append(
+            'append job(s) {}: the files or Iceberg table they add to still hold rows masked under the old key, and the new rows would '
+            'not join with them. Remove what those jobs wrote -- `bauta clear` empties only database tables -- and run again with '
+            '--accept-key-change, which records the new key'.format(_describeChanges(appends)))
+
+    raise ConfigurationError('the masking key changed since the last run of {}'.format('; and of '.join(problems)))

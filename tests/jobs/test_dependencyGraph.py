@@ -249,3 +249,45 @@ def test_a_connection_limit_frees_its_place_when_a_job_fails():
     graph.finish(JobOutcome(job='a', status=JobStatus.FAILED, error='RuntimeError: boom'))
 
     assert graph.takeReady() == ['b']
+
+
+def _partitioned(source: str, target: str, count: int):
+    from tests.jobConfigs import dataJob
+
+    return dataJob(sourceConnection=source, targetConnection=target, partitions={'column': 'id', 'count': count})
+
+
+def test_a_partitioned_job_takes_a_place_for_each_partition():
+    graph = DependencyGraph(jobs={'a': _partitioned('prod', 'warehouse', 3), 'b': _using('prod', 'warehouse')},
+                            connectionLimits={'prod': 3})
+
+    assert graph.takeReady() == ['a']
+
+    graph.finish(JobOutcome(job='a', status=JobStatus.COMPLETED))
+
+    assert graph.takeReady() == ['b']
+
+
+def test_a_partitioned_job_waits_until_its_partitions_fit():
+    graph = DependencyGraph(jobs={'a': _using('prod', 'warehouse'), 'b': _partitioned('prod', 'warehouse', 2)},
+                            connectionLimits={'prod': 2})
+
+    assert graph.takeReady() == ['a']
+
+    graph.finish(JobOutcome(job='a', status=JobStatus.COMPLETED))
+
+    assert graph.takeReady() == ['b']
+
+
+def test_a_partitioned_job_larger_than_its_connections_limit_still_starts_once_the_connection_is_free():
+    """Validation refuses it; a caller that skips validation gets a job that
+    runs alone on the connection, rather than a run that waits for ever.
+    """
+    graph = DependencyGraph(jobs={'a': _using('prod', 'warehouse'), 'b': _partitioned('prod', 'warehouse', 4)},
+                            connectionLimits={'prod': 2})
+
+    assert graph.takeReady() == ['a']
+
+    graph.finish(JobOutcome(job='a', status=JobStatus.COMPLETED))
+
+    assert graph.takeReady() == ['b']

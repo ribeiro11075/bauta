@@ -22,8 +22,9 @@ import unicodedata
 import uuid
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Type, Union
 
-from .fakeData import COMPANY_WORDS, DEFAULT_LOCALE, LOCALES, Locale
-from .core import MASK_CACHE_SIZE, MAXIMUM_KEY_LENGTH, KeyedHash, MaskingError, Strategy, canonical
+from .fakeData import (COMPANY_WORDS, DEFAULT_LOCALE, FEMALE_NAMES, LARGE_DEFAULT_LOCALE, LARGE_LOCALES, LOCALES, MALE_NAMES, LargeLocale,
+                       Locale)
+from .core import MASK_CACHE_SIZE, MAXIMUM_KEY_LENGTH, NORMALIZE_STEPS, KeyedHash, MaskingError, Strategy, canonical
 
 
 def _asciiDigits(text: str) -> str:
@@ -140,6 +141,19 @@ def _choiceOption(*choices: str) -> Callable[[Any], str]:
     return check
 
 
+def _normalizeOption(*allowed: str) -> Callable[[Any], List[str]]:
+    """`normalize`: a list of the steps a strategy takes, kept in the order
+    they are applied (NORMALIZE_STEPS), whatever order they are written in.
+    """
+
+    def check(value: Any) -> List[str]:
+        if not isinstance(value, list) or not value or any(step not in allowed for step in value):
+            raise ValueError('must be a non-empty list of: {}'.format(', '.join(allowed)))
+        return [step for step in NORMALIZE_STEPS if step in value]
+
+    return check
+
+
 def _typeName(value: Any) -> str:
 
     return type(value).__name__
@@ -217,7 +231,8 @@ class HashStrategy(Strategy):
     NAME = 'hash'
     NATIVE = 'hash'
     CACHEABLE = True
-    OPTIONS = {'length': _integerOption(12, 64), 'prefix': lambda value: '' if value is None else str(value)}
+    OPTIONS = {'length': _integerOption(12, 64), 'prefix': lambda value: '' if value is None else str(value),
+               'normalize': _normalizeOption('strip', 'lower')}
 
     def mask(self, value: Any) -> Any:
 
@@ -455,6 +470,97 @@ class NumberStrategy(Strategy):
             return self._moved(value, masked, step, message)
 
 
+# Metres in a degree of latitude, and of longitude at the equator; a degree of
+# longitude spans this times the cosine of its latitude.
+_METRES_PER_DEGREE = 111320.0
+
+
+class CoordinateStrategy(Strategy):
+    """A latitude or a longitude moved along its axis by a keyed distance
+    between half of `meters` and all of it, in a keyed direction, keyed on the
+    value: every point is moved by a distance on the ground, wherever it is,
+    where `number`'s variance moves a point near the equator or the prime
+    meridian by next to nothing.
+
+    A degree of longitude spans fewer metres away from the equator, so a
+    longitude is moved by `meters` there unless `latitudeColumn` names the
+    row's latitude, which converts the distance at that latitude. A latitude
+    that would pass a pole moves the other way; a longitude wraps at 180.
+    Floats come back as floats, and a Decimal at its own scale, moved at least
+    one step.
+    """
+
+    NAME = 'coordinate'
+    OPTIONS = {'axis': _choiceOption('latitude', 'longitude'), 'meters': _integerOption(1, 1000000), 'latitudeColumn': _textOption}
+    REQUIRED = ('axis',)
+    CACHEABLE = True
+    CONTEXT_OPTION = 'latitudeColumn'
+
+    @classmethod
+    def checkOptions(cls, options: Dict[str, Any]) -> None:
+
+        if 'latitudeColumn' in options and options['axis'] != 'longitude':
+            raise ValueError('strategy "coordinate" takes latitudeColumn for a longitude only')
+
+
+    def _degrees(self, message: bytes, latitude: Any) -> float:
+        """The keyed move, in degrees along the axis, signed."""
+
+        meters = self.options.get('meters', 1000) * (0.5 + 0.5 * self.keyedHash.unit(message, b'distance'))
+        direction = 1 if self.keyedHash.unit(message, b'direction') < 0.5 else -1
+        perDegree = _METRES_PER_DEGREE
+        if latitude is not None and self.options['axis'] == 'longitude':
+            # Near a pole a degree of longitude spans almost nothing; a
+            # floor keeps the move from becoming the whole circle.
+            perDegree *= max(0.01, math.cos(math.radians(float(latitude))))
+
+        return direction * meters / perDegree
+
+
+    def _moved(self, value: float, degrees: float) -> float:
+
+        moved = value + degrees
+        if self.options['axis'] == 'latitude':
+            if abs(value) <= 90 < abs(moved):
+                moved = value - degrees
+            return moved
+
+        return (moved + 180) % 360 - 180 if -180 <= value <= 180 else moved
+
+
+    def _move(self, value: Any, latitude: Any) -> Any:
+
+        if isinstance(value, bool) or not isinstance(value, (int, float, decimal.Decimal)):
+            raise MaskingError('the coordinate strategy needs a number, got {}'.format(_typeName(value)))
+        if isinstance(latitude, bool) or not isinstance(latitude, (int, float, decimal.Decimal)) or not math.isfinite(latitude):
+            latitude = None
+
+        if isinstance(value, decimal.Decimal):
+            if not value.is_finite():
+                return value
+            degrees = self._degrees(canonical(value), latitude)
+            step = decimal.Decimal(1).scaleb(min(0, int(value.as_tuple().exponent)))
+            moved = decimal.Decimal(repr(self._moved(float(value), degrees))).quantize(step, rounding=decimal.ROUND_HALF_EVEN)
+            if moved == value:
+                moved = value + step if degrees > 0 else value - step
+            return moved
+
+        if not math.isfinite(value):
+            return value
+
+        return self._moved(float(value), self._degrees(canonical(value), latitude))
+
+
+    def mask(self, value: Any) -> Any:
+
+        return self._move(value, None)
+
+
+    def maskColumnWith(self, values: Sequence[Any], context: Sequence[Any], chunkIndex: int) -> List[Any]:
+
+        return [None if value is None else self._move(value, latitude) for value, latitude in zip(values, context)]
+
+
 _CALENDAR_ENDS = frozenset({datetime.date.min.toordinal(), datetime.date.max.toordinal()})
 _CALENDAR_INSIDE = range(datetime.date.min.toordinal() + 1, datetime.date.max.toordinal())
 
@@ -465,12 +571,21 @@ class DateShiftStrategy(Strategy):
     it is a date, a timestamp or ISO 8601 text. Text is written back in the
     same shape.
 
+    Keyed on the day, two days move by unrelated amounts, so dates in a row --
+    a start and an end -- can change order. `shiftBy` names a column of the
+    row instead, a person's id say: every date of that person moves by the
+    same amount, in every column and table that shifts by a column of that
+    name, so their order and the time between them are kept. Its domain is
+    that column's name unless the policy names one. A row whose `shiftBy`
+    value is NULL is shifted by the day.
+
     0001-01-01 and 9999-12-31 mean "no date" or "forever", so they are kept,
     and a shift that would leave the calendar or land on them goes the other way.
     """
 
     NAME = 'dateShift'
-    OPTIONS = {'maxDays': _integerOption(1, 36500)}
+    OPTIONS = {'maxDays': _integerOption(1, 36500), 'shiftBy': _textOption}
+    CONTEXT_OPTION = 'shiftBy'
 
     def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
         super().__init__(keyedHash, options)
@@ -479,6 +594,47 @@ class DateShiftStrategy(Strategy):
         # remembers (equal values can differ in time zone), yet the shift
         # itself depends on nothing but the day.
         self._offsets: Dict[int, datetime.timedelta] = {}
+        # And by the shiftBy value, for the same reason.
+        self._subjectOffsets: Dict[Tuple[type, Any], datetime.timedelta] = {}
+
+
+    @classmethod
+    def defaultDomain(cls, column: str, options: Mapping[str, Any]) -> str:
+        """The shiftBy column's name, so the dates of one person agree across
+        columns whatever each is called.
+        """
+
+        return options['shiftBy'].lower() if options.get('shiftBy') else column.lower()
+
+
+    def _days(self, message: bytes, purpose: bytes) -> datetime.timedelta:
+        """A keyed shift in +-maxDays, never zero."""
+
+        maxDays = self.options.get('maxDays', 30)
+        days = self.keyedHash.below(message, 2 * maxDays, purpose) - maxDays
+
+        return datetime.timedelta(days=days + 1 if days >= 0 else days)
+
+
+    def _subjectOffset(self, subject: Any) -> datetime.timedelta:
+        """The shift for every date of one shiftBy value."""
+
+        cacheKey = (type(subject), subject)
+        try:
+            return self._subjectOffsets[cacheKey]
+        except (KeyError, TypeError):
+            pass
+
+        offset = self._days(canonical(subject), b'shiftBy')
+        try:
+            if len(self._subjectOffsets) >= MASK_CACHE_SIZE:
+                self._subjectOffsets.clear()
+            self._subjectOffsets[cacheKey] = offset
+        except TypeError:
+            # A value that can't be a dict key, a JSON document say: derived each time.
+            pass
+
+        return offset
 
 
     def _offset(self, value: Any) -> datetime.timedelta:
@@ -499,9 +655,7 @@ class DateShiftStrategy(Strategy):
         if offset is not None:
             return offset
 
-        maxDays = self.options.get('maxDays', 30)
-        days = self.keyedHash.below(canonical(day), 2 * maxDays) - maxDays
-        offset = datetime.timedelta(days=days + 1 if days >= 0 else days)
+        offset = self._days(canonical(day), b'')
 
         if len(self._offsets) >= MASK_CACHE_SIZE:
             # Emptied, not evicted, as Strategy's own cache is.
@@ -511,24 +665,36 @@ class DateShiftStrategy(Strategy):
         return offset
 
 
-    def _shift(self, value: Any) -> Any:
-        """`value`, a date or datetime, moved by its offset."""
+    def _shift(self, value: Any, subject: Any = None) -> Any:
+        """`value`, a date or datetime, moved by its offset: its day's, or its
+        shiftBy value's.
+        """
 
         ordinal = value.toordinal()
         if ordinal in _CALENDAR_ENDS:
             return value
 
-        offset = self._offset(value)
+        offset = self._offset(value) if subject is None else self._subjectOffset(subject)
         if ordinal + offset.days not in _CALENDAR_INSIDE:
             offset = -offset
 
         return value + offset
 
 
+    def maskColumnWith(self, values: Sequence[Any], context: Sequence[Any], chunkIndex: int) -> List[Any]:
+
+        return [None if value is None else self._maskShifted(value, subject) for value, subject in zip(values, context)]
+
+
     def mask(self, value: Any) -> Any:
 
+        return self._maskShifted(value, None)
+
+
+    def _maskShifted(self, value: Any, subject: Any) -> Any:
+
         if isinstance(value, datetime.date):
-            return self._shift(value)
+            return self._shift(value, subject)
 
         if not isinstance(value, str):
             raise MaskingError('the dateShift strategy needs a date, a timestamp or ISO 8601 text, got {}'.format(_typeName(value)))
@@ -538,31 +704,81 @@ class DateShiftStrategy(Strategy):
         try:
             if len(text) == 10:
                 parsed: datetime.date = datetime.date.fromisoformat(text)
-                return self._shift(parsed).isoformat()
+                return self._shift(parsed, subject).isoformat()
 
             parsedTimestamp = datetime.datetime.fromisoformat(text)
         except ValueError:
             raise MaskingError('the dateShift strategy could not read a text value as an ISO 8601 date') from None
 
-        shifted = self._shift(parsedTimestamp)
+        shifted = self._shift(parsedTimestamp, subject)
         separator = 'T' if 'T' in text else ' '
         timespec = 'microseconds' if '.' in text else ('seconds' if text.count(':') >= 2 else 'minutes')
 
         return shifted.isoformat(sep=separator, timespec=timespec)
 
 
+def _listsOption(value: Any) -> int:
+
+    if isinstance(value, bool) or value not in (1, 2):
+        raise ValueError('must be 1 or 2')
+
+    return int(value)
+
+
+# The domain the name strategies mask in under `lists: 2` when the policy names
+# none, so a first name masks alike in a first_name column, a full_name column
+# and any table, as a key masks alike in every column of its domain.
+FAKE_NAME_DOMAIN = 'fake name'
+
+# Lower-case words that begin a surname: `de Jong`, `van der Berg`, `da Silva`.
+_SURNAME_PARTICLES = frozenset({'da', 'das', 'de', 'del', 'della', 'der', 'di', 'do', 'dos', 'du', 'la', 'le', 'ten', 'ter', 'van', 'von',
+                                'den', 'het', "'t", 'y'})
+
+
+_FIRST_NAMES: Dict[int, Tuple[str, ...]] = {}
+
+
+def _firstNames(large: LargeLocale) -> Tuple[str, ...]:
+    """A locale's first names of both genders, joined once."""
+
+    joined = _FIRST_NAMES.get(id(large))
+    if joined is None:
+        joined = _FIRST_NAMES[id(large)] = large.femaleNames + large.maleNames
+
+    return joined
+
+
 class _FakeStrategy(Strategy):
     """A realistic-looking replacement, chosen from bundled lists by the hash.
     Not unique.
+
+    `lists: 2` picks from fakeData's longer lists, which nothing masked
+    before used, so the masks made with the default `lists: 1` are unchanged.
     """
 
     CACHEABLE = True
-    OPTIONS = {'maxLength': _integerOption(1), 'locale': _choiceOption(*sorted(LOCALES))}
+    OPTIONS = {'maxLength': _integerOption(1), 'locale': _choiceOption(*sorted(LOCALES)), 'lists': _listsOption}
 
     @property
     def locale(self) -> Locale:
 
         return LOCALES[self.options['locale']] if 'locale' in self.options else DEFAULT_LOCALE
+
+
+    @property
+    def large(self) -> Optional[LargeLocale]:
+        """The `lists: 2` lists, or None under `lists: 1`."""
+
+        if self.options.get('lists', 1) != 2:
+            return None
+
+        return LARGE_LOCALES[self.options['locale']] if 'locale' in self.options else LARGE_DEFAULT_LOCALE
+
+
+    def _buildNative(self) -> Any:
+        """None for `lists: 2`, which only Python implements."""
+
+        return None if self.options.get('lists', 1) == 2 else super()._buildNative()
 
 
     def _nativeOptions(self) -> Dict[str, Any]:
@@ -588,13 +804,84 @@ class _FakeStrategy(Strategy):
 
     def mask(self, value: Any) -> Any:
 
-        generated = self.generate(canonical(value))
+        generated = self.generateLarge(value) if self.large is not None else self.generate(canonical(value))
         maxLength = self.options.get('maxLength')
 
         return generated[:maxLength] if maxLength else generated
 
 
-class FakeFirstNameStrategy(_FakeStrategy):
+    def generateLarge(self, value: Any) -> str:
+        """The replacement under `lists: 2`; the same as `lists: 1` gives,
+        from the longer lists, unless a strategy says otherwise.
+        """
+
+        return self.generate(canonical(value))
+
+
+class _FakePersonNameStrategy(_FakeStrategy):
+    """What the three name strategies share under `lists: 2`: names keyed
+    as a person writes them, whatever their case or spacing, in one domain,
+    so a full name's parts mask as the first and last names on their own
+    columns do; written back in the original's case; and with `matchGender`,
+    a first name replaced by one of the same gender where the lists know it.
+    """
+
+    OPTIONS = dict(_FakeStrategy.OPTIONS, matchGender=_booleanOption)
+
+    @classmethod
+    def checkOptions(cls, options: Dict[str, Any]) -> None:
+
+        if options.get('matchGender') and options.get('lists', 1) != 2:
+            raise ValueError('strategy "{}" takes matchGender with lists: 2 only'.format(cls.NAME))
+
+
+    @classmethod
+    def defaultDomain(cls, column: str, options: Mapping[str, Any]) -> str:
+
+        return FAKE_NAME_DOMAIN if options.get('lists', 1) == 2 else column.lower()
+
+
+    @staticmethod
+    def _key(name: str) -> bytes:
+
+        return ' '.join(name.split()).casefold().encode('utf-8')
+
+
+    @staticmethod
+    def _inCaseOf(original: str, replacement: str) -> str:
+
+        if original.isupper():
+            return replacement.upper()
+        if original.islower():
+            return replacement.lower()
+
+        return replacement
+
+
+    def _firstName(self, name: str) -> str:
+
+        large = self.large
+        assert large is not None
+        folded = ' '.join(name.split()).casefold()
+        if self.options.get('matchGender') and folded in FEMALE_NAMES:
+            choices = large.femaleNames
+        elif self.options.get('matchGender') and folded in MALE_NAMES:
+            choices = large.maleNames
+        else:
+            choices = _firstNames(large)
+
+        return self._inCaseOf(name, self._pick(choices, self._key(name), b'first'))
+
+
+    def _lastName(self, name: str) -> str:
+
+        large = self.large
+        assert large is not None
+
+        return self._inCaseOf(name, self._pick(large.lastNames, self._key(name), b'last'))
+
+
+class FakeFirstNameStrategy(_FakePersonNameStrategy):
 
     NAME = 'fakeFirstName'
     NATIVE = 'fakeFirstName'
@@ -604,7 +891,12 @@ class FakeFirstNameStrategy(_FakeStrategy):
         return self._pick(self.locale.firstNames, message, b'first')
 
 
-class FakeLastNameStrategy(_FakeStrategy):
+    def generateLarge(self, value: Any) -> str:
+
+        return self._firstName(value if isinstance(value, str) else canonical(value).decode('utf-8', 'replace'))
+
+
+class FakeLastNameStrategy(_FakePersonNameStrategy):
 
     NAME = 'fakeLastName'
     NATIVE = 'fakeLastName'
@@ -614,7 +906,12 @@ class FakeLastNameStrategy(_FakeStrategy):
         return self._pick(self.locale.lastNames, message, b'last')
 
 
-class FakeNameStrategy(_FakeStrategy):
+    def generateLarge(self, value: Any) -> str:
+
+        return self._lastName(value if isinstance(value, str) else canonical(value).decode('utf-8', 'replace'))
+
+
+class FakeNameStrategy(_FakePersonNameStrategy):
 
     NAME = 'fakeName'
     NATIVE = 'fakeName'
@@ -624,6 +921,33 @@ class FakeNameStrategy(_FakeStrategy):
         return '{} {}'.format(self._pick(self.locale.firstNames, message, b'first'), self._pick(self.locale.lastNames, message, b'last'))
 
 
+    def generateLarge(self, value: Any) -> str:
+        """Each part of a full name as fakeFirstName and fakeLastName mask it:
+        the given names, then the surname with any particle before it
+        (`Jan de Jong`), or `Surname, Given Names`. A single word is a given name.
+        """
+
+        text = value if isinstance(value, str) else canonical(value).decode('utf-8', 'replace')
+
+        if ',' in text:
+            surname, _, given = text.partition(',')
+            givenNames = given.split()
+            maskedGiven = ' '.join(self._firstName(name) for name in givenNames)
+            return '{}, {}'.format(self._lastName(surname.strip()), maskedGiven) if givenNames else self._lastName(surname.strip())
+
+        words = text.split()
+        if not words:
+            return text
+        if len(words) == 1:
+            return self._firstName(words[0])
+
+        start = len(words) - 1
+        while start > 1 and words[start - 1].casefold() in _SURNAME_PARTICLES:
+            start -= 1
+
+        return ' '.join([self._firstName(name) for name in words[:start]] + [self._lastName(' '.join(words[start:]))])
+
+
 class FakeCityStrategy(_FakeStrategy):
 
     NAME = 'fakeCity'
@@ -631,7 +955,7 @@ class FakeCityStrategy(_FakeStrategy):
 
     def generate(self, message: bytes) -> str:
 
-        return self._pick(self.locale.cities, message, b'city')
+        return self._pick(self.large.cities if self.large is not None else self.locale.cities, message, b'city')
 
 
 class FakeCompanyStrategy(_FakeStrategy):
@@ -678,7 +1002,7 @@ class KeyStrategy(Strategy):
     NAME = 'key'
     NATIVE = 'key'
     CACHEABLE = True
-    OPTIONS = {'charset': _choiceOption('alphanumeric', 'digits', 'hex')}
+    OPTIONS = {'charset': _choiceOption('alphanumeric', 'digits', 'hex'), 'normalize': _normalizeOption(*NORMALIZE_STEPS)}
 
     def _maskInteger(self, value: int) -> int:
 
@@ -782,7 +1106,7 @@ class FPEStrategy(Strategy):
     NAME = 'fpe'
     NATIVE = 'fpe'
     CACHEABLE = True
-    OPTIONS = {'charset': _choiceOption(*_FPE_ALPHABETS), 'strict': _booleanOption}
+    OPTIONS = {'charset': _choiceOption(*_FPE_ALPHABETS), 'strict': _booleanOption, 'normalize': _normalizeOption(*NORMALIZE_STEPS)}
 
     def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
         super().__init__(keyedHash, options)
@@ -1014,6 +1338,23 @@ class RedactStrategy(Strategy):
         return 'redacted-' + self.keyedHash.digest(found.encode('utf-8'), b'pattern').hex()[:12]
 
 
+    def maskNumber(self, value: int) -> Any:
+        """A whole number that, written out, is an identifier redact finds --
+        a phone number or a card number held as a JSON number -- masked as its
+        digits are and kept a number, or its label; any other, as it is.
+        """
+
+        spans = self._spans(str(abs(value)))
+        if not spans:
+            return value
+
+        kind = spans[0][2]
+        if self.options.get('replacement', 'label') == 'label':
+            return '[REDACTED]' if kind == 'pattern' else '[{}]'.format(kind.upper())
+
+        return (self._card if kind == 'card' else self._digits).mask(value)
+
+
     def mask(self, value: Any) -> Any:
 
         if not isinstance(value, str):
@@ -1062,9 +1403,14 @@ def _jsonPolicy(value: Any) -> Dict[str, Any]:
 
     from .core import validateColumnPolicy
 
+    from .core import resolveStrategy
+
     policy = validateColumnPolicy(value)
     if policy['strategy'] == 'shuffle':
         raise ValueError('shuffle moves values between rows, so it would leave a value inside a document where it is')
+    contextOption = resolveStrategy(policy['strategy']).CONTEXT_OPTION
+    if contextOption and contextOption in policy:
+        raise ValueError('{} names a column of the row, which a value inside a document has none of'.format(contextOption))
 
     return policy
 
@@ -1094,9 +1440,14 @@ def _pathText(path: Tuple[str, ...]) -> str:
 class JsonStrategy(Strategy):
     """Masks inside a JSON document: each path `fields` names with its own
     policy, and every other value with `otherwise` -- by default `redact`,
-    which masks the identifiers it finds by their shape in text and leaves
-    numbers and booleans as they are. A policy named for a path holding an
-    object or an array applies to it whole, so `null` drops it.
+    which masks the identifiers it finds by their shape in text, and in whole
+    numbers long enough to be a phone or card number, and leaves other numbers
+    and booleans as they are. A policy named for a path holding an object or an
+    array applies to it whole, so `null` drops it.
+
+    An object's keys are data too where a document is keyed by, say, email
+    address, so identifiers redact finds in them are masked, unless
+    `otherwise` keeps values as they are.
 
     A field masks in the domain it names, or in its last key's, as a column
     masks in its name's: `contact.customer_id: {strategy: key, domain:
@@ -1116,6 +1467,7 @@ class JsonStrategy(Strategy):
         otherwise = self.options.get('otherwise', {'strategy': 'redact', 'replacement': 'mask'})
         self._otherwise = self._build(keyedHash, otherwise)
         self._fields: Optional[Dict[str, Strategy]] = None
+        self._keys = None if self._otherwise.PASSTHROUGH else RedactStrategy(keyedHash, {'replacement': 'mask'})
 
 
     @staticmethod
@@ -1141,9 +1493,20 @@ class JsonStrategy(Strategy):
     def _maskPart(self, strategy: Strategy, value: Any) -> Any:
 
         if isinstance(strategy, RedactStrategy) and not isinstance(value, str):
-            return value
+            return strategy.maskNumber(value) if isinstance(value, int) and not isinstance(value, bool) else value
 
         return strategy.maskColumn([value], 0)[0]
+
+
+    def _maskKey(self, key: Any) -> Any:
+        """An object's key, with the identifiers in it masked. Paths in
+        `fields` are matched against the key as it came.
+        """
+
+        if self._keys is None or not isinstance(key, str):
+            return key
+
+        return self._keys.mask(key)
 
 
     def _walk(self, node: Any, path: Tuple[str, ...]) -> Any:
@@ -1154,7 +1517,7 @@ class JsonStrategy(Strategy):
             if strategy is not None:
                 return self._maskPart(strategy, node)
         if isinstance(node, dict):
-            return {key: self._walk(value, path + (str(key),)) for key, value in node.items()}
+            return {self._maskKey(key): self._walk(value, path + (str(key),)) for key, value in node.items()}
         if isinstance(node, list):
             return [self._walk(value, path + ('[]',)) for value in node]
         if node is None:
@@ -1185,6 +1548,6 @@ STRATEGIES: Dict[str, Type[Strategy]] = {
     strategy.NAME: strategy for strategy in (
         KeepStrategy, NullStrategy, ConstantStrategy, HashStrategy, EmailStrategy, DigitsStrategy, NumberStrategy, DateShiftStrategy,
         FakeFirstNameStrategy, FakeLastNameStrategy, FakeNameStrategy, FakeCityStrategy, FakeCompanyStrategy, FakeStreetAddressStrategy,
-        KeyStrategy, FPEStrategy, RedactStrategy, ShuffleStrategy, JsonStrategy,
+        KeyStrategy, FPEStrategy, RedactStrategy, ShuffleStrategy, JsonStrategy, CoordinateStrategy,
         )
     }

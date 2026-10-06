@@ -600,6 +600,57 @@ class Database:
         self.alter(query=query)
 
 
+    def copyKeys(self, fromTable: str, toTable: str) -> List[str]:
+        """Gives `toTable` the primary key and unique keys of `fromTable` that it
+        lacks, and says what it gave, as `primary key (id)` or `unique (email)`.
+        For a swap's stage table, which becomes the target, so the target keeps
+        its keys whichever table holds its name. See "How a swap works" in
+        docs/concepts/how-it-works.md.
+
+        Nothing is taken away, and a key `toTable` already has over the same
+        columns, in any order, is left as it is. Its columns are named as
+        `toTable` spells them, which must hold every one. Foreign keys are not
+        copied, for the reason `bauta schema` gives its stage tables none.
+        """
+
+        def folded(columns: Sequence[str]) -> frozenset:
+            return frozenset(column.upper() for column in columns)
+
+        primaryKey = self.dialect.primaryKey(self.cursor, fromTable)
+        uniqueKeys = self.dialect.uniqueKeys(self.cursor, fromTable)
+        ownPrimaryKey = self.dialect.primaryKey(self.cursor, toTable)
+        held = {folded(columns) for columns in self.dialect.uniqueKeys(self.cursor, toTable)}
+        if ownPrimaryKey:
+            held.add(folded(ownPrimaryKey))
+
+        addPrimaryKey = primaryKey if primaryKey and not ownPrimaryKey else []
+        if addPrimaryKey:
+            held.add(folded(addPrimaryKey))
+        addUnique = []
+        for columns in uniqueKeys:
+            if folded(columns) not in held:
+                held.add(folded(columns))
+                addUnique.append(columns)
+
+        if not addPrimaryKey and not addUnique:
+            return []
+
+        spelled = [self.catalogColumns(table=toTable, columns=list(columns)) for columns in [addPrimaryKey] + addUnique]
+        try:
+            self.dialect.addKeys(self.cursor, self.statementName(toTable), toTable, self.quoted(spelled[0]),
+                                 [self.quoted(columns) for columns in spelled[1:]])
+            self.connection.commit()
+        except BaseException:
+            self.connection.rollback()
+            raise
+        finally:
+            self.primaryKeyCache.pop(toTable, None)
+            self.columnNameCache.pop(toTable, None)
+
+        return ((['primary key ({})'.format(', '.join(spelled[0]))] if addPrimaryKey else [])
+                + ['unique ({})'.format(', '.join(columns)) for columns in spelled[1:]])
+
+
     def swap(self, targetTable: str, stageTable: str) -> None:
         """Exchanges the two tables by renaming, atomically everywhere but
         Oracle, through a temporary name in the stage table's schema.

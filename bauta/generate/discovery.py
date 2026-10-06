@@ -10,6 +10,7 @@ import datetime
 import decimal
 import json
 import re
+import uuid
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
 import yaml
@@ -185,21 +186,65 @@ def _classifyValues(values: Sequence[Any], category: Optional[ColumnCategory], r
     if not present:
         return None
 
-    texts = [value.strip() for value in present] if all(isinstance(value, str) for value in present) else []
+    rule = _matchingValueRule(values, category, rules)
+    if rule is not None:
+        return dict(rule.policy), rule.reason
+
+    if all(isinstance(value, str) for value in present) and sum(len(text) for text in present) / len(present) > FREE_TEXT_AVERAGE_LENGTH:
+        return {'strategy': 'null'}, 'sampled values are long free text, which can hold PII anywhere'
+
+    return None
+
+
+def _matchingValueRule(values: Sequence[Any], category: Optional[ColumnCategory], rules: DiscoveryRules) -> Optional[ValueRule]:
+    """The first value rule enough of the sampled values pass, or None."""
+
+    present = [value for value in values if value is not None]
+    texts = [value.strip() for value in present] if present and all(isinstance(value, str) for value in present) else []
     digits = [str(value) for value in present] if all(isinstance(value, (str, int)) and not isinstance(value, bool) for value in present) else []
 
     for rule in rules.values:
         if rule.name is None:
             candidates = [text.strip() for text in digits]
             if candidates and _share(candidates, rule.test) >= VALUE_MATCH_THRESHOLD and _compatible(rule.policy['strategy'], values, category):
-                return dict(rule.policy), rule.reason
+                return rule
         elif texts and _share(texts, rule.test) >= VALUE_MATCH_THRESHOLD:
-            return dict(rule.policy), rule.reason
-
-    if texts and sum(len(text) for text in present) / len(present) > FREE_TEXT_AVERAGE_LENGTH:
-        return {'strategy': 'null'}, 'sampled values are long free text, which can hold PII anywhere'
+            return rule
 
     return None
+
+
+def _classifiable(value: Any) -> Any:
+    """A value as the rules read it: a JSON document or an IP address as the
+    text a strategy masks, and a UUID, as psycopg returns one, as its text.
+    """
+
+    if isinstance(value, uuid.UUID):
+        return str(value)
+
+    return value if isinstance(value, str) else structuredText(value) or value
+
+
+def valueHint(values: Sequence[Any], rules: DiscoveryRules = BUILTIN_RULES) -> Optional[Tuple[Optional[str], str]]:
+    """What sampled values say a column holds, where a policy should mask it:
+    the rule's name and its reason, or None -- for `audit` to question a
+    column kept as it is, whatever its name. The value rules discover proposes
+    policies from, and those it looks for inside JSON documents; not the guess
+    that long text is free text, which product descriptions trip as readily
+    as notes, and which the name rules already question.
+    """
+
+    documents = _documents(values)
+    if documents:
+        classified = _classifyDocuments(documents, rules)
+        return (None, classified[1]) if classified is not None else None
+
+    values = [_classifiable(value) for value in values]
+    rule = _matchingValueRule(values, _inferCategory(values), rules)
+    if rule is None or not changesValues(rule.policy):
+        return None
+
+    return rule.name, rule.reason
 
 
 def _documents(values: Sequence[Any]) -> List[Any]:
@@ -299,7 +344,7 @@ def _compatible(strategy: str, values: Sequence[Any], category: Optional[ColumnC
         return True
     if strategy in TEXT_STRATEGIES:
         return kind in (ColumnCategory.TEXT, None) and all(isinstance(value, str) for value in present)
-    if strategy == 'number':
+    if strategy in ('number', 'coordinate'):
         return kind == ColumnCategory.NUMBER
     if strategy == 'dateShift':
         return kind == ColumnCategory.DATE or (kind != ColumnCategory.NUMBER and bool(present)
@@ -340,7 +385,7 @@ def suggestColumn(table: str, column: str, category: Optional[ColumnCategory], v
     # A JSON document or an IP address as the text a strategy masks, so a
     # name rule's guess is checked against what will be masked: an inet
     # column named ip_address fits `hash`.
-    values = [value if isinstance(value, str) else structuredText(value) or value for value in values]
+    values = [_classifiable(value) for value in values]
 
     words = nameWords(column)
     for rule in rules.names:
@@ -429,7 +474,23 @@ def proposeTable(database: Any, table: str, sampleSize: int = DEFAULT_SAMPLE_SIZ
         keyReference = (domains[column], _isNumeric(values, category)) if column in domains else None
         suggestions.append(suggestColumn(table, column, category, values, keyReference, rules, maskKeys))
 
-    return TableProposal(table=table, columns=suggestions)
+    return TableProposal(table=table, columns=_withLatitudeColumn(suggestions))
+
+
+def _withLatitudeColumn(suggestions: List[Suggestion]) -> List[Suggestion]:
+    """A longitude moved by a distance at the row's latitude, where the table
+    has one latitude to take it from: without it, a longitude moves by the
+    distance at the equator, less towards the poles.
+    """
+
+    latitudes = [suggestion.column for suggestion in suggestions
+                 if suggestion.policy.get('strategy') == 'coordinate' and suggestion.policy.get('axis') == 'latitude']
+    if len(latitudes) != 1:
+        return suggestions
+
+    return [suggestion._replace(policy=dict(suggestion.policy, latitudeColumn=latitudes[0]))
+            if suggestion.policy.get('strategy') == 'coordinate' and suggestion.policy.get('axis') == 'longitude' else suggestion
+            for suggestion in suggestions]
 
 
 def jobName(table: str, taken: Optional[Set[str]] = None) -> str:

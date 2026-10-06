@@ -122,13 +122,15 @@ class _Synthesizer:
             if strategy == 'dateShift' and dated:
                 return (lambda row: datetime.date(1940, 1, 1) + datetime.timedelta(days=int(self._unit(row, name) * 23725))), \
                     'a birth date between 1940 and 2004'
-            if strategy == 'number' and numeric:
+            if strategy in ('number', 'coordinate') and numeric:
                 if words & {'latitude', 'lat'}:
                     return (lambda row: round(self._unit(row, name) * 180 - 90, 5)), 'a latitude'
                 if words & {'longitude', 'lng', 'lon'}:
                     return (lambda row: round(self._unit(row, name) * 360 - 180, 5)), 'a longitude'
                 return (lambda row: 30000 + int(self._unit(row, name) * 170000)), 'an amount between 30,000 and 200,000'
-            if strategy == 'shuffle' and textual:
+            # By the rule, not its strategy: a sensitive attribute is
+            # masked as null, and generated as one of a few codes.
+            if rule.name == 'sensitiveAttribute' and textual:
                 choices = ('F', 'M', 'X') if words & {'gender', 'sex'} else ('A', 'B', 'C', 'D')
                 return (lambda row: choices[int(self._unit(row, name) * len(choices))]), 'one of {}'.format(', '.join(choices))
             if strategy == 'null' and textual:

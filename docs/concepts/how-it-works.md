@@ -8,6 +8,7 @@ The behaviour behind the fields in [configuration.md](../reference/configuration
 - [refresh and predecessors](#refresh-and-predecessors)
 - [Single runs, not a daemon](#single-runs-not-a-daemon)
 - [Workers](#workers)
+- [Partitions](#partitions)
 - [Retries](#retries)
 - [Structured logs](#structured-logs)
 - [Masking](#masking)
@@ -73,7 +74,14 @@ On Oracle, a rename that fails — another session holding the table, which is `
 
 **A `postTargetAdhocQuery` that fails after the swap** fails the job, but the swap has already happened: the target holds the new rows. The failure says so, and reports the rows loaded rather than none, so a copy that was in fact rebuilt doesn't read as a job that moved nothing.
 
-**The swapped table's own keys alternate.** A stage table has none (it can't: see [`--stage-suffix`](../guides/copy-a-subset.md#schema-creating-the-targets-tables)), so after a swap the live table is the keyless former stage, and after the next swap the original is back with its keys. Between the two, the copy enforces nothing, and no load fails to tell you. `audit --connect` [warns](../guides/prove-the-copy-is-safe.md#reviewing-policies-audit) about a swap job whose table declares keys. Recreate them in `postTargetAdhocQueries`, or use `upsert` with a stage table for any table whose keys matter.
+**The swapped table keeps its primary key and unique keys.** Before the stage is loaded, the job gives it whichever of the target's it lacks -- a stage made with `CREATE TABLE ... AS SELECT`, say, or the unique constraints [`--stage-suffix`](../guides/copy-a-subset.md#schema-creating-the-targets-tables) leaves out -- so the live table has them after every swap, not every other one, and a source repeating a key fails the load before anything reaches the target. A stage that already has them, as every stage after the first swap does, is left as it is.
+
+- **Each is added unnamed**, so the database names it as it would any constraint, and no name can collide with one the target already has. The two tables then trade constraint names at every swap, as they trade table names.
+- **PostgreSQL, MySQL, MariaDB, Oracle and SQL Server** add them to the empty stage with `ALTER TABLE`; SQL Server first makes a key column NOT NULL, restating its type and collation, since it refuses a key over a column that allows NULL. **SQLite and DuckDB**, which can't add one that way, create the empty stage again from its own definition with the keys added, and SQLite its indexes after it.
+- **Not copied:** a unique index on an expression, a partial or filtered one, or one over a prefix of a column, which a column list can't recreate; plain indexes, which change no result; and a DuckDB `CREATE UNIQUE INDEX`, since DuckDB won't swap a table with an index at all.
+- **A key that can't be added** -- no privilege to alter the stage, say -- is a warning, and the swap goes ahead as it would have.
+
+**The swapped table's foreign keys alternate.** A stage is given none of them, for the reason `--stage-suffix` gives it none: a key follows the table it was declared on, so a key on the stage of a parent that is swapped too would check the emptied old table. After a swap the live table is the former stage, without them, and after the next the original is back with them; between the two, the copy enforces none, and no load fails to tell you. `audit --connect` [warns](../guides/prove-the-copy-is-safe.md#reviewing-policies-audit) about a swap job whose table declares foreign keys. Recreate them in `postTargetAdhocQueries`, or use `upsert` with a stage table for any table whose references matter.
 
 
 ## Incremental loads
@@ -208,6 +216,44 @@ Processes are started with Python's `spawn` method on every platform, so a progr
 **Ctrl-C** reaches every process in the terminal's group; jobs ignore it and leave the decision to the main process, as described under stopping above.
 
 **A run killed outright** — `kill -9`, an out-of-memory kill, a scheduler that doesn't wait — takes its jobs with it. Each job watches a pipe the run holds the other end of and never writes to, so it reads end-of-file the moment the run dies, and ends there: no unwinding, no further rows, and each server rolls back what it hadn't committed. It matters because the run lock is held by that process and dies with it, so the next `bauta run` can start immediately; a job left loading would have written over it.
+
+
+## Partitions
+
+A job reads its `sourceQuery` as one stream, on one connection, so a table of a few billion rows takes as long as one connection takes to read, mask and write it. `partitions` divides the job into slices that run at once:
+
+```yaml
+copyEvents:
+  sourceQuery: select id, accountId, payload, createdAt from events
+  insertStrategy: swap
+  targetTableStage: events_stage
+  partitions:
+    column: id
+    count: 8
+  # ...
+```
+
+**How the rows are divided.** The job first asks for the column's smallest and largest value over the whole query, divides that range into `count` ranges, and reads each through the query wrapped in a derived table:
+
+```sql
+SELECT * FROM (select id, accountId, payload, createdAt from events) bauta_partition WHERE "id" >= 250000 AND "id" < 375000
+```
+
+Ranges rather than a modulo: a range is read from an index on the column, so each slice reads only its own rows, where `MOD(id, 8) = 3` would have every slice scan the whole table — and has no one spelling, since Oracle has no `%` and SQL Server no `MOD`. The first slice has no lower bound and takes the rows where the column is null as well; the last has no upper bound. So every row is read exactly once, a row added beyond the bounds after they were read included. Slices are only as even as the values: a key with a large gap gives the slices around it fewer rows. There are fewer slices where the column has fewer integers between its bounds than `count`, and one, the query as it is, where the query returns no rows.
+
+The column must be among those the query returns, and numeric -- an integer key is the natural choice. A text or date column fails the job before its target is touched, naming the column's type, never a value; the bounds are data, so they are never logged either.
+
+**What it costs.** The bounds query: next to nothing where the column is indexed and the query reads one table, and a whole extra pass where the database has to evaluate a join or an aggregate to answer it. And the derived table: SQL Server refuses one holding an `ORDER BY` (without `TOP`) or a `WITH` clause, so write a partitioned job's query without them there.
+
+**Each slice is a reader, masker and writer of its own**, on threads of the job's process, with a source and a target connection of its own: a connection serves one thread, and SQLite and the MySQL drivers refuse any other. Every slice writes into the one table the job loads: its `targetTableStage` for `swap` and for `upsert` with a stage, and the live table for a stage-less `upsert`. Files and Iceberg targets refuse `partitions`, since what they publish is what one writer wrote.
+
+**All or nothing.** The job succeeds only once every slice has loaded. The first slice to fail stops the others before their next write, and its error is the job's: nothing is swapped in or upserted from the stage, no watermark or run is recorded, and a [retry](#retries) starts every slice over, as it starts any job over. A stage-less upsert keeps what its slices wrote before the failure, as it would unpartitioned. An incremental job's watermark is the highest any slice read.
+
+**Masks are the same.** Every mask is derived from its value alone, so a partitioned copy is byte for byte the copy one stream makes. `shuffle`, which shuffles values within a chunk, is the exception, since a slice's chunks hold other rows; each slice numbers its chunks apart from every other's, so no two chunks of a job are shuffled alike.
+
+**No longer one snapshot.** Each slice reads in a transaction of its own, so the copy is not one consistent view of the source, and a row whose partition column changes during the run can be read twice or not at all. Partition on a column that doesn't change, such as the primary key. Several connections upserting into one table at once can deadlock on SQL Server and MySQL; a deadlock fails the attempt as any database error does, and the job is retried, but a stage table avoids it.
+
+**Workers, connections and threads.** A partitioned job is one job: one `workers` slot, one process, one `timeoutSeconds` for all its slices. It holds a place in each connection's [`maxConcurrentJobs`](../reference/connections.md) for every slice, though, since each slice opens a connection there; a job with more slices than a connection allows is refused by `validate`, and so is any partitioned job on DuckDB, which allows one. With `maskingThreads: 1` each slice masks on its own thread; above 1, the slices share the job's masking threads, except that where `maskingThreads: auto` gave the job no more threads than it has slices, each slice masks on its own thread instead ([partitions: auto](../guides/make-it-faster.md#partitions-auto)). Masking in Python holds Python's interpreter lock, so slices overlap their reading and writing but not their masking; with the [native masker](../guides/make-it-faster.md#the-native-masker) they overlap that too. See [partitions](../guides/make-it-faster.md#partitions) for what it gains.
 
 
 ## Retries

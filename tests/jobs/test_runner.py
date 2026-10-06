@@ -99,6 +99,10 @@ class _FakeDatabase:
     def swap(self, targetTable: str, stageTable: str) -> None:
         self.calls.append(('swap', targetTable, stageTable))
 
+    def copyKeys(self, fromTable: str, toTable: str) -> List[str]:
+        self.calls.append(('copyKeys', fromTable, toTable))
+        return []
+
     def upsert(self, table: str, data: List[Tuple[Any, ...]], chunkSize: int = 100, columns: Any = None) -> None:
         self.calls.append(('upsert', table, data, chunkSize, columns))
 
@@ -237,6 +241,26 @@ def test_execute_data_job_swap_loads_stage_then_swaps_not_upserts(fakeDatabases)
     assert ('swap', 'people', 'people_stage') in targetConnection.calls
     assert 'upsert' not in calledMethods
     assert 'upsertFromStage' not in calledMethods
+
+
+def test_a_swap_gives_its_emptied_stage_the_targets_keys_before_loading_it(fakeDatabases):
+    jobConfig = _dataJobConfig(insertStrategy=InsertStrategy.SWAP, targetTableStage='people_stage')
+
+    _executeDataJob('job1', jobConfig, {'src': _dbConfig(), 'tgt': _dbConfig()})
+
+    _, targetConnection = fakeDatabases
+    calledMethods = [call[0] for call in targetConnection.calls]
+    assert ('copyKeys', 'people', 'people_stage') in targetConnection.calls
+    assert calledMethods.index('truncate') < calledMethods.index('copyKeys') < calledMethods.index('insert')
+
+
+def test_an_upsert_through_a_stage_leaves_the_stages_keys_alone(fakeDatabases):
+    jobConfig = _dataJobConfig(insertStrategy=InsertStrategy.UPSERT, targetTableStage='people_stage')
+
+    _executeDataJob('job1', jobConfig, {'src': _dbConfig(), 'tgt': _dbConfig()})
+
+    _, targetConnection = fakeDatabases
+    assert 'copyKeys' not in [call[0] for call in targetConnection.calls]
 
 
 def test_execute_data_job_applies_column_transforms_before_loading(fakeDatabases):
@@ -379,7 +403,7 @@ def test_a_masked_load_that_overflows_a_column_says_a_mask_can_be_wider(installF
             raise RuntimeError('numeric field overflow: value out of range for type integer')
 
     installFakeDatabase(_RefusingTarget)
-    jobConfig = _dataJobConfig(masking={'key': 'k' * 16, 'columns': {'id': {'strategy': 'key'}, 'name': 'keep'}})
+    jobConfig = _dataJobConfig(masking={'key': 'a-runner-overflow-masking-key', 'columns': {'id': {'strategy': 'key'}, 'name': 'keep'}})
 
     outcome = _runDataJob('job1', jobConfig, {'src': _dbConfig(), 'tgt': _dbConfig()}, _TimelineMemory([]))
 
@@ -1370,6 +1394,34 @@ def test_a_changed_key_is_refused_even_when_acknowledged_if_it_masks_the_primary
 
     assert 'masks the primary key' in str(error.value) and 'bauta clear' in str(error.value)
     assert targetRows() == before, 'nothing may be written before the run is refused'
+
+
+def _appendJobs(key):
+    """A masked append job, as a files connection takes one, checked on its
+    own: the check runs before any connection opens.
+    """
+    return Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'lake': _sqliteJob(
+        None, targetConnection='lake', insertStrategy='append', masking={'key': key, 'columns': {'id': 'key', 'name': 'fakeName'}})}},
+        DataJobsFile)
+
+
+def test_a_changed_key_stops_an_append_job_whose_old_files_remain(tmp_path):
+    """An append adds files beside the ones already there, so a rotated key
+    leaves two keys' masks in one table, as an upsert would.
+    """
+    from bauta.jobs.keys import _requireUnchangedMaskingKeys
+    from bauta.masking import maskingIdentity
+
+    memory = FileMemory(tmp_path / 'memory.yaml')
+    memory.recordKeyFingerprint('lake', maskingIdentity('an-original-masking-key'))
+
+    with pytest.raises(ConfigurationError, match='append job.*lake.*bauta clear` empties only database tables') as error:
+        _requireUnchangedMaskingKeys(_appendJobs('a-rotated-masking-key'), memory, acceptKeyChange=False)
+    assert 'upsert job' not in str(error.value)
+
+    # Once the old files are gone, acknowledging it runs; the primary-key check is an upsert's alone.
+    _requireUnchangedMaskingKeys(_appendJobs('a-rotated-masking-key'), memory, acceptKeyChange=True, connectionConfiguration={})
+    _requireUnchangedMaskingKeys(_appendJobs('an-original-masking-key'), memory, acceptKeyChange=False)
 
 
 @contextlib.contextmanager

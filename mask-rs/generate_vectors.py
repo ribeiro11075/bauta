@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import hashlib
 import json
 import os
 import sys
@@ -20,6 +21,7 @@ import uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bauta.masking import COMPANY_WORDS, DEFAULT_LOCALE, LOCALES, STRATEGIES, KeyedHash
+from bauta.masking.fakeData import LARGE_LOCALES
 
 KEY = 'a-test-key-that-is-long-enough'
 DOMAIN = 'vectors'
@@ -160,6 +162,17 @@ REDACT_TEXTS = [
     ]
 
 
+COORDINATES = [51.50135, -0.14189, 0.0, 89.9999, -89.9999, 179.9999, -180.0, decimal.Decimal('38.722300'), decimal.Decimal('-9.1'), 7]
+
+NORMALIZED_TEXTS = ['AB12CD', 'ab12cd   ', ' Ab12Cd ', '1234567', '-1234567', '0012345', 1234567, '', None]
+
+JSON_DOCUMENTS = [
+    {'contact': {'email': 'Ann.Lee@corp.example.com', 'phone': 5550109999}, 'card': 4111111111111111, 'visits': 3, 'total': 12.5,
+     'vip': True, 'byEmail': {'bob@corp.example': 1}, 'notes': ['call +1 555 010 9999', None]},
+    '{"customer_id": 42, "ssn": "123-45-6789", "ssnNumber": 123456789}',
+    ]
+
+
 def pythonOnlyVectors() -> dict:
     """The strategies only Python implements. No port reads these; they are
     here so that a change to what they return fails test_maskVectors.py as
@@ -187,9 +200,49 @@ def pythonOnlyVectors() -> dict:
             ('dateShift', {}, DATES), ('dateShift', {'maxDays': 10}, DATES),
             ('redact', {}, REDACT_TEXTS), ('redact', {'replacement': 'mask'}, REDACT_TEXTS),
             ('redact', {'replacement': 'mask', 'detect': ['email'], 'patterns': [r'ACC-\d{6}']}, REDACT_TEXTS),
+            # normalize runs in Python before either implementation masks.
+            ('key', {'normalize': ['strip', 'lower', 'integer']}, NORMALIZED_TEXTS),
+            ('fpe', {'normalize': ['integer'], 'charset': 'digits'}, NORMALIZED_TEXTS),
+            ('hash', {'normalize': ['strip', 'lower']}, NORMALIZED_TEXTS),
             ]:
         strategy = build(name, options)
         out['{} {}'.format(name, json.dumps(options, sort_keys=True))] = [entry(strategy, value) for value in values]
+
+    # Strategies that mask with another column of the row, given as (value, that column's value).
+    def contextEntry(strategy, value, context):
+        result = entry(strategy, value)
+        masked = strategy.maskColumnWith([value], [context], 0)[0]
+        result.update(context=str(context), contextType=type(context).__name__, masked=str(masked), maskedType=type(masked).__name__)
+        return result
+
+    for name, options, pairs in [
+            ('dateShift', {'shiftBy': 'patient_id'}, [(value, subject) for value in DATES[:9] for subject in (101, '101', 'P-7', None)]),
+            ('coordinate', {'axis': 'latitude'}, [(value, None) for value in COORDINATES]),
+            ('coordinate', {'axis': 'longitude', 'meters': 5000, 'latitudeColumn': 'lat'},
+             [(value, latitude) for value in COORDINATES for latitude in (0, 51.5, -89.99, None)]),
+            ]:
+        strategy = build(name, options)
+        out['{} {}'.format(name, json.dumps(options, sort_keys=True))] = [contextEntry(strategy, value, context) for value, context in pairs]
+
+    # lists: 2, which only Python implements: names as people write them, and
+    # every list's digest, since the masks above sample only some entries.
+    names = ['John', 'MARY', 'smith', 'John Smith', 'Smith, Mary Ann', 'Jan de Jong', '  ana   souza ', 'Karl-Heinz', '', 'O\'Brien', 42]
+    for name, options in [('fakeFirstName', {'lists': 2}), ('fakeFirstName', {'lists': 2, 'matchGender': True, 'locale': 'de_DE'}),
+                          ('fakeLastName', {'lists': 2}), ('fakeName', {'lists': 2, 'matchGender': True}),
+                          ('fakeName', {'lists': 2, 'locale': 'nl_NL', 'maxLength': 12}), ('fakeCity', {'lists': 2, 'locale': 'pt_BR'})]:
+        strategy = build(name, options)
+        out['{} {}'.format(name, json.dumps(options, sort_keys=True))] = [entry(strategy, value) for value in names]
+    out['largeFakeLists'] = {locale: {field: hashlib.sha256(json.dumps(names, ensure_ascii=False).encode('utf-8')).hexdigest()
+                                      for field, names in lists._asdict().items()}
+                             for locale, lists in sorted(LARGE_LOCALES.items())}
+
+    # json masks its fields in domains of their own, under the key itself.
+    for options in ({'fields': {'contact.email': 'email', 'customer_id': {'strategy': 'key', 'domain': 'customers'}}},
+                    {'fields': {'card': 'null'}, 'otherwise': {'strategy': 'redact', 'replacement': 'label'}},
+                    {'fields': {'visits': 'keep'}, 'otherwise': 'keep'}):
+        strategy = build('json', options)
+        strategy.bindKey(KEY)
+        out['json {}'.format(json.dumps(options, sort_keys=True))] = [entry(strategy, value) for value in JSON_DOCUMENTS]
 
     columns = [list(range(20)), ['v{}'.format(index) for index in range(7)], [1, 2]]
     out['shuffle {}'] = [{'chunk': chunk, 'column': column, 'masked': build('shuffle', {}).maskColumn(column, chunk)}

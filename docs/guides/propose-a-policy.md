@@ -109,9 +109,10 @@ exclude: [ip]                           # built-in rules to leave out
 | `streetAddress`, `city`, `postalCode` | addresses |
 | `birthDate` | dates of birth |
 | `compensation` | salaries, income and bonuses |
-| `coordinate` | latitudes and longitudes |
-| `sensitiveAttribute` | gender, race, ethnicity, religion and nationality |
+| `coordinate` | latitudes and longitudes, proposed as [`coordinate`](../reference/strategies.md#coordinate), moved up to a kilometre wherever they are; a longitude takes the table's latitude as `latitudeColumn` where there is exactly one |
+| `sensitiveAttribute` | gender, race, ethnicity, religion and nationality, proposed as `null`: special categories of personal data under GDPR, which `shuffle` would leave every real value of in the table |
 | `freeText` | notes, comments and descriptions |
-| `uuid`, `date` | UUIDs and ISO dates, by value, proposed as `keep` for review |
+| `uuid` | UUIDs, by value, proposed as `key` with `charset: hex`: other systems (logs, a CRM) may hold the same ids, and `key` keeps them unique |
+| `date` | ISO dates, by value, proposed as `keep` for review |
 
 The same rules, yours included, decide which unmasked columns [`audit`](prove-the-copy-is-safe.md#reviewing-policies-audit) questions and which columns [`synthesize`](generate-data.md) fills with realistic values. `bauta validate` checks the file: every pattern must compile, every policy must be valid, and every name in `exclude` must be a built-in rule.

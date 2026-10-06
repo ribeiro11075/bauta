@@ -17,7 +17,8 @@ See [Prove the copy is safe](../../guides/prove-the-copy-is-safe.md#reviewing-po
 | `--jobs JOBS` |  | Explicit path to the jobs file, overriding --config. |
 | `--connect` | off | Also run each masked query for its real columns, and check whether each connection is encrypted. |
 | `--job JOB` |  | Audit only this job (repeatable) |
-| `--format {text,json}` | `text` | One of `text`, `json`. |
+| `--sample ROWS` | `1000` | With --connect, rows of each query read to check kept columns and shared domains by their values; 0 reads none. |
+| `--format {text,json,html}` | `text` | Text, json, or html: one self-contained page for a reviewer, best with --output. |
 | `--strict` | off | Exit 1 on warnings as well as errors. |
 | `--output OUTPUT` |  | Write the report here instead of stdout; must not already exist. |
 | `--rules FILE` | discovery.yaml in the configuration directory, if there is one | Your own rules for recognising personal data, ahead of the built-in ones. |

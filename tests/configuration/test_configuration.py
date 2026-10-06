@@ -589,3 +589,68 @@ def test_an_alias_reaching_a_duckdb_file_through_a_symlink_is_the_same_file(tmp_
     with pytest.raises(ConfigurationError, match='give each file one alias'):
         Configuration.validateConnectionConfiguration({'a': {'type': 'duckdb', 'path': str(tmp_path / 'lake.duckdb')},
                                                      'b': {'type': 'duckdb', 'path': str(tmp_path / 'link.duckdb')}})
+
+
+PARTITIONS = {'column': 'id', 'count': 4}
+
+
+@pytest.mark.parametrize('strategy, stage', [('swap', 't_stage'), ('upsert', 't_stage'), ('upsert', None)])
+def test_partitions_are_accepted_for_every_strategy_that_loads_a_database_table(strategy, stage):
+    jobsFile = _validateJob(insertStrategy=strategy, targetTableStage=stage, partitions=PARTITIONS)
+
+    assert jobsFile.jobs['job'].partitions.count == 4
+    Configuration.validateJobGraph(jobsFile.jobs, connections=_connections(a={'type': 'sqlite', 'path': 'a.db'}))
+
+
+@pytest.mark.parametrize('partitions, message', [
+    ({'column': 'id', 'count': 1}, 'count'),
+    ({'column': 'id', 'count': 0}, 'count'),
+    ({'column': '', 'count': 4}, 'column'),
+    ({'count': 4}, 'column'),
+    ({'column': 'id', 'count': 4, 'by': 'modulo'}, 'by'),
+    ])
+def test_partitions_that_could_not_slice_anything_are_refused(partitions, message):
+    with pytest.raises(ConfigurationError, match=message):
+        _validateJob(partitions=partitions)
+
+
+@pytest.mark.parametrize('strategy', ['append', 'overwrite'])
+def test_partitions_are_refused_for_a_strategy_that_writes_files(strategy):
+    with pytest.raises(ConfigurationError, match='partitions is for a table in a database'):
+        _validateJob(insertStrategy=strategy, partitions=PARTITIONS)
+
+
+@pytest.mark.parametrize('connection', [{'type': 'files', 'root': 'lake'},
+                                        {'type': 'iceberg', 'warehouse': 'lake', 'catalog': 'sql', 'uri': 'sqlite:///c.db', 'namespace': 'n'}])
+def test_partitions_are_refused_for_a_files_or_iceberg_target_before_anything_connects(connection):
+    jobsFile = _validateJob(insertStrategy='upsert', partitions=PARTITIONS, targetConnection='lake', targetKey=['id'])
+    connections = Configuration.validateConnectionConfiguration({'a': {'type': 'sqlite', 'path': 'a.db'}, 'lake': connection})
+
+    with pytest.raises(ConfigurationError, match='partitions is for a database'):
+        Configuration.validateJobGraph(jobsFile.jobs, connections=connections)
+
+
+def _connections(**aliases):
+    return Configuration.validateConnectionConfiguration(aliases)
+
+
+def test_partitions_beyond_a_connections_max_concurrent_jobs_are_refused():
+    """Each partition opens connections of its own, and a job needing more
+    places than a connection has could never start.
+    """
+    jobsFile = _validateJob(partitions=PARTITIONS, targetConnection='b')
+    connections = _connections(a={'type': 'sqlite', 'path': 'a.db', 'maxConcurrentJobs': 3}, b={'type': 'sqlite', 'path': 'b.db'})
+
+    with pytest.raises(ConfigurationError, match='partitions.count is 4, and sourceConnection "a" takes at most 3 at once'):
+        Configuration.validateJobGraph(jobsFile.jobs, connections=connections)
+
+    connections = _connections(a={'type': 'sqlite', 'path': 'a.db', 'maxConcurrentJobs': 4}, b={'type': 'sqlite', 'path': 'b.db'})
+    Configuration.validateJobGraph(jobsFile.jobs, connections=connections)
+
+
+def test_partitions_are_refused_on_duckdb_which_one_job_at_a_time_may_open():
+    jobsFile = _validateJob(partitions=PARTITIONS, targetConnection='lake')
+    connections = _connections(a={'type': 'sqlite', 'path': 'a.db'}, lake={'type': 'duckdb', 'path': 'lake.duckdb'})
+
+    with pytest.raises(ConfigurationError, match='targetConnection "lake" takes at most 1 at once .DuckDB lets one process'):
+        Configuration.validateJobGraph(jobsFile.jobs, connections=connections)

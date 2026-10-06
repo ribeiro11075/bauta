@@ -6,11 +6,11 @@ the native masker -- and the plans that apply them. `strategies` holds the
 ones that ship, `fakeData` the lists the fake* ones pick from, and `fpe` NIST
 FF1. A strategy of your own subclasses bauta.masking.Strategy.
 """
-from .core import (INTEGRITY_FIELD, KEY_MINIMUM_LENGTH, MASK_CACHE_SIZE, MASKING_THREADS_VARIABLE, MAXIMUM_KEY_LENGTH, POLICY_FIELDS,
+from .core import (INTEGRITY_FIELD, REQUIRE_NATIVE_VARIABLE, KEY_MINIMUM_DISTINCT_CHARACTERS, KEY_MINIMUM_LENGTH, KEY_RECOMMENDED_BITS, MASK_CACHE_SIZE, MASKING_THREADS_VARIABLE, MAXIMUM_KEY_LENGTH, POLICY_FIELDS,
                    BoundMasking, ColumnMasking, KeyedHash, ManifestVerification, MaskingError, MaskingPlan, Strategy, availableCores,
-                   buildMaskingManifest, canonical, changesValues, effectiveMaskingThreads, keyFingerprint, maskingIdentity,
-                   maskingImplementation, maskingThreadsFor, nativeVersion, policyFor, resolveStrategy, sealManifest, setMaskingThreads,
-                   splitMaskingIdentity, validateColumnPolicy, validateKey, verifyManifest)
+                   buildMaskingManifest, canonical, changesValues, coreShare, effectiveMaskingThreads, keyFingerprint, keyStrengthBits, maskingIdentity,
+                   maskingImplementation, maskingThreadsFor, nativeVersion, policyFor, requireNativeProblem, resolveStrategy, sealManifest, setMaskingThreads,
+                   splitMaskingIdentity, validateColumnPolicy, validateKey, verifyManifest, warnIfWeakKey)
 from .fakeData import (CITIES, COMPANY_SUFFIXES, COMPANY_WORDS, DEFAULT_LOCALE, FIRST_NAMES, LAST_NAMES, LOCALES, STREET_NAMES, STREET_SUFFIXES,
                        Locale)
 from .strategies import STRATEGIES
@@ -23,15 +23,19 @@ __all__ = [
     'changesValues',
     'CITIES',
     'ColumnMasking',
+    'coreShare',
     'COMPANY_SUFFIXES',
     'COMPANY_WORDS',
     'DEFAULT_LOCALE',
     'effectiveMaskingThreads',
     'FIRST_NAMES',
     'INTEGRITY_FIELD',
+    'KEY_MINIMUM_DISTINCT_CHARACTERS',
     'KEY_MINIMUM_LENGTH',
+    'KEY_RECOMMENDED_BITS',
     'KeyedHash',
     'keyFingerprint',
+    'keyStrengthBits',
     'LAST_NAMES',
     'Locale',
     'LOCALES',
@@ -47,6 +51,8 @@ __all__ = [
     'nativeVersion',
     'POLICY_FIELDS',
     'policyFor',
+    'REQUIRE_NATIVE_VARIABLE',
+    'requireNativeProblem',
     'resolveStrategy',
     'sealManifest',
     'setMaskingThreads',
@@ -58,4 +64,5 @@ __all__ = [
     'validateColumnPolicy',
     'validateKey',
     'verifyManifest',
+    'warnIfWeakKey',
     ]

@@ -57,6 +57,9 @@ class DependencyGraph:
         self.outcomes: List[JobOutcome] = []
         self._notStarted: List[str] = list(self.activeJobs)
         self._running: Set[str] = set()
+        # The places a job with `partitions: auto` was given as it started:
+        # see reserve().
+        self._reserved: Dict[str, int] = {}
         self._completed: Set[str] = set()
         self._unsuccessful: Set[str] = set()
 
@@ -123,11 +126,52 @@ class DependencyGraph:
         return {alias for alias in (getattr(config, 'sourceConnection', None), getattr(config, 'targetConnection', None)) if alias}
 
 
+    def places(self, job: str) -> int:
+        """How many of a limited connection's places `job` holds while it runs:
+        one, or one for each of its partitions, each of which opens a
+        connection of its own.
+        """
+
+        partitions = getattr(self.jobs[job], 'partitions', None)
+        if partitions is None:
+            return 1
+        if partitions.automatic:
+            # One to start, as any job; then what reserve() gave it.
+            return self._reserved.get(job, 1)
+
+        return int(partitions.count)
+
+
+    def freePlaces(self, job: str) -> Optional[int]:
+        """The most places `job` could hold on each limited connection it uses,
+        beside the other running jobs, or None where none is limited.
+        """
+
+        free = [self.connectionLimits[alias] - sum(self.places(other) for other in self._running if other != job and alias in self.connections(other))
+                for alias in self.connections(job) & set(self.connectionLimits)]
+
+        return max(1, min(free)) if free else None
+
+
+    def reserve(self, job: str, places: int) -> None:
+        """Records how many places a just-started job with an automatic
+        partition count holds, so the jobs started after it see them taken.
+        The job may use fewer; it never uses more.
+        """
+
+        self._reserved[job] = places
+
+
     def _connectionsFree(self, job: str) -> bool:
+        """A job needing more places than a connection has -- which validation
+        refuses -- waits for the connection to be free of everything else
+        rather than for ever.
+        """
 
         for alias in self.connections(job) & set(self.connectionLimits):
-            inUse = sum(1 for other in self._running if alias in self.connections(other))
-            if inUse >= self.connectionLimits[alias]:
+            limit = self.connectionLimits[alias]
+            inUse = sum(self.places(other) for other in self._running if alias in self.connections(other))
+            if inUse and inUse + min(self.places(job), limit) > limit:
                 return False
 
         return True

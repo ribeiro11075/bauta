@@ -15,11 +15,12 @@ from typing import Any, Callable, Dict, Generator, List, Mapping, NamedTuple, Op
 from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile
 from ..log import LOGGER_NAME, Log
 from ..log.scrubbing import describeError
-from ..masking import availableCores, buildMaskingManifest, keyFingerprint, maskingThreadsFor
+from ..masking import availableCores, buildMaskingManifest, coreShare, keyFingerprint, maskingThreadsFor
 from ..masking import core as maskingModule
 from .dependencyGraph import DependencyGraph, JobOutcome, JobStatus
 from .keys import _requireUnchangedMaskingKeys
 from .memory import MemoryBackend
+from .partitions import CoreBudget
 from .workers import _JobProcess
 
 logger = logging.getLogger(LOGGER_NAME)
@@ -168,6 +169,26 @@ def connectionLimits(connectionConfiguration: Mapping[str, ConnectionConfig]) ->
     return {alias: limit for alias, settings in connectionConfiguration.items() if (limit := settings.jobLimit()) is not None}
 
 
+def _coreBudget(dependencyGraph: DependencyGraph, job: str, jobConfig: Any, maskingThreads: Union[str, int], threads: int,
+                alongside: int) -> CoreBudget:
+    """What a starting job is given to fit `partitions: auto` into: its share
+    of the cores, as `maskingThreads: auto` reckons it, the masking threads it
+    was given, and the places its connections have free. A job with an
+    automatic count holds as many places as it might use from the start, so
+    the jobs started after it can't take them.
+    """
+
+    share = coreShare(alongside)
+    partitions = getattr(jobConfig, 'partitions', None)
+    places = None
+    if partitions is not None and partitions.automatic:
+        places = dependencyGraph.freePlaces(job)
+        dependencyGraph.reserve(job, share if places is None else min(share, places))
+
+    return CoreBudget(share=share, maskingThreads=threads, automaticThreads=maskingModule.effectiveMaskingThreads(maskingThreads) == 'auto',
+                      places=places)
+
+
 def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfiguration: Dict[str, ConnectionConfig],
               memory: MemoryBackend, termination: Dict[str, bool], logLevel: int, maskingThreads: Union[str, int] = 1) -> None:
     """Runs one cycle's jobs to completion, each as soon as its predecessors
@@ -194,10 +215,11 @@ def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfigur
                 for job in starting:
                     jobConfig = dependencyGraph.activeJobs[job]
                     threads = maskingThreadsFor(maskingThreads, alongside)
+                    budget = _coreBudget(dependencyGraph, job, jobConfig, maskingThreads, threads, alongside)
                     if native and getattr(jobConfig, 'masking', None) is not None:
                         logger.info('{}: masking with {} thread(s) ({} job(s) running, {} core(s))'.format(job, threads, alongside, availableCores()),
                                     extra={'job': job})
-                    running.append(_JobProcess(job, jobConfig, connectionConfiguration, memory, logLevel, threads))  # type: ignore[arg-type]
+                    running.append(_JobProcess(job, jobConfig, connectionConfiguration, memory, logLevel, threads, budget))  # type: ignore[arg-type]
 
             if not running:
                 # Nothing running and nothing startable means every job is
@@ -251,6 +273,10 @@ def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, Conne
         maskingModule.effectiveMaskingThreads(jobsFile.maskingThreads)
     except ValueError as error:
         raise ConfigurationError(str(error)) from None
+    if any(job.masking is not None and job.active for job in jobsFile.jobs.values()):
+        problem = maskingModule.requireNativeProblem(jobsFile.requireNative)
+        if problem:
+            raise ConfigurationError(problem)
 
     Log(logFile=logFile, level=logLevel, logFormat=logFormat)
     logger.info('Starting data job runner with {} worker(s)'.format(jobsFile.workers))

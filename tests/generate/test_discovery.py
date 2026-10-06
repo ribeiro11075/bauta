@@ -34,11 +34,26 @@ def strategyFor(column, values=(), category=None, table='things', keyReference=N
     ('city', 'fakeCity'),
     ('notes', 'null'),
     ('company_name', 'fakeCompany'),
-    ('gender', 'shuffle'),
+    ('gender', 'null'),
+    ('ethnicity', 'null'),
     ('status', 'keep'),
     ])
 def test_names_suggest_strategies(column, expected):
     assert strategyFor(column) == expected
+
+
+def test_uuids_are_masked_one_to_one_rather_than_kept():
+    """Real UUIDs in a copy can be looked up in every other system that holds
+    them: logs, a CRM, an analytics tool.
+    """
+    import uuid
+
+    texts = [str(uuid.UUID(int=index * 7919)) for index in range(1, 6)]
+    suggestion = suggestColumn('orders', 'external_ref', TEXT, texts)
+
+    assert suggestion.policy == {'strategy': 'key', 'charset': 'hex'}
+    # As psycopg returns a uuid column: objects, not text.
+    assert suggestColumn('orders', 'external_ref', None, [uuid.UUID(text) for text in texts]).policy['strategy'] == 'key'
 
 
 def test_a_name_is_not_trusted_over_the_columns_type():
@@ -123,6 +138,28 @@ def sampleDatabase(tmp_path):
         yield database
 
 
+def test_coordinates_are_moved_by_a_distance_and_a_longitude_at_its_rows_latitude(tmp_path):
+    connection = sqlite3.connect(str(tmp_path / 'places.db'))
+    connection.executescript('CREATE TABLE stores (id INT PRIMARY KEY, lat REAL, lng REAL, long_term_debt REAL); '
+                             'CREATE TABLE routes (id INT PRIMARY KEY, start_lat REAL, end_lat REAL, end_lng REAL);')
+    connection.execute('INSERT INTO stores VALUES (1, 51.5, -0.14, 10.0)')
+    connection.execute('INSERT INTO routes VALUES (1, 51.5, 52.0, -0.14)')
+    connection.commit()
+    connection.close()
+
+    settings = connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'places.db'))
+    with Database(connectionSettings=settings) as database:
+        stores = {suggestion.column: suggestion.policy for suggestion in proposeTable(database, 'stores').columns}
+        routes = {suggestion.column: suggestion.policy for suggestion in proposeTable(database, 'routes').columns}
+
+    assert stores['lat'] == {'strategy': 'coordinate', 'axis': 'latitude', 'meters': 1000}
+    assert stores['lng'] == {'strategy': 'coordinate', 'axis': 'longitude', 'meters': 1000, 'latitudeColumn': 'lat'}
+    assert stores['long_term_debt'] == {'strategy': 'keep'}
+    # Two latitudes: which one a longitude goes with isn't guessed.
+    assert 'latitudeColumn' not in routes['end_lng']
+    assert strategyFor('latitude', ['north'], TEXT) == 'keep'
+
+
 def test_propose_table_reads_the_schema_and_a_sample(sampleDatabase):
     customers = {suggestion.column: suggestion.policy for suggestion in proposeTable(sampleDatabase, 'customers', sampleSize=5).columns}
     orders = {suggestion.column: suggestion.policy for suggestion in proposeTable(sampleDatabase, 'orders', sampleSize=5).columns}
@@ -172,7 +209,7 @@ def test_rendered_jobs_are_valid_configuration_and_carry_their_reasons(sampleDat
     assert '# name suggests an email address' in text
     assert 'person1@corp.com' not in text
 
-    monkeypatch.setenv('TEST_MASKING_KEY', 'k' * 32)
+    monkeypatch.setenv('TEST_MASKING_KEY', 'a-discovery-test-masking-key')
     jobsFile = Configuration.validateJobConfiguration(expandEnvironmentVariables(yaml.safe_load(text)), DataJobsFile)
 
     orders = jobsFile.jobs['maskOrders']
@@ -186,7 +223,7 @@ def test_rendered_jobs_are_valid_configuration_and_carry_their_reasons(sampleDat
 def test_rendered_jobs_mask_in_place_through_a_swap(sampleDatabase, monkeypatch):
     text = renderJobs([JobDraft('customers', 'SELECT * FROM customers', [], proposeTable(sampleDatabase, 'customers'))], 'prod', 'prod', [])
 
-    monkeypatch.setenv('MASKING_KEY', 'k' * 32)
+    monkeypatch.setenv('MASKING_KEY', 'a-discovery-test-masking-key')
     job = Configuration.validateJobConfiguration(expandEnvironmentVariables(yaml.safe_load(text)), DataJobsFile).jobs['maskCustomers']
 
     assert job.insertStrategy.value == 'swap'
@@ -364,7 +401,7 @@ def test_json_text_is_read_as_a_document_and_its_proposal_is_valid_yaml_for_a_jo
 
     assert suggestion.policy == {'strategy': 'json', 'fields': {'first_name': {'strategy': 'fakeFirstName'}, 'tags[].email': {'strategy': 'email'}}}
     written = yaml.safe_load(_flow(suggestion.policy))
-    assert MaskingConfig(key='k' * 32, columns={'profile': written}).columns['profile'] == suggestion.policy
+    assert MaskingConfig(key='a-discovery-test-masking-key', columns={'profile': written}).columns['profile'] == suggestion.policy
 
 
 def test_a_json_document_with_nothing_personal_is_kept_for_review():

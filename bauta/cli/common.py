@@ -300,6 +300,25 @@ def _sourceQueryColumns(job: DataJobConfig, connections: _Connections) -> List[s
     return columns
 
 
+def _sourceQuerySample(job: DataJobConfig, connections: _Connections, rows: int) -> Tuple[List[str], List[Tuple[Any, ...]]]:
+    """The columns a job's sourceQuery returns, and up to `rows` of its rows
+    from the start, without reading the rest. They stay in memory: nothing
+    that reads them may report a value.
+    """
+
+    with connections.use(job.sourceConnection) as database:
+        query = job.sourceQuery
+        parameters = None
+        if job.watermarkColumn:
+            query = database.substituteWatermarkPlaceholder(query)
+            parameters = (job.watermarkInitial,)
+        columns, chunks = database.stream(query=query, chunkSize=max(1, rows), parameters=parameters)
+        with chunks:
+            sampled = next(chunks, []) if rows else []
+
+    return columns, list(sampled)
+
+
 def _targetColumns(job: DataJobConfig, connections: _Connections) -> List[str]:
     """The target's columns, in the order a load fills them."""
 

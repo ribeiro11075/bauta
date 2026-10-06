@@ -105,6 +105,61 @@ class MSSQLDialect(DatabaseDialect):
                 "ORDER BY k.ordinal_position")
 
 
+    def uniqueKeysQuery(self) -> str:
+        """Unique indexes, which a unique constraint is enforced by, without a
+        filter and only their key columns, not those they INCLUDE. A computed
+        column comes back NULL, since a stage table has none to match.
+        """
+
+        return ("SELECT i.name, CASE WHEN c.is_computed = 0 THEN c.name END FROM sys.indexes i "
+                "JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id "
+                "JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id "
+                "JOIN sys.tables t ON t.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                "WHERE i.is_unique = 1 AND i.is_primary_key = 0 AND i.has_filter = 0 AND i.is_disabled = 0 AND ic.is_included_column = 0 "
+                "AND s.name = COALESCE({}, SCHEMA_NAME()) AND t.name = {} "
+                "ORDER BY i.name, ic.key_ordinal")
+
+
+    # How sys.columns' type, size and collation are written back into a
+    # column definition, for making a column NOT NULL: ALTER COLUMN restates
+    # the whole of it, and a size or collation left out would change it.
+    _SIZED_IN_BYTES = {'varchar', 'char', 'varbinary', 'binary'}
+    _SIZED_IN_CHARACTERS = {'nvarchar', 'nchar'}
+    _SCALED = {'datetime2', 'time', 'datetimeoffset'}
+
+    def _columnDefinition(self, typeName: str, maxLength: int, precision: int, scale: int, collation: Optional[str]) -> str:
+
+        if typeName in self._SIZED_IN_BYTES | self._SIZED_IN_CHARACTERS:
+            size = 'max' if maxLength == -1 else str(maxLength // 2 if typeName in self._SIZED_IN_CHARACTERS else maxLength)
+            rendered = '{}({})'.format(typeName, size)
+        elif typeName in ('decimal', 'numeric'):
+            rendered = '{}({}, {})'.format(typeName, precision, scale)
+        elif typeName in self._SCALED:
+            rendered = '{}({})'.format(typeName, scale)
+        else:
+            rendered = typeName
+
+        return rendered + (' COLLATE {}'.format(collation) if collation else '')
+
+
+    def addKeys(self, cursor: Cursor, table: str, catalogTable: str, primaryKey: Sequence[str], uniqueKeys: Sequence[Sequence[str]]) -> None:
+        """SQL Server refuses a primary key over a column that allows NULL, as
+        the other databases quietly make it NOT NULL, so each such column is
+        made NOT NULL first, restated with its own type and collation.
+        """
+
+        if primaryKey:
+            cursor.execute('SELECT c.name, TYPE_NAME(c.user_type_id), c.max_length, c.precision, c.scale, c.collation_name '
+                           'FROM sys.columns c WHERE c.object_id = OBJECT_ID(%s) AND c.is_nullable = 1', (table,))
+            nullable = {row[0].upper(): row[1:] for row in cursor.fetchall()}
+            for column in primaryKey:
+                found = nullable.get(bareName(column).upper())
+                if found is not None:
+                    cursor.execute('ALTER TABLE {} ALTER COLUMN {} {} NOT NULL'.format(table, column, self._columnDefinition(*found)))
+
+        super().addKeys(cursor, table, catalogTable, primaryKey, uniqueKeys)
+
+
     def tableExistsQuery(self) -> str:
 
         return "SELECT count(*) FROM information_schema.tables WHERE table_schema = COALESCE({}, SCHEMA_NAME()) AND table_name = {}"

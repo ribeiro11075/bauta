@@ -230,6 +230,24 @@ def test_dry_run_reports_an_upsert_target_with_no_primary_key(workspace):
     assert main(['run', '--quiet', '--dry-run']) == EXIT_JOBS_DID_NOT_SUCCEED
 
 
+def test_dry_run_reports_a_partition_column_the_query_does_not_return(workspace, caplog):
+    _writeJobs(workspace, loadRows={'partitions': {'column': 'code', 'count': 2}})
+
+    assert main(['run', '--quiet', '--dry-run']) == EXIT_JOBS_DID_NOT_SUCCEED
+    assert 'partitions.column "code" is not among the columns sourceQuery returns' in caplog.text
+
+    _writeJobs(workspace, loadRows={'partitions': {'column': 'ID', 'count': 2}})
+
+    assert main(['run', '--quiet', '--dry-run']) == EXIT_SUCCESS
+
+
+def test_a_run_with_partitions_loads_every_row(workspace):
+    _writeJobs(workspace, loadRows={'partitions': {'column': 'id', 'count': 3}}, dependent={'active': False})
+
+    assert main(['run', '--quiet']) == EXIT_SUCCESS
+    assert _targetRowCount(workspace) == 5
+
+
 def test_dry_run_reports_a_stage_table_that_is_not_there(workspace, caplog):
     """The stage table is where the rows land, so a run without it fails at
     once -- which a dry run used to pass, since it only looked at the target.
@@ -940,6 +958,34 @@ def test_coverage_passes_once_the_rest_is_acknowledged_and_names_a_stale_declara
     report = json.loads((coverageWorkspace / 'coverage.json').read_text())
     assert report['summary'] == {'uncovered': 0, 'copied': 1, 'masked': 0, 'acknowledged': 2}
     assert report['acknowledgedButAbsent'] == ['ORDERS_2019']
+
+
+def _sourceValues(workspace):
+    connection = sqlite3.connect(str(workspace / 'demo.db'))
+    try:
+        return [row[0] for row in connection.execute('SELECT name FROM src')]
+    finally:
+        connection.close()
+
+
+def test_audit_writes_one_html_page_with_no_key_and_no_value(workspace):
+    _writeJobs(workspace, AUDIT_JOBS_YAML)
+
+    assert main(['audit', '--quiet', '--connect', '--format', 'html', '--output', 'audit.html']) == EXIT_SUCCESS
+
+    page = (workspace / 'audit.html').read_text()
+    assert page.startswith('<!doctype html>') and page.rstrip().endswith('</html>')
+    assert '<code>maskRows</code>' in page and 'column email is kept unmasked' in page
+    assert 'an-audit-cli-masking-key' not in page
+    assert _sourceValues(workspace) and not [value for value in _sourceValues(workspace) if value in page]
+
+
+def test_coverage_writes_one_html_page_and_still_fails_on_what_is_not_covered(coverageWorkspace):
+    assert main(['coverage', '--quiet', '--format', 'html', '--output', 'coverage.html']) == EXIT_JOBS_DID_NOT_SUCCEED
+
+    page = (coverageWorkspace / 'coverage.html').read_text()
+    assert page.startswith('<!doctype html>')
+    assert 'Coverage of demo' in page and 'Not covered' in page and '<code>email</code>' in page
 
 
 def test_coverage_needs_database_when_the_jobs_read_from_several(coverageWorkspace, caplog):

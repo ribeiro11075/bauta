@@ -360,3 +360,167 @@ def test_run_data_jobs_with_target_columns_reordered_from_the_tables_own_order(l
 
     rows = liveDatabase.query('SELECT id, name, amount FROM {}'.format(peopleTable))
     assert rows == [(1, 'alice', 100)]
+
+
+# Partitions ------------------------------------------------------------------
+
+def test_partition_slices_read_every_row_once(liveDatabase, peopleTable, databaseName):
+    """The bounds query and each slice's predicate, through a derived table,
+    on every database: together they read each row once, nulls and values
+    beyond the bounds included.
+    """
+    from bauta.jobs.partitions import boundsQuery, integerBound, slicePredicates, splitPoints, wrappedQuery
+
+    rows = [(index, 'name{}'.format(index), None if index % 7 == 0 else index * 3 - 50) for index in range(60)]
+    liveDatabase.insert(table=peopleTable, data=rows, chunkSize=100)
+    query = 'SELECT id, name, amount FROM {}'.format(peopleTable)
+    column = liveDatabase.quoted(_folded(databaseName, ['amount']))[0]
+
+    _, bounds = liveDatabase.stream(boundsQuery(query, column), chunkSize=1)
+    with bounds:
+        lowest, highest = (integerBound(value, 'amount') for value in next(bounds)[0])
+
+    read = []
+    for predicate in slicePredicates(column, splitPoints(lowest, highest, 4)):
+        _, chunks = liveDatabase.stream(wrappedQuery(query + ';', predicate), chunkSize=7)
+        with chunks:
+            read.extend(row for chunk in chunks for row in chunk)
+
+    assert (lowest, highest) == (-47, 127)
+    assert sorted(read) == rows
+
+
+def test_run_data_jobs_with_partitions_swaps_in_every_row(liveDatabase, peopleTable, connectionSettings, databaseName, tmp_path):
+    """A partitioned swap through a real run: every partition its own
+    connections and thread, all loading one stage table, swapped in once.
+    DuckDB is left out: it lets one job at a time open its file, so validation
+    refuses it partitions.
+    """
+    if databaseName == 'duckdb':
+        pytest.skip('DuckDB refuses partitions')
+
+    targetTable = _createLike(liveDatabase, peopleTable, '_target')
+    stageTable = _createLike(liveDatabase, peopleTable, '_target_stage')
+    rows = [(index, 'name{}'.format(index), None if index % 5 == 0 else index) for index in range(300)]
+    liveDatabase.insert(table=peopleTable, data=rows, chunkSize=100)
+    liveDatabase.insert(table=targetTable, data=[(1000, 'old', 1)])
+
+    try:
+        result = _runOneJob(connectionSettings, tmp_path, FileMemory(memoryFile=tmp_path / 'memory.yaml'), chunkSize=23,
+                            insertStrategy='swap', targetTableFinal=targetTable, targetTableStage=stageTable,
+                            partitions={'column': 'amount', 'count': 3},
+                            sourceQuery='SELECT id, name, amount FROM {}'.format(peopleTable))
+
+        assert result.succeeded, result.outcomes
+        assert result.rowCount == len(rows)
+        assert liveDatabase.query('SELECT id, name, amount FROM {} ORDER BY id'.format(targetTable)) == rows
+        assert 'as 3 partition(s)' in (tmp_path / 'runner.log').read_text()
+    finally:
+        for table in (targetTable, stageTable):
+            liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
+def test_automatic_partitions_slice_by_the_targets_primary_key(liveDatabase, peopleTable, connectionSettings, databaseName, monkeypatch, tmp_path):
+    """`partitions: auto` on every database that can take slices: the column
+    is the target's primary key, the count the budget's share, and the masks
+    are those of one stream. Run in this process, so the slice size it
+    judges by can be made small enough for a test table.
+    """
+    if databaseName in ('duckdb', 'sqlite'):
+        pytest.skip('read as one stream: {} lets one writer in at a time'.format(databaseName))
+
+    import logging
+    from bauta.jobs import partitions as partitionsModule
+    from bauta.jobs import pipeline
+    from bauta.jobs.partitions import CoreBudget
+    from tests.jobConfigs import dataJob
+
+    monkeypatch.setattr(partitionsModule, 'MINIMUM_ROWS_PER_SLICE', 50)
+    monkeypatch.setattr(pipeline, '_budget', CoreBudget(share=4, maskingThreads=1, automaticThreads=False, places=None))
+    rows = [(index, 'name{}'.format(index), index % 9) for index in range(1, 301)]
+    liveDatabase.insert(table=peopleTable, data=rows, chunkSize=100)
+    masking = {'key': 'an-automatic-partitions-masking-key', 'columns': {'id': 'keep', 'name': {'strategy': 'key'}, 'amount': 'keep'}}
+
+    def copy(suffix, partitions):
+        target, stage = _createLike(liveDatabase, peopleTable, suffix), _createLike(liveDatabase, peopleTable, suffix + '_stage')
+        job = dataJob(sourceConnection='db', targetConnection='db', sourceQuery='SELECT id, name, amount FROM {}'.format(peopleTable),
+                      targetTableFinal=target, targetTableStage=stage, insertStrategy='swap', chunkSize=17, masking=masking, partitions=partitions)
+        try:
+            outcome = pipeline._executeDataJob('job1', job, {'db': connectionSettings})
+            return outcome.rowCount, liveDatabase.query('SELECT id, name, amount FROM {} ORDER BY id'.format(target))
+        finally:
+            for table in (target, stage):
+                liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+    messages = []
+    handler = logging.Handler()
+    handler.emit = lambda record: messages.append(record.getMessage())
+    logging.getLogger('bauta').addHandler(handler)
+    monkeypatch.setattr(logging.getLogger('bauta'), 'level', logging.INFO)
+    try:
+        sliced = copy('_auto', 'auto')
+        whole = copy('_whole', None)
+    finally:
+        logging.getLogger('bauta').removeHandler(handler)
+
+    assert sliced == whole and sliced[0] == len(rows)
+    assert any('as 4 slices of' in message for message in messages), messages
+
+
+# Keys across a swap --------------------------------------------------------
+
+def _keys(database, table):
+    """The table's primary key and unique keys, as each database folds them."""
+
+    return ([column.upper() for column in database.dialect.primaryKey(database.cursor, table)],
+            sorted(tuple(column.upper() for column in columns) for columns in database.dialect.uniqueKeys(database.cursor, table)))
+
+
+def test_a_swapped_table_keeps_its_keys_on_every_run(liveDatabase, peopleTable, connectionSettings, tmp_path):
+    """The stage is given the target's primary key and unique key before it
+    is loaded, so the live table has them after every swap, not every other
+    one -- three swaps, so each table has been the target twice, under names
+    the database chose without colliding.
+    """
+    targetTable, stageTable = peopleTable + '_keyed', peopleTable + '_keyed_stage'
+    liveDatabase.alter('CREATE TABLE {} (id INT NOT NULL, name VARCHAR(50), amount INT, PRIMARY KEY (id), UNIQUE (name))'.format(targetTable))
+    liveDatabase.alter('CREATE TABLE {} (id INT, name VARCHAR(50), amount INT)'.format(stageTable))
+    liveDatabase.insert(table=peopleTable, data=[(index, 'name{}'.format(index), index) for index in range(10)])
+
+    try:
+        for run in range(3):
+            result = _runOneJob(connectionSettings, tmp_path, FileMemory(memoryFile=tmp_path / 'memory.yaml'), held=liveDatabase,
+                                insertStrategy='swap', targetTableFinal=targetTable, targetTableStage=stageTable,
+                                sourceQuery='SELECT id, name, amount FROM {}'.format(peopleTable))
+
+            assert result.succeeded, (run, result.outcomes)
+            assert _keys(liveDatabase, targetTable) == (['ID'], [('NAME',)]), run
+            assert liveDatabase.query('SELECT count(*) FROM {}'.format(targetTable)) == [(10,)]
+            # Its reads end here, or the next run's renames wait on them.
+            liveDatabase.rollback()
+        assert _keys(liveDatabase, stageTable) == (['ID'], [('NAME',)])
+        liveDatabase.rollback()
+        assert 'Gave stage table {} the primary key (id) and unique (name)'.format(stageTable).upper() in \
+            (tmp_path / 'runner.log').read_text().upper()
+    finally:
+        for table in (targetTable, stageTable):
+            liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
+def test_a_repeated_key_fails_a_swap_before_it_reaches_the_target(liveDatabase, peopleTable, connectionSettings, databaseName, tmp_path):
+    """With the target's key on the stage, a source repeating a key fails the
+    load, every run, where a keyless stage swapped the repeat in every other.
+    """
+    stageTable = peopleTable + '_bare_stage'
+    liveDatabase.alter('CREATE TABLE {} (id INT, name VARCHAR(50), amount INT)'.format(stageTable))
+    liveDatabase.insert(table=peopleTable, data=[(1, 'kept', 1)])
+
+    try:
+        result = _runOneJob(connectionSettings, tmp_path, FileMemory(memoryFile=tmp_path / 'memory.yaml'), held=liveDatabase,
+                            insertStrategy='swap', targetTableFinal=peopleTable, targetTableStage=stageTable,
+                            sourceQuery="SELECT 2, 'twice', 2{0} UNION ALL SELECT 2, 'twice', 2{0}".format(_fromNothing(databaseName)))
+
+        assert result.failed, result.outcomes
+        assert liveDatabase.query('SELECT id, name, amount FROM {}'.format(peopleTable)) == [(1, 'kept', 1)]
+    finally:
+        liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(stageTable))

@@ -118,6 +118,17 @@ class MySQLDialect(DatabaseDialect):
                 "WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {} AND constraint_name = 'PRIMARY' ORDER BY ordinal_position")
 
 
+    def uniqueKeysQuery(self) -> str:
+        """A column indexed by a prefix only -- which a TEXT column's index
+        must be -- comes back NULL, as a functional index's already does: a
+        column list alone can't recreate either.
+        """
+
+        return ("SELECT index_name, CASE WHEN sub_part IS NULL THEN column_name END FROM information_schema.statistics "
+                "WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {} AND non_unique = 0 AND index_name <> 'PRIMARY' "
+                "ORDER BY index_name, seq_in_index")
+
+
     def tableExistsQuery(self) -> str:
 
         return "SELECT count(*) FROM information_schema.tables WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {}"

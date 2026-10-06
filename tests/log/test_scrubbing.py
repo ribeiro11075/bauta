@@ -9,9 +9,9 @@ import logging
 import pytest
 
 from bauta.jobs.dependencyGraph import JobStatus
-from bauta.log import LOGGER_NAME, JsonFormatter, ScrubbingFilter, portableRecord
+from bauta.log import LOGGER_NAME, JsonFormatter, ScrubbingFilter, installDriverScrubbing, portableRecord
 from bauta.jobs.pipeline import _executeWithRetries
-from bauta.log.scrubbing import describeError, scrubText
+from bauta.log.scrubbing import describeError, scrubForeignText, scrubText
 
 SECRET = 'SeCrEt7'
 
@@ -80,6 +80,22 @@ KNOWN_MESSAGES = [
      "(245, b'Conversion failed when converting the nvarchar value \\'<redacted>\\' to data type int.DB-Lib error message 20018')"),
     ("(248, b'The conversion of the varchar value \\'SeCrEt7\\' overflowed an int column.DB-Lib error message 20018')",
      "(248, b'The conversion of the varchar value \\'<redacted>\\' overflowed an int column.DB-Lib error message 20018')"),
+    # DuckDB 1.5
+    ("Conversion Error: Could not convert string 'SeCrEt7@x.com' to INT32\n  \nLINE 1: select cast('SeCrEt7@x.com' as integer)\n               ^",
+     "Conversion Error: Could not convert string '<redacted>' to INT32\n  \nLINE 1: <redacted>"),
+    ('Conversion Error: Could not convert string "12SeCrEt7" to DECIMAL(10,2)', 'Conversion Error: Could not convert string "<redacted>" to DECIMAL(10,2)'),
+    ('Constraint Error: Duplicate key "id: SeCrEt7" violates primary key constraint.',
+     'Constraint Error: Duplicate key "<redacted>" violates primary key constraint.'),
+    ('Constraint Error: Duplicate key "a: 1, b: SeCrEt7" violates unique constraint.', 'Constraint Error: Duplicate key "<redacted>" violates unique constraint.'),
+    ('Constraint Error: Violates foreign key constraint because key "id: SeCrEt7" does not exist in the referenced table',
+     'Constraint Error: Violates foreign key constraint because key "<redacted>" does not exist in the referenced table'),
+    ('Invalid Input Error: Could not parse string "SeCrEt7 1980" according to format specifier "%Y-%m-%d"\nSeCrEt7 1980\n^\nError: Expected a number',
+     'Invalid Input Error: Could not parse string "<redacted>" according to format specifier "%Y-%m-%d"\n^\nError: Expected a number'),
+    ('Conversion Error: date field value out of range: "SeCrEt7"', 'Conversion Error: date field value out of range: "<redacted>"'),
+    ('Conversion Error: invalid timestamp field format: "SeCrEt7", expected format is (YYYY-MM-DD HH:MM:SS[.US][±HH[:MM[:SS]]| ZONE])',
+     'Conversion Error: invalid timestamp field format: "<redacted>", expected format is (YYYY-MM-DD HH:MM:SS[.US][±HH[:MM[:SS]]| ZONE])'),
+    ("Conversion Error: Type INT64 with value 77777777777 can't be cast because the value is out of range for the destination type INT32",
+     "Conversion Error: Type INT64 with value <redacted> can't be cast because the value is out of range for the destination type INT32"),
     ]
 
 # Values built to break a pattern: quotes, parentheses, newlines, and the
@@ -98,6 +114,8 @@ AWKWARD_MESSAGES = [
     "(2627, b'Violation of PRIMARY KEY constraint \\'PK__sq__3BD0199B9E807AA0\\'. Cannot insert duplicate key in object \\'dbo.sq\\'. "
     "The duplicate key value is (a\"b\\'c).x@y SeCrEt7).DB-Lib error message 20018, severity 14:\\nGeneral SQL Server error\\n')",
     '(245, b"Conversion failed when converting the nvarchar value \'x\' for key \'y SeCrEt7\' to data type int.DB-Lib error message 20018")',
+    "Conversion Error: Could not convert string 'O'SeCrEt7' to INT32",
+    'Constraint Error: Duplicate key "a: x" violates , b: SeCrEt7" violates unique constraint.',
     ]
 
 # Messages that quote nothing from the data, and must come through whole.
@@ -123,6 +141,52 @@ def test_awkward_values_are_removed_whole(message):
 @pytest.mark.parametrize('message', [message for message, _ in KNOWN_MESSAGES] + AWKWARD_MESSAGES)
 def test_scrubbing_twice_changes_nothing(message):
     assert scrubText(scrubText(message)) == scrubText(message)
+    assert scrubForeignText(scrubForeignText(message)) == scrubForeignText(message)
+
+
+@pytest.mark.parametrize('message,expected', KNOWN_MESSAGES)
+def test_a_known_message_is_scrubbed_the_same_way_from_a_driver(message, expected):
+    # Every quote left by a pattern either names something or is <redacted>.
+    assert scrubForeignText(message) == expected
+
+
+# Formats no pattern knows, as a driver might write them. Each loses its
+# quoted text, with the names in it kept where they come first.
+UNKNOWN_FORMATS = [
+    ('Weird Error: cannot store "SeCrEt7" here', 'Weird Error: cannot store <redacted> here'),
+    ("Weird Error: column 'email' of table 'customers' refused 'SeCrEt7'",
+     "Weird Error: column 'email' of table 'customers' refused <redacted>"),
+    ('Weird Error: "SeCrEt7" in column "email".', 'Weird Error: <redacted>.'),
+    ("Weird Error: 'O'SeCrEt7' is not a number\nnext line", "Weird Error: <redacted>"),
+    ('Weird Error: "multi\nSeCrEt7" is not a number', 'Weird Error: <redacted>'),
+    ("Weird Error: 'a' and 'SeCrEt7' and 'b", 'Weird Error: <redacted>'),
+    ('(9999, b"Something new about \'SeCrEt7\' in object \'dbo.sc\'.DB-Lib error message 20018")',
+     '(9999, b"Something new about <redacted>.DB-Lib error message 20018")'),
+    ('Weird Error: SeCrEt7 is not quoted', 'Weird Error: SeCrEt7 is not quoted'),
+    ]
+
+
+@pytest.mark.parametrize('message,expected', UNKNOWN_FORMATS)
+def test_a_driver_message_in_an_unknown_format_loses_its_quoted_text(message, expected):
+    assert scrubForeignText(message) == expected
+
+
+@pytest.mark.parametrize('message', VALUE_FREE_MESSAGES)
+def test_a_driver_message_naming_only_tables_and_columns_is_unchanged(message):
+    assert scrubForeignText(message) == message
+
+
+def test_a_driver_error_is_described_failing_closed_and_the_package_own_is_not():
+
+    class DriverError(Exception):
+        pass
+
+    DriverError.__module__ = 'duckdb'
+
+    assert describeError(DriverError('Weird: "SeCrEt7" here')) == 'DriverError: Weird: <redacted> here'
+    # The package's own messages hold no values, and quote what they name.
+    from bauta.configuration import ConfigurationError
+    assert describeError(ConfigurationError('job "loadOrders" is odd')) == 'ConfigurationError: job "loadOrders" is odd'
 
 
 @pytest.mark.parametrize('message', VALUE_FREE_MESSAGES)
@@ -163,6 +227,57 @@ def test_the_filter_scrubs_the_traceback():
     assert SECRET not in formatted
     assert 'Traceback' in formatted and "Duplicate entry '<redacted>'" in formatted
     assert SECRET not in JsonFormatter().format(record)
+
+
+def test_the_filter_scrubs_a_driver_message_wherever_the_record_repeats_it():
+    error = _raised('Weird Error: cannot store "SeCrEt7" here')
+    record = _record('Failed to complete job due to error {}'.format(error[1]), exc_info=error)
+
+    ScrubbingFilter().filter(record)
+
+    assert SECRET not in record.getMessage() and SECRET not in record.exc_text
+    assert 'cannot store <redacted> here' in record.getMessage()
+
+
+def test_the_filter_scrubs_the_driver_error_behind_the_package_own():
+    from bauta.configuration import ConfigurationError
+
+    try:
+        try:
+            raise RuntimeError('Weird Error: cannot store "SeCrEt7" here')
+        except RuntimeError as cause:
+            raise ConfigurationError('could not check the target') from cause
+    except ConfigurationError as error:
+        record = _record('Failed', exc_info=(type(error), error, error.__traceback__))
+
+    ScrubbingFilter().filter(record)
+
+    assert SECRET not in record.exc_text and 'could not check the target' in record.exc_text
+
+
+def test_the_drivers_own_loggers_are_scrubbed_once_installed():
+    received = []
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            received.append(self.format(record))
+
+    driver = logging.getLogger('duckdb.connection')
+    handler = Collect()
+    driver.addHandler(handler)
+    previous = logging.getLogRecordFactory()
+    try:
+        installDriverScrubbing()
+        installDriverScrubbing()
+        driver.error('executing %s', "insert into t values ('SeCrEt7')", exc_info=_raised('Weird: "SeCrEt7"'))
+        logging.getLogger('somebody.else').handlers[:] = []
+        unrelated = logging.getLogRecordFactory()('somebody.else', logging.INFO, __file__, 1, "keep 'this'", (), None)
+    finally:
+        logging.setLogRecordFactory(previous)
+        driver.removeHandler(handler)
+
+    assert received and all(SECRET not in text for text in received)
+    assert unrelated.getMessage() == "keep 'this'"
 
 
 def test_the_filter_scrubs_a_record_forwarded_from_a_job_process():
@@ -211,3 +326,34 @@ def test_a_failed_job_outcome_carries_the_scrubbed_error():
 
     assert outcome.status == JobStatus.FAILED and outcome.attempts == 2
     assert outcome.error == 'RuntimeError: duplicate key value\nDETAIL:  Key (email)=(<redacted>) already exists.\n'
+
+
+DUCKDB_FAILURES = [
+    "SELECT CAST('SeCrEt7@x.com' AS INTEGER)",
+    "SELECT CAST('O''SeCrEt7' AS INTEGER)",
+    "INSERT INTO p VALUES ('SeCrEt7-1'), ('SeCrEt7-1')",
+    "INSERT INTO c VALUES ('SeCrEt7-ghost')",
+    "SELECT strptime('SeCrEt7 1980', '%Y-%m-%d')",
+    "SELECT 'SeCrEt7'::DATE",
+    "SELECT 'SeCrEt7'::TIMESTAMP",
+    "SELECT '{\"SeCrEt7\": 1'::JSON",
+    "SELECT CAST(77777777777 AS INTEGER)",
+    ]
+
+
+@pytest.mark.parametrize('statement', DUCKDB_FAILURES)
+def test_duckdb_errors_quote_no_values(statement):
+    duckdb = pytest.importorskip('duckdb')
+    connection = duckdb.connect()
+    try:
+        connection.execute('CREATE TABLE p (id VARCHAR PRIMARY KEY); CREATE TABLE c (pid VARCHAR REFERENCES p (id))')
+        with pytest.raises(duckdb.Error) as raised:
+            connection.execute(statement)
+    finally:
+        connection.close()
+
+    described = describeError(raised.value)
+
+    assert SECRET not in described and '77777777777' not in described
+    # A known format keeps what it says about the failure.
+    assert described.startswith(type(raised.value).__name__ + ': ')

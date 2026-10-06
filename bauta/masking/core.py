@@ -25,13 +25,24 @@ import importlib
 import importlib.metadata
 import json
 import logging
+import math
 import os
+import re
 import uuid
 from typing import Any, Callable, ClassVar, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple, Type, Union
 
 from ..log import LOGGER_NAME
 
 KEY_MINIMUM_LENGTH = 16
+
+# Fewer different characters than this, and a key is a pattern rather than a
+# secret: `aaaa...`, `abab...`, `1212...`. Refused, whatever its length.
+KEY_MINIMUM_DISTINCT_CHARACTERS = 8
+
+# What a key should hold, in bits, as keyStrengthBits estimates it. Weaker keys
+# are warned about, not refused. 32 random bytes, as the docs recommend,
+# estimate at over 200; 16 random bytes in hex, just under this.
+KEY_RECOMMENDED_BITS = 128
 
 # Masks remembered per column, for the repeated values of foreign keys and
 # low-cardinality columns. Bounded to a few megabytes a column.
@@ -54,6 +65,10 @@ FEISTEL_ROUNDS = 10
 HMAC_BLOCK_SIZE = 64
 
 
+# Why _nativeModule found no extension to use, for requireNative to say.
+_nativeUnavailable: Optional[str] = None
+
+
 @functools.cache
 def _nativeModule() -> Any:
     """The optional `bauta_rs` extension, or None if it isn't installed,
@@ -64,12 +79,17 @@ def _nativeModule() -> Any:
     slower.
     """
 
+    global _nativeUnavailable
+    _nativeUnavailable = None
+
     if os.environ.get('BAUTA_NATIVE') == '0':
+        _nativeUnavailable = 'BAUTA_NATIVE=0 turns it off'
         return None
 
     try:
         import bauta_rs
     except ImportError:
+        _nativeUnavailable = 'bauta-rs is not installed; pip install "bauta[native]" installs it'
         return None
 
     try:
@@ -80,6 +100,8 @@ def _nativeModule() -> Any:
 
     installed = getattr(bauta_rs, '__version__', None)
     if installed != expected:
+        _nativeUnavailable = 'bauta-rs {} is installed, which does not match bauta {}; pip install "bauta[native]=={}" installs the one that does'.format(
+            installed, expected, expected)
         logging.getLogger(LOGGER_NAME).warning(
             'Masking in Python: bauta-rs %s does not match bauta %s, and only the same version is certain to mask identically. '
             'pip install "bauta[native]==%s" installs the matching one.', installed, expected, expected)
@@ -94,6 +116,24 @@ def nativeExtension() -> Any:
     """
 
     return _nativeModule()
+
+
+REQUIRE_NATIVE_VARIABLE = 'BAUTA_REQUIRE_NATIVE'
+
+
+def requireNativeProblem(required: bool) -> Optional[str]:
+    """Why a run that requires the native masker -- jobs.yaml's requireNative,
+    or BAUTA_REQUIRE_NATIVE=1 -- can't have it, or None. Without the
+    requirement a missing or mismatched extension only means masking in
+    Python, about ten times slower, with a warning a scheduled run's log may
+    bury; a run with a time window to keep can ask to stop instead.
+    """
+
+    if not (required or os.environ.get(REQUIRE_NATIVE_VARIABLE) == '1') or _nativeModule() is not None:
+        return None
+
+    return 'the native masker is required (requireNative, or ${}=1), but masking would run in Python, about ten times slower: {}'.format(
+        REQUIRE_NATIVE_VARIABLE, _nativeUnavailable)
 
 
 def nativeVersion() -> Optional[str]:
@@ -163,9 +203,19 @@ def maskingThreadsFor(setting: Union[str, int], concurrentJobs: int) -> int:
 
     setting = effectiveMaskingThreads(setting)
     if setting == 'auto':
-        return max(1, availableCores() // 2 // max(1, concurrentJobs))
+        return coreShare(concurrentJobs)
 
     return int(setting)
+
+
+def coreShare(concurrentJobs: int) -> int:
+    """A job's share of the cores: half of them, the half reading and writing
+    leave free, divided between `concurrentJobs`. What `maskingThreads: auto`
+    masks with, and what `partitions: auto` slices a job into; a job given both
+    spends it once (see jobs.partitions.automaticCount).
+    """
+
+    return max(1, availableCores() // 2 // max(1, concurrentJobs))
 
 
 def setMaskingThreads(threads: int) -> None:
@@ -349,6 +399,42 @@ class KeyedHash:
 _NATIVE_FALLBACK = 'fallback'
 
 
+# The steps a policy's `normalize` can take, in the order they are applied,
+# whatever order it names them in.
+NORMALIZE_STEPS = ('strip', 'lower', 'integer')
+
+# Text that spells an integer one way only: no sign but a minus, no leading
+# zero, no spaces. `007` is left as text, since an integer column holds 7.
+_INTEGER_TEXT = re.compile(r'-?[1-9][0-9]*|0')
+
+
+def normalizeColumn(values: Sequence[Any], steps: Sequence[str]) -> Tuple[List[Any], List[int]]:
+    """`values` with each text value normalized by `steps`, so that values a
+    database compares as equal mask as equal: `strip` for CHAR columns padded
+    with spaces, `lower` for a case-insensitive collation, and `integer` for
+    an id held as a number in one table and as text in another. Returns the
+    values and the positions where `integer` turned text into an integer, to
+    be written back as text.
+    """
+
+    strip, lower, integer = (step in steps for step in NORMALIZE_STEPS)
+    normalized: List[Any] = []
+    spelled: List[int] = []
+
+    for index, value in enumerate(values):
+        if isinstance(value, str):
+            if strip:
+                value = value.strip()
+            if lower:
+                value = value.lower()
+            if integer and len(value) <= MAXIMUM_KEY_LENGTH and _INTEGER_TEXT.fullmatch(value):
+                value = int(value)
+                spelled.append(index)
+        normalized.append(value)
+
+    return normalized, spelled
+
+
 class Strategy:
     """How one column is masked.
 
@@ -372,11 +458,19 @@ class Strategy:
     CACHEABLE: ClassVar[bool] = False
     # The native masker's name for this strategy, where it has one.
     NATIVE: ClassVar[Optional[str]] = None
+    # The option naming another column of the row this strategy masks with --
+    # `dateShift`'s shiftBy -- for a strategy that reads one. A plan hands
+    # its values to maskColumnWith, read before any column is masked.
+    CONTEXT_OPTION: ClassVar[Optional[str]] = None
 
     def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
         self.keyedHash = keyedHash
         self.options = dict(options)
         self._cache: Dict[Tuple[type, Any], Any] = {}
+        # The `normalize` steps, for a strategy that takes them: applied to
+        # each value before it is masked, here, so the native masker never
+        # sees the option.
+        self.normalize: Tuple[str, ...] = tuple(self.options.get('normalize', ()))
         self._native = self._buildNative()
 
 
@@ -395,9 +489,11 @@ class Strategy:
 
 
     def _nativeOptions(self) -> Dict[str, Any]:
-        """What the native masker is built from: the options, for most."""
+        """What the native masker is built from: the options, for most, less
+        `normalize`, which is applied before it.
+        """
 
-        return self.options
+        return {name: value for name, value in self.options.items() if name != 'normalize'}
 
 
     @classmethod
@@ -434,6 +530,29 @@ class Strategy:
         """Cross-option rules, for the strategies that have any."""
 
 
+    @classmethod
+    def defaultDomain(cls, column: str, options: Mapping[str, Any]) -> str:
+        """The domain a column masks in when its policy names none: the
+        column's own name, lower-cased, for most.
+        """
+
+        return column.lower()
+
+
+    def contextColumn(self) -> Optional[str]:
+        """The column whose value in the same row this strategy masks with, or None."""
+
+        return self.options.get(self.CONTEXT_OPTION) if self.CONTEXT_OPTION else None
+
+
+    def maskColumnWith(self, values: Sequence[Any], context: Sequence[Any], chunkIndex: int) -> List[Any]:
+        """The column masked with `context`, contextColumn()'s values in the
+        same rows, as read from the source.
+        """
+
+        raise NotImplementedError
+
+
     def bindKey(self, key: str) -> None:
         """Called by a plan, once built, with the masking key itself: for a
         strategy that masks parts of a value in domains of their own, as
@@ -442,6 +561,27 @@ class Strategy:
 
 
     def maskColumn(self, values: Sequence[Any], chunkIndex: int) -> List[Any]:
+
+        if self.normalize:
+            return self._maskNormalized(values)
+
+        return self._maskValues(values)
+
+
+    def _maskNormalized(self, values: Sequence[Any]) -> List[Any]:
+        """The column with each value normalized first, and the integers that
+        `integer` read from text written back as text.
+        """
+
+        normalized, spelled = normalizeColumn(values, self.normalize)
+        masked = self._maskValues(normalized)
+        for index in spelled:
+            masked[index] = str(masked[index])
+
+        return masked
+
+
+    def _maskValues(self, values: Sequence[Any]) -> List[Any]:
 
         if self._native is not None:
             return self._maskColumnNatively(values)
@@ -589,10 +729,62 @@ def changesValues(policy: Mapping[str, Any]) -> bool:
     return not resolveStrategy(policy['strategy']).PASSTHROUGH
 
 
-def validateKey(key: str) -> None:
+def validateKey(key: str, what: str = 'masking key') -> None:
+    """Refuses a key too short, or so repetitive that it is a pattern anyone
+    could guess offline from a key fingerprint. Raises ValueError, naming
+    neither the key nor any part of it.
+    """
 
     if len(key) < KEY_MINIMUM_LENGTH:
-        raise ValueError('the masking key must be at least {} characters; read it from the environment with ${{NAME}}'.format(KEY_MINIMUM_LENGTH))
+        raise ValueError('the {} must be at least {} characters; read it from the environment with ${{NAME}}'.format(what, KEY_MINIMUM_LENGTH))
+
+    if len(set(key)) < KEY_MINIMUM_DISTINCT_CHARACTERS:
+        raise ValueError('the {} uses only {} different character(s), which makes it a pattern rather than a secret: anyone holding '
+                         'its fingerprint could find it offline. Generate a random one with python -c "import secrets; '
+                         'print(secrets.token_urlsafe(32))"'.format(what, len(set(key))))
+
+
+_CHARACTER_CLASSES = (str.islower, str.isupper, str.isdigit)
+
+
+def keyStrengthBits(key: str) -> float:
+    """An estimate of the bits a key holds, generous to a random one: per
+    character, the fewer of the bits its character classes allow (26 lower-case
+    letters, 26 upper, 10 digits, about 33 others) and the bits its distinct
+    characters allow, so repetition counts against it as well as a small
+    alphabet. Words a dictionary holds are not detected.
+    """
+
+    if not key:
+        return 0.0
+
+    pool = sum(size for test, size in zip(_CHARACTER_CLASSES, (26, 26, 10)) if any(test(character) and character.isascii() for character in key))
+    if any(not (character.isascii() and character.isalnum()) for character in key):
+        pool += 33
+
+    return len(key) * min(math.log2(pool), math.log2(max(2, len(set(key)))))
+
+
+_warnedKeys: set = set()
+
+
+def warnIfWeakKey(key: str, what: str = 'masking key') -> None:
+    """Warns, once a process for each key, where keyStrengthBits puts a key
+    below KEY_RECOMMENDED_BITS. A warning rather than a refusal while keys made
+    to the old rule are replaced; it names the key's fingerprint, never the key.
+    """
+
+    bits = keyStrengthBits(key)
+    fingerprint = keyFingerprint(key)
+    if bits >= KEY_RECOMMENDED_BITS or fingerprint in _warnedKeys:
+        return
+
+    _warnedKeys.add(fingerprint)
+    logging.getLogger(LOGGER_NAME).warning(
+        'The {} with fingerprint {} holds an estimated {:.0f} bits, below the {} recommended: a weak key can be found offline by '
+        'anyone holding a real value and its mask, or the fingerprint. A future release will refuse it. Generate a random one with '
+        'python -c "import secrets; print(secrets.token_urlsafe(32))"; a new key changes every mask'.format(
+            what, fingerprint, bits, KEY_RECOMMENDED_BITS))
 
 
 class ColumnMasking(NamedTuple):
@@ -668,14 +860,27 @@ class BoundMasking:
 
         for column, policy, source in resolved:
             strategyType = resolveStrategy(policy['strategy'])
-            domain = policy.get('domain', column.lower())
             options = {name: value for name, value in policy.items() if name not in POLICY_FIELDS}
+            domain = policy.get('domain', strategyType.defaultDomain(column, options))
             strategy = strategyType(KeyedHash(key, domain), options)
             strategy.bindKey(key)
             self.strategies.append(strategy)
             self.manifest.append(ColumnMasking(column=column, strategy=policy['strategy'], domain=domain if strategyType.KEYED else None, source=source))
 
         self._chunkIndex = 0
+        # For each strategy that masks with another column of the row, that
+        # column's position.
+        folded = [column.upper() for column, _, _ in resolved]
+        self._contexts: List[Optional[int]] = []
+        for (column, _, _), strategy in zip(resolved, self.strategies):
+            context = strategy.contextColumn()
+            if context is None:
+                self._contexts.append(None)
+            elif context.upper() == column.upper() or context.upper() not in folded:
+                raise MaskingError('column "{}": {} names {}, which must be another column sourceQuery returns'.format(
+                    column, strategy.CONTEXT_OPTION, context))
+            else:
+                self._contexts.append(folded.index(context.upper()))
         # The columns that actually have to be read and rewritten. A policy
         # usually keeps far more columns than it masks, and carrying those
         # through costs nothing.
@@ -689,15 +894,21 @@ class BoundMasking:
         # The extension's masker for each column it masks with the rest of the
         # chunk, in one call; None for a column kept, or masked in Python. A
         # strategy that masks its column its own way keeps doing so.
-        self._natives = [strategy._native if not strategy.PASSTHROUGH and type(strategy).maskColumn is Strategy.maskColumn else None
-                         for strategy in self.strategies]
+        self._natives = [strategy._native if not strategy.PASSTHROUGH and not strategy.normalize and type(strategy).maskColumn is Strategy.maskColumn
+                         else None for strategy in self.strategies]
         self._chunkNatively = any(native is not None for native in self._natives)
 
 
-    def _maskColumn(self, index: int, values: Sequence[Any], chunkIndex: int) -> List[Any]:
-        """One column, with a failure named after the column it came from."""
+    def _maskColumn(self, index: int, values: Sequence[Any], chunkIndex: int, rows: Sequence[Tuple[Any, ...]]) -> List[Any]:
+        """One column, with a failure named after the column it came from.
+        `rows` are the chunk as read, for a strategy that masks with another
+        column's values.
+        """
 
+        context = self._contexts[index]
         try:
+            if context is not None:
+                return self.strategies[index].maskColumnWith(values, [row[context] for row in rows], chunkIndex)
             return self.strategies[index].maskColumn(values, chunkIndex)
         except MaskingError as error:
             raise MaskingError('column "{}": {}'.format(self.manifest[index].column, error)) from None
@@ -728,12 +939,12 @@ class BoundMasking:
         if self._transposeToSplice:
             # Rows rebuilt from columns in C, each column masked as the
             # transpose yields it.
-            return list(zip(*[self._maskColumn(index, column, chunkIndex) if self._masks[index] else column
+            return list(zip(*[self._maskColumn(index, column, chunkIndex, rows) if self._masks[index] else column
                               for index, column in enumerate(zip(*rows))]))
 
         # A wide table with few columns masked: splice those into each row
         # rather than transpose every column.
-        masked = [self._maskColumn(index, [row[index] for row in rows], chunkIndex) for index in self._maskedIndexes]
+        masked = [self._maskColumn(index, [row[index] for row in rows], chunkIndex, rows) for index in self._maskedIndexes]
 
         spliced = []
         for position, row in enumerate(rows):
@@ -764,7 +975,7 @@ class BoundMasking:
         finished: Dict[int, List[Tuple[int, Any]]] = {}
         for index in self._maskedIndexes:
             if self._natives[index] is None:
-                columns[index] = self._maskColumn(index, [row[index] for row in rows], chunkIndex)
+                columns[index] = self._maskColumn(index, [row[index] for row in rows], chunkIndex, rows)
                 continue
             for position, problem in handedBack.get(index, ()):
                 try:
@@ -853,7 +1064,7 @@ def sealManifest(manifest: Mapping[str, Any], signingKey: Optional[str] = None) 
     integrity: Dict[str, Any] = {'algorithm': 'sha256', 'digest': hashlib.sha256(canonical).hexdigest()}
 
     if signingKey is not None:
-        validateKey(signingKey)
+        validateKey(signingKey, 'manifest signing key')
         integrity.update(signatureAlgorithm='hmac-sha256', signature=hmac.new(signingKey.encode('utf-8'), canonical, 'sha256').hexdigest(),
                          signingKeyFingerprint=keyFingerprint(signingKey))
 

@@ -8,8 +8,8 @@ from .connections import (EMBEDDED_TYPES, IDENTIFIER, S3_LARGEST_COPY, Connectio
                           FileCompression, FileFormat, FilesConnection, FileStore, IcebergCatalog, IcebergConnection, LakeConfig, MariaDBConnection, anchorPaths, isSchemePath,
                           MSSQLConnection, MySQLConnection, OracleConnection, PostgreSQLConnection, SQLiteConnection, StoreType)
 from .models import (FILE_STRATEGIES, WATERMARK_PLACEHOLDER, BaseJobConfig, Configuration, DataJobConfig, DataJobsFile, DiscoveryRulesFile,
-                     InsertStrategy, MaskingConfig, NameRuleConfig, StorageLocation, TableLocation, ValueRuleConfig, connectionConfig, filePathProblem,
-                     findCycle, isLake, targetKind, targetProblems)
+                     InsertStrategy, MaskingConfig, NameRuleConfig, PartitionsConfig, StorageLocation, TableLocation, ValueRuleConfig, connectionConfig, filePathProblem,
+                     findCycle, isLake, partitionLimitProblems, targetKind, targetProblems)
 from .columnTypes import ColumnType, parseColumnType
 from .files import INCLUDE_KEY, JobsDocument, loadYamlFile, readJobsFile
 
@@ -53,6 +53,8 @@ __all__ = [
     'MySQLConnection',
     'NameRuleConfig',
     'OracleConnection',
+    'partitionLimitProblems',
+    'PartitionsConfig',
     'parseColumnType',
     'PasswordCommandError',
     'PostgreSQLConnection',

@@ -17,7 +17,8 @@ from ..log import LOGGER_NAME, ConnectionForwarder, forwardToConnection, handleF
 from ..masking import setMaskingThreads
 from .dependencyGraph import JobOutcome, JobStatus
 from .memory import MemoryBackend
-from .pipeline import _runDataJob
+from .partitions import CoreBudget
+from .pipeline import _runDataJob, setCoreBudget
 
 logger = logging.getLogger(LOGGER_NAME)
 
@@ -83,7 +84,8 @@ def _initializeWorker(connection: Any, parentAlive: Any, logLevel: int) -> Conne
 
 
 def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobConfig: DataJobConfig,
-                connectionConfiguration: Dict[str, ConnectionConfig], memory: MemoryBackend, maskingThreads: int = 1) -> None:
+                connectionConfiguration: Dict[str, ConnectionConfig], memory: MemoryBackend, maskingThreads: int = 1,
+                budget: Optional[CoreBudget] = None) -> None:
     """The whole life of one job's process: run the job, and send its log
     records and then its outcome back on `connection`, which it alone writes to.
 
@@ -93,6 +95,8 @@ def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobC
 
     forwarder = _initializeWorker(connection, parentAlive, logLevel)
     setMaskingThreads(maskingThreads)
+    if budget is not None:
+        setCoreBudget(budget)
 
     try:
         forwarder.send('outcome', _runDataJob(job, jobConfig, connectionConfiguration, memory))
@@ -111,7 +115,7 @@ class _JobProcess:
     """
 
     def __init__(self, job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig],
-                 memory: MemoryBackend, logLevel: int, maskingThreads: int = 1) -> None:
+                 memory: MemoryBackend, logLevel: int, maskingThreads: int = 1, budget: Optional[CoreBudget] = None) -> None:
         self.job = job
         self.startedAt = time.time()
         self.deadline = self.startedAt + jobConfig.timeoutSeconds if jobConfig.timeoutSeconds else None
@@ -125,7 +129,7 @@ class _JobProcess:
         childEnd, self._alive = PROCESS_CONTEXT.Pipe(duplex=False)
         self.process = PROCESS_CONTEXT.Process(
             target=_jobProcess, name='bauta {}'.format(job), daemon=True,
-            args=(sendingEnd, childEnd, logLevel, job, jobConfig, connectionConfiguration, memory, maskingThreads))
+            args=(sendingEnd, childEnd, logLevel, job, jobConfig, connectionConfiguration, memory, maskingThreads, budget))
         self.process.start()
         sendingEnd.close()
         childEnd.close()

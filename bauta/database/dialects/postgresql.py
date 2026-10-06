@@ -219,6 +219,24 @@ class PostgreSQLDialect(_OnConflictDialect):
                 "ORDER BY k.position")
 
 
+    def uniqueKeysQuery(self) -> str:
+        """From pg_index, which holds a unique constraint's index and a plain
+        unique index alike. Only an index's key columns, not those it merely
+        INCLUDEs; an index on an expression or with a WHERE is left out.
+        """
+
+        return ("SELECT ic.relname, att.attname FROM pg_index idx "
+                "JOIN pg_class cl ON cl.oid = idx.indrelid "
+                "JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
+                "JOIN pg_class ic ON ic.oid = idx.indexrelid "
+                "CROSS JOIN LATERAL unnest(idx.indkey) WITH ORDINALITY AS k(attnum, position) "
+                "JOIN pg_attribute att ON att.attrelid = cl.oid AND att.attnum = k.attnum "
+                "WHERE idx.indisunique AND NOT idx.indisprimary AND idx.indexprs IS NULL AND idx.indpred IS NULL "
+                "AND k.position <= idx.indnkeyatts "
+                "AND ns.nspname = COALESCE({}::text, current_schema()) AND cl.relname = {}::text "
+                "ORDER BY ic.relname, k.position")
+
+
     def tableExistsQuery(self) -> str:
 
         return ("SELECT count(*) FROM information_schema.tables "

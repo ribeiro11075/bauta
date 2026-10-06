@@ -11,7 +11,7 @@ from typing import Annotated, Any, Callable, Dict, List, Literal, Mapping, Optio
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 
-from ..masking import changesValues, policyFor, validateColumnPolicy, validateKey
+from ..masking import changesValues, policyFor, validateColumnPolicy, validateKey, warnIfWeakKey
 from .connections import (_CONNECTION_ADAPTER, CONNECTION_TYPES, anchorPaths, CleanedListMapping, CleanedMapping, CleanedStringList, ConnectionConfig,
                           DuckDBConnection, FilesConnection, IcebergConnection, _listed)
 from .environment import ConfigurationError
@@ -127,6 +127,7 @@ class MaskingConfig(BaseModel):
     def _requireStrongKey(cls, key: SecretStr) -> SecretStr:
 
         validateKey(key.get_secret_value())
+        warnIfWeakKey(key.get_secret_value())
 
         return key
 
@@ -143,6 +144,44 @@ class MaskingConfig(BaseModel):
     def _validateDefaultStrategy(cls, policy: Any) -> Any:
 
         return None if policy is None else validateColumnPolicy(policy)
+
+
+class PartitionsConfig(BaseModel):
+    """A job read, masked and written as `count` slices at once, each a range
+    of the numeric `column` its sourceQuery returns. See "Partitions" in
+    docs/concepts/how-it-works.md.
+
+    At least two: one slice is the job without partitions, which says so more
+    plainly by leaving the setting out. `count: auto` lets the job choose, as
+    it starts; see jobs.partitions.automaticCount. `partitions: auto` chooses
+    the column too, and is held as a PartitionsConfig with no column.
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
+    column: Optional[str] = Field(default=None, min_length=1)
+    count: Union[Literal['auto'], Annotated[int, Field(ge=2)]]
+
+    @model_validator(mode='before')
+    @classmethod
+    def _fromShorthand(cls, value: Any) -> Any:
+
+        if value == AUTOMATIC:
+            return {'count': AUTOMATIC, 'column': None}
+        if isinstance(value, Mapping) and value.get('column') is None:
+            raise ValueError('partitions names a column and a count, or is `auto` to choose both')
+
+        return value
+
+
+    @property
+    def automatic(self) -> bool:
+        """Whether the job chooses how many slices, or the column too."""
+
+        return self.count == AUTOMATIC
+
+
+AUTOMATIC = 'auto'
 
 
 def _passesUnnamedColumns(masking: MaskingConfig) -> bool:
@@ -203,6 +242,10 @@ class DataJobConfig(BaseJobConfig):
     # the identifier fields of a table the job creates. An existing table's
     # own identifier fields serve without it.
     targetKey: CleanedStringList = Field(default_factory=list)
+    # A database target's alone: the job's rows read, masked and written as
+    # several slices at once. See PartitionsConfig. `auto` is ignored for a
+    # files or Iceberg target, so it can sit under `defaults`.
+    partitions: Optional[PartitionsConfig] = None
 
     @field_validator('targetColumnTypes')
     @classmethod
@@ -225,7 +268,8 @@ class DataJobConfig(BaseJobConfig):
         """
 
         if self.insertStrategy in FILE_STRATEGIES:
-            tableOnly = [name for name in ('targetTableStage', 'preTargetAdhocQueries', 'postTargetAdhocQueries') if getattr(self, name)]
+            tableOnly = [name for name in ('targetTableStage', 'preTargetAdhocQueries', 'postTargetAdhocQueries', 'partitions')
+                         if getattr(self, name) and not (name == 'partitions' and self.partitions is not None and self.partitions.column is None)]
             if tableOnly:
                 raise ValueError('{} {} for a table in a database; insertStrategy: {} writes to files or Iceberg'.format(
                     _listed(tableOnly), 'is' if len(tableOnly) == 1 else 'are', self.insertStrategy.value))
@@ -389,6 +433,9 @@ _TARGET_SETTINGS = {
     'targetTableStage': ('database',),
     'preTargetAdhocQueries': ('database',),
     'postTargetAdhocQueries': ('database',),
+    # A files or Iceberg target publishes what one writer wrote, and has no
+    # table for several to load into at once.
+    'partitions': ('database',),
     }
 
 _TARGET_NAMES = {'database': 'a database', 'files': 'a files connection', 'iceberg': 'an Iceberg connection'}
@@ -426,6 +473,9 @@ def targetProblems(job: DataJobConfig, connection: Any) -> List[str]:
             what, _listed([strategy.value for strategy in _STRATEGIES[kind]]).replace(' and ', ' or '), job.insertStrategy.value))
 
     for setting, kinds in _TARGET_SETTINGS.items():
+        if setting == 'partitions' and job.partitions is not None and job.partitions.column is None:
+            # `partitions: auto` reads a lake target's job as one stream.
+            continue
         if getattr(job, setting) and kind not in kinds:
             problems.append('{} is for {}, and it is {}'.format(
                 setting, ' or '.join(_TARGET_NAMES[other] for other in kinds), _TARGET_NAMES[kind]))
@@ -447,6 +497,31 @@ def targetProblems(job: DataJobConfig, connection: Any) -> List[str]:
         badKeys = [column for column in job.targetKey if not _ICEBERG_NAME.match(column)]
         if badKeys:
             problems.append('targetKey names {}, which is not a plain identifier'.format(', '.join(badKeys)))
+
+    return problems
+
+
+def partitionLimitProblems(job: DataJobConfig, connections: Mapping[str, ConnectionConfig]) -> List[str]:
+    """Why `job`'s partitions can't all run against its connections: each
+    partition opens a connection of its own to the source and the target, so
+    a partitioned job takes one of a connection's maxConcurrentJobs places for
+    each, and a job needing more places than there are could never start.
+    """
+
+    if job.partitions is None or job.partitions.automatic:
+        # An automatic count is fitted to what the connections have free.
+        return []
+
+    problems = []
+    for setting in ('sourceConnection', 'targetConnection'):
+        alias = getattr(job, setting)
+        connection = connections.get(alias)
+        limit = None if connection is None else connection.jobLimit()
+        if limit is not None and int(job.partitions.count) > limit:
+            why = ('DuckDB lets one process at a time open a file' if isinstance(connection, DuckDBConnection)
+                   else 'its maxConcurrentJobs is {}'.format(limit))
+            problems.append('partitions.count is {}, and {} "{}" takes at most {} at once ({}); each partition holds one of its places, '
+                            'as a job does'.format(job.partitions.count, setting, alias, limit, why))
 
     return problems
 
@@ -554,7 +629,7 @@ StorageLocation = Union[Annotated[str, Field(min_length=1)], TableLocation]
 # settings. A job that names any of these itself keeps its own value.
 DEFAULTABLE_JOB_FIELDS = frozenset({
     'active', 'refresh', 'sourceConnection', 'targetConnection', 'insertStrategy',
-    'chunkSize', 'retries', 'retryDelaySeconds', 'timeoutSeconds',
+    'chunkSize', 'retries', 'retryDelaySeconds', 'timeoutSeconds', 'partitions',
     })
 
 # Within `masking`, the key alone. A key reference is not a policy: `columns`
@@ -633,6 +708,10 @@ class DataJobsFile(BaseModel):
     # as each job starts with the jobs running alongside it. See
     # masking.maskingThreadsFor and runner._runCycle.
     maskingThreads: Union[Literal['auto'], Annotated[int, Field(ge=1)]] = 1
+    # Whether a run stops before it starts, rather than masking in Python, when
+    # the native masker isn't installed or isn't this version. See
+    # masking.requireNativeProblem.
+    requireNative: bool = False
     # Tables no job copies, on purpose: connection alias -> table -> why. What
     # `bauta coverage` reads, so a table left out is a decision on the page
     # rather than something nobody noticed.
@@ -720,7 +799,9 @@ class Configuration:
         try:
             return schema.model_validate(rawConfiguration)
         except ValidationError as error:
-            raise Configuration._invalid(error, sourceDescription) from error
+            # Not chained: pydantic's own error quotes the input it was given,
+            # a masking key or a password among it, in any traceback logged.
+            raise Configuration._invalid(error, sourceDescription) from None
 
 
     @staticmethod
@@ -752,7 +833,7 @@ class Configuration:
         try:
             return _CONNECTION_ADAPTER.validate_python(rawConnection)
         except ValidationError as error:
-            raise Configuration._invalid(error, sourceDescription, skipLocation=1) from error
+            raise Configuration._invalid(error, sourceDescription, skipLocation=1) from None
 
 
     @staticmethod
@@ -841,6 +922,7 @@ class Configuration:
                         jobName, job.sourceConnection, _TARGET_NAMES[targetKind(source)]))
                 for problem in ([] if target is None else targetProblems(job, target)):
                     problems.append('{}: targetConnection "{}" {}'.format(jobName, job.targetConnection, problem))
+                problems.extend('{}: {}'.format(jobName, problem) for problem in partitionLimitProblems(job, connections))
 
             if connectionAliases is not None and isinstance(job, DataJobConfig):
                 if job.sourceConnection not in connectionAliases:

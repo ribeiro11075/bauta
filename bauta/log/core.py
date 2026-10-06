@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .scrubbing import scrubText
+from .scrubbing import foreignMessages, scrubForeignText, scrubWithin
 
 LOGGER_NAME = 'bauta'
 
@@ -85,6 +85,10 @@ class ScrubbingFilter(logging.Filter):
     """Removes quoted data values from a record's message and exception text.
     On the logger rather than its handlers, so it covers handlers a caller
     adds and records forwarded from job processes.
+
+    Where the record carries an exception, the message of each error behind
+    it that came from outside the package -- a driver's -- is scrubbed as
+    scrubForeignText does, wherever it appears in the message or the traceback.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -95,14 +99,15 @@ class ScrubbingFilter(logging.Filter):
             # A malformed call is the handler's to report, as it would be without this.
             return True
 
-        record.msg = scrubText(message)
+        error = record.exc_info[1] if record.exc_info else None
+        record.msg = scrubWithin(message, error)
         record.args = None
 
         if record.exc_info:
-            record.exc_text = scrubText(logging.Formatter().formatException(record.exc_info))
+            record.exc_text = scrubWithin(logging.Formatter().formatException(record.exc_info), error)
             record.exc_info = None
         elif record.exc_text:
-            record.exc_text = scrubText(record.exc_text)
+            record.exc_text = scrubWithin(record.exc_text, None)
 
         return True
 
@@ -117,6 +122,53 @@ def _installScrubbing() -> None:
 # At import, so a job process -- which imports this and builds no Log -- scrubs
 # its records before they are forwarded.
 _installScrubbing()
+
+
+# The loggers of the drivers and libraries that touch rows. Their records
+# never reach the package's logger, so its filter can't see them: a driver
+# logging a statement or an error goes wherever the host's logging sends it,
+# or to Python's last resort on stderr.
+DRIVER_LOGGERS = frozenset({'psycopg', 'psycopg_pool', 'oracledb', 'mysql', 'pymssql', 'duckdb', 'pyiceberg', 'pyarrow'})
+
+
+def _scrubDriverRecord(record: logging.LogRecord) -> None:
+    """A driver's record scrubbed as a foreign message, in place."""
+
+    try:
+        message = record.getMessage()
+    except Exception:
+        return
+
+    error = record.exc_info[1] if record.exc_info else None
+    record.msg = scrubForeignText(message)
+    record.args = None
+    if record.exc_info:
+        traceback = logging.Formatter().formatException(record.exc_info)
+        for foreign in foreignMessages(error):
+            traceback = traceback.replace(foreign, scrubForeignText(foreign))
+        record.exc_text = scrubForeignText(traceback)
+        record.exc_info = None
+
+
+def installDriverScrubbing() -> None:
+    """Scrubs every record the drivers' own loggers make in this process, as
+    it is made: a record factory, since a filter on a logger misses records
+    made by its children. Installed by Log and in each job process, never at
+    import, so a host program importing the package keeps its logging as it was.
+    """
+
+    previous = logging.getLogRecordFactory()
+    if getattr(previous, 'scrubsDrivers', False):
+        return
+
+    def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        record = previous(*args, **kwargs)
+        if record.name.partition('.')[0] in DRIVER_LOGGERS:
+            _scrubDriverRecord(record)
+        return record
+
+    factory.scrubsDrivers = True  # type: ignore[attr-defined]
+    logging.setLogRecordFactory(factory)
 
 
 def portableRecord(record: logging.LogRecord) -> logging.LogRecord:
@@ -170,6 +222,7 @@ def forwardToConnection(connection: Any, level: int) -> ConnectionForwarder:
     Called in each job process. Any existing handlers are detached, not closed.
     """
 
+    installDriverScrubbing()
     logger = logging.getLogger(LOGGER_NAME)
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
@@ -202,6 +255,7 @@ class Log:
 
         formatter: logging.Formatter = JsonFormatter() if logFormat == 'json' else logging.Formatter(fmt=TEXT_FORMAT, datefmt=DATE_FORMAT)
 
+        installDriverScrubbing()
         self.logging = logging.getLogger(LOGGER_NAME)
         self.logging.setLevel(level)
         self.logging.propagate = False

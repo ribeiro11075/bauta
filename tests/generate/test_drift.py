@@ -93,7 +93,7 @@ def source(tmp_path):
 def job(query, columns, **masking):
     raw = {'workers': 1, 'jobs': {'j': {'sourceConnection': 'prod', 'targetConnection': 'copy', 'insertStrategy': 'upsert',
                                         'sourceQuery': query, 'targetTableFinal': 't',
-                                        'masking': {'key': 'k' * 32, 'columns': columns, **masking}}}}
+                                        'masking': {'key': 'a-drift-test-masking-key', 'columns': columns, **masking}}}}
     return Configuration.validateJobConfiguration(raw, DataJobsFile).jobs['j']
 
 

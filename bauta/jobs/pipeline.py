@@ -10,11 +10,12 @@ import contextlib
 import logging
 import os
 import re
+import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Deque, Dict, Generator, Iterable, List, Optional, Sequence, Tuple
 
-from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, FilesConnection, IcebergConnection, targetProblems
+from ..configuration import ConfigurationError, ConnectionConfig, DatabaseType, DataJobConfig, FilesConnection, IcebergConnection, targetProblems
 from ..database import Database
 from ..log import ATTEMPT_FAILED, LOGGER_NAME
 from .fullRefresh import isFullRefresh
@@ -24,6 +25,8 @@ from ..masking import core as maskingModule
 from ..transform import Transform, Transformer, TransformError, TransformResolutionError, resolveTransformer
 from .dependencyGraph import JobOutcome, JobStatus
 from .memory import MemoryBackend
+from .partitions import (CoreBudget, automaticCount, boundsQuery, integerBound, maskingThreadsWith, resolveColumn, slicePredicates, splitPoints,
+                         wrappedQuery)
 from .targets import LoadTarget, PostLoadError, TableTarget
 
 logger = logging.getLogger(LOGGER_NAME)
@@ -41,9 +44,11 @@ PIPELINE_DEPTH = 2
 MAXIMUM_RETRY_DELAY_SECONDS = 300.0
 
 
-def _bindMasking(job: str, jobConfig: DataJobConfig, columns: List[str]) -> Optional[BoundMasking]:
+def _bindMasking(job: str, jobConfig: DataJobConfig, columns: List[str], log: bool = True) -> Optional[BoundMasking]:
     """Binds the job's masking policy to the columns its query returned, raising
     MaskingError before anything is written if it doesn't cover them all.
+    `log` says what it binds, which a job's partitions, each binding it
+    again, leave to the job.
     """
 
     if jobConfig.masking is None:
@@ -53,9 +58,10 @@ def _bindMasking(job: str, jobConfig: DataJobConfig, columns: List[str]) -> Opti
                        defaultStrategy=jobConfig.masking.defaultStrategy)
     bound = plan.bind(columns)
 
-    logger.info('Masking {} column(s) under key {}'.format(len(columns), plan.fingerprint), extra={'job': job, 'keyFingerprint': plan.fingerprint})
-    for entry in bound.manifest:
-        logger.debug('Masking {} with {}{}'.format(entry.column, entry.strategy, ' in domain {}'.format(entry.domain) if entry.domain else ''))
+    if log:
+        logger.info('Masking {} column(s) under key {}'.format(len(columns), plan.fingerprint), extra={'job': job, 'keyFingerprint': plan.fingerprint})
+        for entry in bound.manifest:
+            logger.debug('Masking {} with {}{}'.format(entry.column, entry.strategy, ' in domain {}'.format(entry.domain) if entry.domain else ''))
 
     return bound
 
@@ -97,7 +103,8 @@ def _openTarget(job: str, jobConfig: DataJobConfig, settings: ConnectionConfig) 
 
 def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], watermark: Any = None) -> JobOutcome:
     """Runs one data job to completion, raising on failure. See "How a data job
-    moves rows" in docs/concepts/how-it-works.md.
+    moves rows" in docs/concepts/how-it-works.md, and "Partitions" there for a
+    job read as several slices at once.
 
     Transforms and the masking policy are both checked against the query's
     columns before the first write, so a misconfigured job fails with nothing
@@ -124,8 +131,20 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
             else:
                 logger.info('Extracting {} incrementally, from watermark {!r}'.format(jobConfig.sourceConnection, watermark))
 
-        logger.debug('Streaming sourceQuery against {} in chunks of {}'.format(jobConfig.sourceConnection, jobConfig.chunkSize))
-        sourceQueryColumns, chunks = sourceConnection.stream(query=sourceQuery, chunkSize=jobConfig.chunkSize, parameters=parameters)
+        # Partitions with a count to choose start as one stream: whether to
+        # slice is decided once the query's columns are known, and reading
+        # the query as it is keeps a job that can't be sliced working.
+        explicit = jobConfig.partitions is not None and not jobConfig.partitions.automatic
+        chunks: Optional[Iterable[List[Tuple[Any, ...]]]] = None
+        if not explicit:
+            logger.debug('Streaming sourceQuery against {} in chunks of {}'.format(jobConfig.sourceConnection, jobConfig.chunkSize))
+            sourceQueryColumns, chunks = sourceConnection.stream(query=sourceQuery, chunkSize=jobConfig.chunkSize, parameters=parameters)
+            description = getattr(chunks, 'description', None)
+        else:
+            # Described without reading a row: the partitions read them.
+            sourceQueryColumns, described = sourceConnection.stream(query=wrappedQuery(sourceQuery, '1=0'), chunkSize=1, parameters=parameters)
+            with described:
+                description = described.description
         logger.debug('sourceQuery returned columns: {}'.format(sourceQueryColumns))
 
         watermarkIndex = None
@@ -151,37 +170,34 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
                                'and logs, so it would leak the unmasked value'.format(
                                    jobConfig.watermarkColumn, masking.manifest[watermarkIndex].strategy))
 
-        target.begin(sourceQueryColumns, getattr(chunks, 'description', None))
+        predicates: List[Optional[str]] = []
+        if explicit:
+            # Before begin(), so a column that can't be sliced fails the job
+            # with its target as it was.
+            predicates = _partitionPredicates(job, jobConfig, sourceConnection, sourceQuery, parameters, sourceQueryColumns)
+        elif jobConfig.partitions is not None:
+            predicates = _automaticPredicates(job, jobConfig, connectionConfiguration, sourceConnection, target, sourceQuery, parameters,
+                                              sourceQueryColumns, masking)
+            if predicates:
+                assert chunks is not None
+                getattr(chunks, 'close', lambda: None)()
+                chunks = None
+        if len(predicates) > 1:
+            threads = maskingThreadsWith(len(predicates), _coreBudget())
+            if threads != _coreBudget().maskingThreads:
+                maskingModule.setMaskingThreads(threads)
+                logger.debug('Masking each of the {} partitions on its own thread'.format(len(predicates)), extra={'job': job})
+
+        target.begin(sourceQueryColumns, description)
 
         logger.info('Loading into {} a chunk at a time'.format(target.loadName))
 
-        rowCount = 0
-        highWatermark = None
-
-        def writeChunk(rows: List[Any], watermark: Any) -> None:
-            nonlocal rowCount, highWatermark
-
-            target.write(rows)
-
-            rowCount += len(rows)
-            # Only once the rows have landed, or a failed job's next run would
-            # start past them.
-            if watermark is not None and (highWatermark is None or watermark > highWatermark):
-                highWatermark = watermark
-
-            logger.debug('Loaded {} row(s) into {} ({} so far)'.format(len(rows), target.loadName, rowCount))
-
-        def prepareChunk(chunkIndex: int, chunk: List[Tuple[Any, ...]]) -> List[Any]:
-            rows = transform.apply(chunk)
-
-            if masking is not None:
-                # By read order, not masking order: `shuffle` keys on it.
-                rows = masking.apply(rows, chunkIndex=chunkIndex)
-
-            return rows
-
         try:
-            _streamChunks(chunks, prepareChunk, writeChunk, watermarkIndex, _pipelineDepth())
+            if chunks is not None:
+                rowCount, highWatermark = _loadChunks(chunks, _preparer(transform, masking), target.write, watermarkIndex, target.loadName)
+            else:
+                rowCount, highWatermark = _loadPartitions(job, jobConfig, connectionConfiguration, target, sourceQuery, parameters,
+                                                          sourceQueryColumns, predicates, columnTransforms, watermarkIndex)
         except Exception as error:
             if masking is not None:
                 _noteIfMaskedValueDoesNotFit(error, job, target.loadName)
@@ -196,6 +212,246 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
         maskingApplied = {'columns': [entry._asdict() for entry in masking.manifest]}
 
     return JobOutcome(job=job, status=JobStatus.COMPLETED, rowCount=rowCount, watermark=highWatermark, masking=maskingApplied)
+
+
+def _preparer(transform: Transform, masking: Optional[BoundMasking], partition: int = 0,
+              partitions: int = 1) -> Callable[[int, List[Tuple[Any, ...]]], List[Any]]:
+    """Transforms and masks one chunk, given its position in what is read.
+
+    `shuffle` keys on that position, so a job's partitions number their
+    chunks apart: the n-th chunk of partition p is chunk n * partitions + p,
+    which no other chunk of the job is. Without partitions, it is n.
+    """
+
+    def prepare(chunkIndex: int, chunk: List[Tuple[Any, ...]]) -> List[Any]:
+        rows = transform.apply(chunk)
+
+        if masking is not None:
+            # By read order, not masking order: `shuffle` keys on it.
+            rows = masking.apply(rows, chunkIndex=chunkIndex * partitions + partition)
+
+        return rows
+
+    return prepare
+
+
+def _loadChunks(chunks: Iterable[List[Tuple[Any, ...]]], prepare: Callable[[int, List[Tuple[Any, ...]]], List[Any]],
+                write: Callable[[List[Any]], None], watermarkIndex: Optional[int], loadName: str,
+                stopped: Optional[threading.Event] = None) -> Tuple[int, Any]:
+    """Prepares and writes every chunk, returning the rows written and the
+    highest watermark among them. `stopped`, once set, ends the load before
+    its next write: another of the job's partitions has failed.
+    """
+
+    rowCount = 0
+    highWatermark = None
+
+    def writeChunk(rows: List[Any], watermark: Any) -> None:
+        nonlocal rowCount, highWatermark
+
+        if stopped is not None and stopped.is_set():
+            raise _PartitionStopped()
+
+        write(rows)
+
+        rowCount += len(rows)
+        # Only once the rows have landed, or a failed job's next run would
+        # start past them.
+        if watermark is not None and (highWatermark is None or watermark > highWatermark):
+            highWatermark = watermark
+
+        logger.debug('Loaded {} row(s) into {} ({} so far)'.format(len(rows), loadName, rowCount))
+
+    _streamChunks(chunks, prepare, writeChunk, watermarkIndex, _pipelineDepth())
+
+    return rowCount, highWatermark
+
+
+class _PartitionStopped(Exception):
+    """Ends a partition's load once another partition of its job has failed.
+    Never the error a job reports: that is the failure that stopped it.
+    """
+
+
+def _partitionPredicates(job: str, jobConfig: DataJobConfig, sourceConnection: Database, sourceQuery: str,
+                         parameters: Optional[Sequence[Any]], columns: List[str]) -> List[Optional[str]]:
+    """The predicate each of the job's partitions reads its slice with: ranges
+    of the partition column, between the smallest and largest value the
+    query returns in it. Fewer than `count` where the values are fewer, and
+    one, reading everything, where there are none.
+
+    The bounds are data, so they are never logged.
+    """
+
+    assert jobConfig.partitions is not None and jobConfig.partitions.column is not None and not jobConfig.partitions.automatic
+    column = resolveColumn(jobConfig.partitions.column, columns)
+    quotedColumn = sourceConnection.quoted([column])[0]
+
+    _, rows = sourceConnection.stream(query=boundsQuery(sourceQuery, quotedColumn), chunkSize=1, parameters=parameters)
+    with rows:
+        first = next(rows, [])
+
+    lowest, highest = (integerBound(value, column) for value in (first[0] if first else (None, None)))
+    points = [] if lowest is None or highest is None else splitPoints(lowest, highest, int(jobConfig.partitions.count))
+    predicates = slicePredicates(quotedColumn, points)
+
+    logger.info('Reading {} as {} partition(s) of {}, at once'.format(jobConfig.sourceConnection, len(predicates), column),
+                extra={'job': job, 'partitions': len(predicates)})
+
+    return predicates
+
+
+_budget: Optional[CoreBudget] = None
+
+
+def setCoreBudget(budget: CoreBudget) -> None:
+    """What the run gave this job's process as it started; see CoreBudget."""
+
+    global _budget
+    _budget = budget
+
+
+def _coreBudget() -> CoreBudget:
+    """This process's budget, or, for a job run outside a run -- from Python, a
+    test, a benchmark -- a share as the only job running, on one masking thread.
+    """
+
+    return _budget if _budget is not None else CoreBudget(share=maskingModule.coreShare(1), maskingThreads=1, automaticThreads=False, places=None)
+
+
+def _automaticPredicates(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], sourceConnection: Database,
+                         target: LoadTarget, sourceQuery: str, parameters: Optional[Sequence[Any]], columns: List[str],
+                         masking: Optional[BoundMasking]) -> List[Optional[str]]:
+    """The predicates for `partitions: auto`, or `count: auto`, or none to read
+    the job as one stream, the query as it is. See automaticCount.
+
+    A column the configuration names that can't be sliced fails the job, as
+    it would with a count; one chosen here -- the target's primary key -- is
+    passed over with a line saying why, as is a query the database won't read
+    as a derived table. Automatic partitions never stop a job that runs
+    without them.
+    """
+
+    assert jobConfig.partitions is not None
+    named = jobConfig.partitions.column
+
+    def oneStream(why: str) -> List[Optional[str]]:
+        logger.info('partitions: reading {} as one stream: {}'.format(jobConfig.targetTableFinal, why), extra={'job': job})
+        return []
+
+    # A named column is checked first: a misspelling fails wherever it is.
+    column = resolveColumn(named, columns) if named is not None else None
+
+    if not isinstance(target, TableTarget):
+        return oneStream('it writes files or an Iceberg table, which one writer publishes')
+    if getattr(connectionConfiguration[jobConfig.targetConnection], 'type', None) == DatabaseType.SQLITE:
+        return oneStream('SQLite commits one write at a time, so slices would only wait for each other')
+
+    if column is None:
+        try:
+            primaryKey = target.database.getPrimaryColumnNames(table=jobConfig.targetTableFinal)
+        except Exception as error:
+            return oneStream('its target\'s primary key could not be read -- {}'.format(describeError(error)))
+        if len(primaryKey) != 1:
+            return oneStream('its target\'s primary key is {} columns, and a partition is a range of one'.format(len(primaryKey)) if primaryKey
+                             else 'its target has no primary key to slice by')
+        try:
+            column = resolveColumn(primaryKey[0], columns)
+        except ConfigurationError:
+            return oneStream('sourceQuery does not return its target\'s primary key, {}'.format(primaryKey[0]))
+
+    budget = _coreBudget()
+    masksInPython = masking is not None and bool(masking._maskedIndexes) and maskingModule.nativeVersion() is None
+    upper, why = automaticCount(2 ** 62, budget, masksInPython)
+    if upper < 2:
+        return oneStream(why)
+
+    quotedColumn = sourceConnection.quoted([column])[0]
+    try:
+        # On a connection of its own: a query the database refuses leaves
+        # the job's own, already reading, as it was.
+        with Database(connectionSettings=connectionConfiguration[jobConfig.sourceConnection]) as probe:
+            _, rows = probe.stream(query=boundsQuery(sourceQuery, quotedColumn), chunkSize=1, parameters=parameters)
+            with rows:
+                first = next(rows, [])
+    except Exception as error:
+        return oneStream('its range could not be read -- {}'.format(describeError(error)))
+
+    try:
+        lowest, highest = (integerBound(value, column) for value in (first[0] if first else (None, None)))
+    except ConfigurationError as error:
+        if named is not None:
+            raise
+        return oneStream(str(error))
+    if lowest is None or highest is None:
+        return oneStream('sourceQuery returns no rows with a value in {}'.format(column))
+
+    count, why = automaticCount(highest - lowest + 1, budget, masksInPython)
+    if count < 2:
+        return oneStream(why)
+
+    predicates = slicePredicates(quotedColumn, splitPoints(lowest, highest, count))
+    if len(predicates) < 2:
+        return oneStream('{} holds too few values to slice'.format(column))
+
+    logger.info('partitions: reading {} as {} slices of {} at once, {}'.format(jobConfig.targetTableFinal, len(predicates), column, why),
+                extra={'job': job, 'partitions': len(predicates)})
+
+    return predicates
+
+
+def _loadPartitions(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], target: LoadTarget,
+                    sourceQuery: str, parameters: Optional[Sequence[Any]], columns: List[str], predicates: List[Optional[str]],
+                    columnTransforms: Dict[str, List[Transformer]], watermarkIndex: Optional[int]) -> Tuple[int, Any]:
+    """Reads, masks and writes the job's rows as slices, one per predicate, all
+    at once, each on threads and connections of its own; see "Partitions" in
+    docs/concepts/how-it-works.md. Returns the rows written and the highest
+    watermark among them, once every slice has loaded.
+
+    The first slice to fail stops the others before their next write, and its
+    error is the job's: a job whose slices didn't all load has failed, so it
+    neither swaps nor upserts from its stage, and nothing is recorded.
+    """
+
+    count = len(predicates)
+    sourceSettings = connectionConfiguration[jobConfig.sourceConnection]
+    stopped = threading.Event()
+
+    def loadSlice(index: int, predicate: Optional[str]) -> Tuple[int, Any]:
+        # Everything a slice uses is its own: its connections, since one
+        # connection serves one thread, and its transform and masking.
+        with Database(connectionSettings=sourceSettings) as source, target.openWriter() as writer:
+            _, chunks = source.stream(query=wrappedQuery(sourceQuery, predicate), chunkSize=jobConfig.chunkSize, parameters=parameters)
+            prepare = _preparer(Transform(columns=columns, columnTransforms=columnTransforms), _bindMasking(job, jobConfig, columns, log=False),
+                                index, count)
+            loaded = _loadChunks(chunks, prepare, writer.write, watermarkIndex,
+                                 '{} (partition {} of {})'.format(target.loadName, index + 1, count), stopped)
+
+        logger.info('Partition {} of {} loaded {} row(s)'.format(index + 1, count, loaded[0]), extra={'job': job, 'partition': index + 1})
+
+        return loaded
+
+    results: List[Tuple[int, Any]] = []
+    failure: Optional[Exception] = None
+
+    with ThreadPoolExecutor(max_workers=count, thread_name_prefix='bauta-partition') as executor:
+        futures = [executor.submit(loadSlice, index, predicate) for index, predicate in enumerate(predicates)]
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except _PartitionStopped:
+                continue
+            except Exception as error:
+                if failure is None:
+                    failure = error
+                    stopped.set()
+
+    if failure is not None:
+        raise failure
+
+    watermarks = [watermark for _, watermark in results if watermark is not None]
+
+    return sum(rows for rows, _ in results), (max(watermarks) if watermarks else None)
 
 
 def _pipelineDepth() -> int:

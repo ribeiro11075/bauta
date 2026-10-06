@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 from ..configuration import ColumnType, ConfigurationError, DataJobConfig, FileFormat, FileStore, IcebergCatalog, IcebergConnection, InsertStrategy
 from ..log import LOGGER_NAME
+from ..log.scrubbing import describeError
 from .columnar import Column, ColumnarTarget, newRunId
 from .columns import FileTypeError
 from .formats import Parts, PartSettings
@@ -428,7 +429,7 @@ class IcebergTarget(ColumnarTarget):
                 len(stale), self.loadName, len(unreferenced)), extra={'job': self.job})
         except Exception as error:
             # The run is committed; old snapshots left are untidy, not wrong.
-            logger.warning('{}: could not expire old snapshots of {} -- {}'.format(self.job, self.loadName, error), extra={'job': self.job})
+            logger.warning('{}: could not expire old snapshots of {} -- {}'.format(self.job, self.loadName, describeError(error)), extra={'job': self.job})
 
 
     def abort(self) -> None:

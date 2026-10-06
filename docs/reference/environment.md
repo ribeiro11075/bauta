@@ -7,6 +7,7 @@
 | `BAUTA_NOTIFY_URL` | The webhook, when `--notify-url` isn't given. |
 | `BAUTA_MANIFEST_KEY` | Sign manifests, and verify their signatures. |
 | `BAUTA_MASKING_THREADS` | Threads the native masker uses per job: a number or `auto`. Overrides `jobs.yaml`'s `maskingThreads`; see [masking threads](../guides/make-it-faster.md#masking-threads). |
+| `BAUTA_REQUIRE_NATIVE=1` | Stop a run before it starts where masking would run in Python, as `jobs.yaml`'s [`requireNative`](jobs.md#file-level) does. |
 | `BAUTA_NATIVE=0` | Mask in Python even where the extension is installed. |
 | `BAUTA_PIPELINE=0` or `=1` | Force reading, masking and writing to take turns, or to overlap. |
 

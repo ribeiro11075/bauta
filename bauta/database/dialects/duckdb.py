@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 from ..driver import Connection, Cursor
 from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType, DuckDBConnection
-from .base import ColumnCategory, ForeignKey, settingsOf, _OnConflictDialect, _renameInThreeSteps, _schemaForeignKeys
+from .base import ColumnCategory, ForeignKey, settingsOf, _OnConflictDialect, _renameInThreeSteps, _schemaForeignKeys, _uniqueColumnGroups, _withKeys
 from .names import catalogTableName
 
 
@@ -342,6 +342,46 @@ class DuckDBDialect(_OnConflictDialect):
         return ("SELECT unnest(constraint_column_names) FROM duckdb_constraints() "
                 "WHERE constraint_type = 'PRIMARY KEY' AND lower(schema_name) = lower(COALESCE({}, current_schema())) "
                 "AND lower(table_name) = lower({}) AND database_name = current_database()")
+
+
+    def uniqueKeys(self, cursor: Cursor, table: str) -> List[Tuple[str, ...]]:
+        """UNIQUE constraints, which DuckDB lists apart from its primary key,
+        each with its columns as an array. A CREATE UNIQUE INDEX is no key a
+        swap could keep: DuckDB won't rename a table with an index.
+        """
+
+        schema, name = catalogTableName(self.databaseType, table)
+        cursor.execute("SELECT constraint_column_names FROM duckdb_constraints() WHERE constraint_type = 'UNIQUE' "
+                       "AND lower(schema_name) = lower(COALESCE(?, current_schema())) AND lower(table_name) = lower(?) "
+                       "AND database_name = current_database() ORDER BY constraint_index", (schema, name))
+
+        return _uniqueColumnGroups([(str(index), column) for index, (columns,) in enumerate(cursor.fetchall()) for column in columns])
+
+
+    def addKeys(self, cursor: Cursor, table: str, catalogTable: str, primaryKey: Sequence[str], uniqueKeys: Sequence[Sequence[str]]) -> None:
+        """DuckDB adds no UNIQUE constraint to a table, so the table is created
+        again from its own statement with the keys added, in the session's one
+        transaction. Only an empty table: a stage table just emptied for its
+        load.
+        """
+
+        schema, name = catalogTableName(self.databaseType, catalogTable)
+        where = ("lower(schema_name) = lower(COALESCE(?, current_schema())) AND lower(table_name) = lower(?) "
+                 "AND database_name = current_database()")
+
+        cursor.execute('SELECT 1 FROM {} LIMIT 1'.format(table))
+        if cursor.fetchone() is not None:
+            raise ConfigurationError('{} holds rows, and DuckDB can only add a key by creating the table again'.format(catalogTable))
+
+        cursor.execute('SELECT sql FROM duckdb_tables() WHERE {}'.format(where), (schema, name))
+        created = cursor.fetchone()[0]
+        cursor.execute('SELECT sql FROM duckdb_indexes() WHERE {} AND sql IS NOT NULL'.format(where), (schema, name))
+        indexes = [row[0] for row in cursor.fetchall()]
+
+        cursor.execute('DROP TABLE {}'.format(table))
+        cursor.execute(_withKeys(created, table, primaryKey, uniqueKeys))
+        for index in indexes:
+            cursor.execute(index)
 
 
     def tableExistsQuery(self) -> str:

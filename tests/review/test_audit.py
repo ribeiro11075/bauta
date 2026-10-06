@@ -461,7 +461,7 @@ def test_a_swapped_table_that_declares_keys_is_warned_about():
     assert _messages(report, 'warning') == [(
         'loadOrders',
         'in staging, orders declares foreign key(s) customer_id -> customers, but loadOrders replaces it by swap with orders_stage, '
-        'which declares none, so after a run the copy stops enforcing them. Recreate them on orders in postTargetAdhocQueries, or load '
+        'which is given its primary and unique keys but none of these, so after a run the copy stops enforcing them. Recreate them on orders in postTargetAdhocQueries, or load '
         'it with upsert and a stage table')]
 
 

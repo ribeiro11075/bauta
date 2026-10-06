@@ -89,6 +89,15 @@ def _positiveInteger(text: str) -> int:
     return value
 
 
+def _nonNegativeInteger(text: str) -> int:
+
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError('must be at least 0, got {}'.format(value))
+
+    return value
+
+
 def _addRunArguments(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument('--forever', action='store_true',
@@ -179,7 +188,10 @@ def _buildParser() -> argparse.ArgumentParser:
     auditParser.add_argument('--connect', action='store_true',
                              help='also run each masked query for its real columns, and check whether each connection is encrypted')
     auditParser.add_argument('--job', action='append', help='audit only this job (repeatable)')
-    auditParser.add_argument('--format', default='text', choices=['text', 'json'], help='default: text')
+    auditParser.add_argument('--sample', type=_nonNegativeInteger, default=1000, metavar='ROWS',
+                             help='with --connect, rows of each query read to check kept columns and shared domains by their values; 0 reads none')
+    auditParser.add_argument('--format', default='text', choices=['text', 'json', 'html'],
+                             help='text, json, or html: one self-contained page for a reviewer, best with --output (default: text)')
     auditParser.add_argument('--strict', action='store_true', help='exit 1 on warnings as well as errors')
     auditParser.add_argument('--output', help='write the report here instead of stdout; must not already exist')
     _addRulesArgument(auditParser)
@@ -198,7 +210,8 @@ def _buildParser() -> argparse.ArgumentParser:
     coverageParser.add_argument('--connection', help='the source connection alias to check; required when the jobs read from more than one')
     coverageParser.add_argument('--schema', help='the schema to list, instead of the connection\'s own')
     coverageParser.add_argument('--job', action='append', help='only these jobs count as covering a table. Repeatable.')
-    coverageParser.add_argument('--format', choices=['text', 'json'], default='text', help='output format')
+    coverageParser.add_argument('--format', choices=['text', 'json', 'html'], default='text',
+                                help='text, json, or html: one self-contained page for a reviewer, best with --output (default: text)')
     coverageParser.add_argument('--output', help='write to this file instead of stdout')
 
     verifyParser = subparsers.add_parser('verify-manifest', help='check that a manifest is unaltered, and who signed it')

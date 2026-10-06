@@ -503,3 +503,40 @@ def test_number_masks_the_same_digits_natively(options):
     _, problems = asNative._native.maskColumn(values)
     assert len(values) > 500 and len(problems) <= len(values) // 33, 'number {}: {} of {} ordinary values went back to Python'.format(
         options, len(problems), len(values))
+
+
+def test_a_run_requiring_the_native_masker_is_told_why_it_cannot_have_it(standInExtension, monkeypatch):
+    import bauta.masking.core as masking
+
+    extension, _ = standInExtension
+    extension.__version__ = '0.0.1'
+
+    problem = masking.requireNativeProblem(True)
+    assert 'bauta-rs 0.0.1 is installed, which does not match' in problem and 'ten times slower' in problem
+    assert masking.requireNativeProblem(False) is None
+
+    monkeypatch.setenv('BAUTA_REQUIRE_NATIVE', '1')
+    assert masking.requireNativeProblem(False) == problem
+
+    extension.__version__ = importlib.metadata.version('bauta')
+    masking._nativeModule.cache_clear()
+    assert masking.requireNativeProblem(True) is None
+
+
+def test_a_run_requiring_the_native_masker_stops_before_any_job_runs(monkeypatch, tmp_path):
+    import bauta.masking.core as masking
+    from bauta.configuration import Configuration, ConfigurationError, DataJobsFile
+    from bauta.jobs.memory import FileMemory
+    from bauta.jobs.runner import runDataJobs
+    from tests.jobConfigs import dataJobFields
+
+    monkeypatch.setenv('BAUTA_NATIVE', '0')
+    masking._nativeModule.cache_clear()
+    jobs = {'workers': 1, 'requireNative': True,
+            'jobs': {'masked': dataJobFields(masking={'key': KEY, 'columns': {'id': 'key'}})}}
+    try:
+        with pytest.raises(ConfigurationError, match='BAUTA_NATIVE=0 turns it off'):
+            runDataJobs(jobsFile=Configuration.validateJobConfiguration(jobs, DataJobsFile), connectionConfiguration={},
+                        memory=FileMemory(tmp_path / 'memory.yaml'))
+    finally:
+        masking._nativeModule.cache_clear()

@@ -13,7 +13,7 @@ from ..database.dialects import ForeignKey, bareName, splitTableName, unqualifie
 from ..log import Log
 from ..log.scrubbing import describeError
 from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, _Connections, UsageError, _discoveryRules, _loadDataJobs, _requireDatabase, _selectJobs,
-                     _sourceQueryColumns, _targetColumns, _writeOutput)
+                     _sourceQuerySample, _targetColumns, _toolVersion, _writeOutput)
 
 
 def _commandVerifyReferences(arguments: argparse.Namespace, log: Log) -> int:
@@ -136,8 +136,16 @@ def _commandCoverage(arguments: argparse.Namespace, log: Log) -> int:
 
     report = coverageReport(alias, tables, jobs, acknowledged=jobsFile.acknowledged.get(alias),
                             columns=columns, rules=_discoveryRules(arguments))
-    _writeOutput(json.dumps(report, indent=2, default=str) + '\n' if arguments.format == 'json' else renderCoverage(report),
-                 arguments.output)
+    if arguments.format == 'html':
+        import datetime
+
+        from ..review.html import renderCoverageHtml
+
+        generatedAt = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
+        text = renderCoverageHtml(report, generatedAt=generatedAt, version=_toolVersion())
+    else:
+        text = json.dumps(report, indent=2, default=str) + '\n' if arguments.format == 'json' else renderCoverage(report)
+    _writeOutput(text, arguments.output)
 
     if report['summary'][UNCOVERED]:
         return EXIT_JOBS_DID_NOT_SUCCEED
@@ -162,6 +170,11 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
     question. Offline unless --connect, which also resolves each masked
     query's real columns and checks whether each connection is encrypted.
 
+    With --connect it also reads up to --sample rows of each query, to
+    question a column kept as it is whose values look like personal data, and
+    columns sharing a domain that hold its values differently. The rows stay
+    in memory, and no value is reported.
+
     Exits 1 on an error finding, and with --strict on a warning too.
     """
 
@@ -177,6 +190,7 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
     foreignKeys: Dict[str, List[ForeignKey]] = {}
     declaredForeignKeys: Dict[str, List[ForeignKey]] = {}
     elsewhere: Dict[str, Dict[str, int]] = {}
+    samples: Dict[str, List[Tuple[Any, ...]]] = {}
 
     if arguments.connect:
         # Every job's columns, not only a masked one's: an unmasked job's are
@@ -186,7 +200,7 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
         with _Connections(connectionConfiguration) as connections:
             for name, job in jobs.items():
                 try:
-                    returnedColumns[name] = _sourceQueryColumns(job, connections)
+                    returnedColumns[name], samples[name] = _sourceQuerySample(job, connections, arguments.sample)
                 except Exception as error:
                     unreachable[name] = describeError(error)
                     continue
@@ -242,8 +256,15 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
     report = auditJobs(jobs, returnedColumns=returnedColumns, encryption=encryption, unreachable=unreachable,
                        targetColumns=targetColumns, foreignKeys=foreignKeys, declaredForeignKeys=declaredForeignKeys,
                        rules=_discoveryRules(arguments), connections=connectionConfiguration,
-                       foreignKeysElsewhere=elsewhere if arguments.connect else None, unreadableTargets=unreadableTargets)
-    _writeOutput(json.dumps(report, indent=2, default=str) + '\n' if arguments.format == 'json' else renderAudit(report), arguments.output)
+                       foreignKeysElsewhere=elsewhere if arguments.connect else None, unreadableTargets=unreadableTargets,
+                       samples=samples)
+    if arguments.format == 'html':
+        from ..review.html import renderAuditHtml
+
+        text = renderAuditHtml(report, version=_toolVersion())
+    else:
+        text = json.dumps(report, indent=2, default=str) + '\n' if arguments.format == 'json' else renderAudit(report)
+    _writeOutput(text, arguments.output)
 
     if report['summary']['error'] or (arguments.strict and report['summary']['warning']):
         return EXIT_JOBS_DID_NOT_SUCCEED

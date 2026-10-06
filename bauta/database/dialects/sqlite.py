@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..driver import Connection, Cursor, native
-from ...configuration import DatabaseConfig, DatabaseType, SQLiteConnection
-from .base import ColumnDefinition, ForeignKey, settingsOf, _OnConflictDialect, _renameInThreeSteps, _schemaForeignKeys
+from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType, SQLiteConnection
+from .base import ColumnDefinition, ForeignKey, settingsOf, _OnConflictDialect, _renameInThreeSteps, _schemaForeignKeys, _uniqueColumnGroups, _withKeys
 from .names import catalogName, catalogTableName, quoteIdentifier
 
 
@@ -36,6 +36,23 @@ def _useWriteAheadLog(connection: Any) -> None:
             if 'locked' not in str(error) or time.monotonic() > deadline:
                 raise
             time.sleep(0.05)
+
+
+_CREATE_INDEX_HEAD = re.compile(r'^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?', re.IGNORECASE)
+
+
+def _qualifiedIndex(createStatement: str, schema: str) -> str:
+    """A CREATE INDEX statement as sqlite_master keeps it, which leaves out the
+    attached database the index is in, with that database put back in front
+    of the index's name. The table it indexes is named bare, as SQLite
+    requires: an index is always in its table's database.
+    """
+
+    head = _CREATE_INDEX_HEAD.match(createStatement)
+    if head is None:
+        return createStatement
+
+    return '{}{}.{}'.format(createStatement[:head.end()], schema, createStatement[head.end():])
 
 
 class SQLiteDialect(_OnConflictDialect):
@@ -99,6 +116,46 @@ class SQLiteDialect(_OnConflictDialect):
         cursor.execute('SELECT name FROM pragma_table_info(?, ?) WHERE pk > 0 ORDER BY pk', (name, schema or 'main'))
 
         return [row[0] for row in cursor.fetchall()]
+
+
+    def uniqueKeys(self, cursor: Cursor, table: str) -> List[Tuple[str, ...]]:
+        """From pragma_index_list, which holds a UNIQUE constraint's index and
+        a CREATE UNIQUE INDEX alike, the primary key's aside. A partial index
+        is left out, and an expression's column comes back NULL.
+        """
+
+        schema, name = catalogTableName(self.databaseType, table)
+        cursor.execute('SELECT il.name, ii.name FROM pragma_index_list(?, ?) il, pragma_index_info(il.name, ?) ii '
+                       'WHERE il."unique" = 1 AND il.origin <> \'pk\' AND il.partial = 0 ORDER BY il.name, ii.seqno',
+                       (name, schema or 'main', schema or 'main'))
+
+        return _uniqueColumnGroups(cursor.fetchall())
+
+
+    def addKeys(self, cursor: Cursor, table: str, catalogTable: str, primaryKey: Sequence[str], uniqueKeys: Sequence[Sequence[str]]) -> None:
+        """SQLite can't add a constraint to a table, so the table is created
+        again from its own statement with the keys added, and its indexes
+        after it, in one transaction. Only an empty table: a stage table just
+        emptied for its load.
+        """
+
+        schema, name = catalogTableName(self.databaseType, catalogTable)
+        master = '{}.sqlite_master'.format(quoteIdentifier(self.databaseType, schema) if schema else 'main')
+
+        cursor.execute('SELECT 1 FROM {} LIMIT 1'.format(table))
+        if cursor.fetchone() is not None:
+            raise ConfigurationError('{} holds rows, and SQLite can only add a key by creating the table again'.format(catalogTable))
+
+        cursor.execute("SELECT sql FROM {} WHERE type = 'table' AND lower(name) = lower(?)".format(master), (name,))
+        created = cursor.fetchone()[0]
+        cursor.execute("SELECT sql FROM {} WHERE type = 'index' AND lower(tbl_name) = lower(?) AND sql IS NOT NULL".format(master), (name,))
+        indexes = [row[0] for row in cursor.fetchall()]
+
+        cursor.execute('BEGIN')
+        cursor.execute('DROP TABLE {}'.format(table))
+        cursor.execute(_withKeys(created, table, primaryKey, uniqueKeys))
+        for index in indexes:
+            cursor.execute(index if not schema else _qualifiedIndex(index, quoteIdentifier(self.databaseType, schema)))
 
 
     def columnDefinitions(self, cursor: Cursor, table: str) -> List[ColumnDefinition]:

@@ -276,12 +276,16 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
         except ConfigurationError as error:
             problems.append('{}: {}'.format(alias, error))
 
-    from ..masking import effectiveMaskingThreads
+    from ..masking import effectiveMaskingThreads, requireNativeProblem
 
     try:
         effectiveMaskingThreads(jobsFile.maskingThreads)
     except ValueError as error:
         problems.append(str(error))
+    if any(job.masking is not None and job.active for job in jobsFile.jobs.values()):
+        problem = requireNativeProblem(jobsFile.requireNative)
+        if problem:
+            problems.append(problem)
 
     if problems:
         raise ConfigurationError('invalid configuration:\n' + '\n'.join(problems))
@@ -414,6 +418,13 @@ def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, C
             problem = _checkColumnCounts(name, job, returned, returned if columns is None else columns)
             if problem is None and job.masking is not None:
                 problem = _checkMaskingCoverage(name, job, returned, log)
+            if problem is None and job.partitions is not None and job.partitions.column is not None:
+                from ..jobs.partitions import resolveColumn
+
+                try:
+                    resolveColumn(job.partitions.column, returned)
+                except ConfigurationError as error:
+                    problem = '{}: {}'.format(name, error)
             if problem:
                 problems.append(problem)
 

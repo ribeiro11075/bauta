@@ -9,8 +9,9 @@ publishes them.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
-from typing import Any, List, Optional, Sequence
+from typing import Any, ContextManager, Generator, List, Optional, Sequence
 
 from ..configuration import ConfigurationError, DataJobConfig, InsertStrategy
 from ..database import Database
@@ -66,8 +67,37 @@ class LoadTarget:
     def abort(self) -> None:
         """Best-effort cleanup after a failure; must not raise."""
 
+    def openWriter(self) -> ContextManager['ChunkWriter']:
+        """Another writer into what begin() prepared, with a connection of its
+        own, for one of a job's partitions to write() through while the rest
+        write through theirs. Called after begin() and closed before finish().
+        """
+
+        raise ConfigurationError('partitions is for a table in a database; {} is written by one writer'.format(self.loadName))
+
     def close(self) -> None:
         """Lets go of what the target holds open, after finish() or abort()."""
+
+
+class ChunkWriter:
+    """Writes prepared chunks into a table on one connection: upserted, for a
+    stage-less upsert straight into the target, and otherwise inserted.
+    """
+
+    def __init__(self, database: Database, table: str, columns: List[str], chunkSize: int, upserts: bool) -> None:
+        self.database = database
+        self.table = table
+        self.columns = columns
+        self.chunkSize = chunkSize
+        self.upserts = upserts
+
+
+    def write(self, rows: List[Any]) -> None:
+
+        if self.upserts:
+            self.database.upsert(table=self.table, data=rows, chunkSize=self.chunkSize, columns=self.columns)
+        else:
+            self.database.insert(table=self.table, data=rows, chunkSize=self.chunkSize, columns=self.columns)
 
 
 class TableTarget(LoadTarget):
@@ -120,13 +150,48 @@ class TableTarget(LoadTarget):
             logger.debug('Truncating stage table {}'.format(jobConfig.targetTableStage))
             self.database.truncate(table=jobConfig.targetTableStage)
 
+        if jobConfig.insertStrategy == InsertStrategy.SWAP:
+            assert jobConfig.targetTableStage is not None
+            self._giveStageTheTargetsKeys(jobConfig.targetTableFinal, jobConfig.targetTableStage)
+
+
+    def _giveStageTheTargetsKeys(self, final: str, stage: str) -> None:
+        """The swap makes the stage table the target, so it is given the
+        target's primary key and unique keys first, while it is empty: then
+        the live table has them after every swap, not every other one, and a
+        repeated key fails the load rather than reaching the target.
+
+        A stage that already has them -- every stage after the first swap,
+        which is the previous target -- is left as it is. A key that can't be
+        added is a warning, not a failure: the swap still works as it did
+        before stages were given keys.
+        """
+
+        try:
+            added = self.database.copyKeys(fromTable=final, toTable=stage)
+        except Exception as error:
+            logger.warning('Could not give stage table {} the keys of {}, so after this swap {} lacks them until the next one: {}'.format(
+                stage, final, final, describeError(error)))
+            return
+
+        if added:
+            logger.info('Gave stage table {} the {} of {}, so the swap keeps them'.format(stage, ' and '.join(added), final))
+
 
     def write(self, rows: List[Any]) -> None:
 
-        if self._streamsDirectlyIntoTarget:
-            self.database.upsert(table=self.loadName, data=rows, chunkSize=self.jobConfig.chunkSize, columns=self.columns)
-        else:
-            self.database.insert(table=self.loadName, data=rows, chunkSize=self.jobConfig.chunkSize, columns=self.columns)
+        ChunkWriter(self.database, self.loadName, self.columns, self.jobConfig.chunkSize, self._streamsDirectlyIntoTarget).write(rows)
+
+
+    @contextlib.contextmanager
+    def openWriter(self) -> Generator[ChunkWriter, None, None]:
+        """A connection of its own, since a connection is used by one thread at
+        a time -- SQLite and the MySQL drivers refuse any other -- and each
+        partition commits its chunks as this target does.
+        """
+
+        with Database(connectionSettings=self.database.connectionSettings, create=True) as database:
+            yield ChunkWriter(database, self.loadName, self.columns, self.jobConfig.chunkSize, self._streamsDirectlyIntoTarget)
 
 
     def finish(self, rowCount: int) -> None:

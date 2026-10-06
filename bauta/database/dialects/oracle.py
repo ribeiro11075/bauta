@@ -192,6 +192,20 @@ class OracleDialect(DatabaseDialect):
                 "WHERE cons.constraint_type = 'P' AND cons.owner = " + self.OWNER + " AND cons.table_name = {} ORDER BY cols.position")
 
 
+    def uniqueKeysQuery(self) -> str:
+        """Unique indexes, which a unique constraint is enforced by, apart from
+        the primary key's and the ones Oracle keeps for a LOB column's
+        storage. A function-based index's columns come back NULL.
+        """
+
+        return ("SELECT ic.index_name, CASE WHEN i.index_type IN ('NORMAL', 'NORMAL/REV') THEN ic.column_name END "
+                "FROM all_indexes i JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name "
+                "WHERE i.uniqueness = 'UNIQUE' AND i.index_type <> 'LOB' AND i.table_owner = " + self.OWNER + " AND i.table_name = {} "
+                "AND NOT EXISTS (SELECT 1 FROM all_constraints c WHERE c.owner = i.table_owner AND c.table_name = i.table_name "
+                "AND c.constraint_type = 'P' AND c.index_name = i.index_name) "
+                "ORDER BY ic.index_name, ic.column_position")
+
+
     def tableExistsQuery(self) -> str:
 
         return "SELECT count(*) FROM all_tables WHERE owner = " + self.OWNER + " AND table_name = {}"

@@ -255,8 +255,9 @@ def _copyJob(sourceQuery, final, **fields):
 @pytest.mark.parametrize('name', NAMES)
 def test_a_swap_through_schema_stage_tables_loads_and_drops_the_targets_keys(name, tmp_path_factory):
     """Stage tables carry no foreign keys, so the load always completes, and
-    the live table's keys alternate: the former stage declares none, the
-    original still does. `audit --connect` reports it. A stage that carried
+    the live table's foreign keys alternate: the former stage declares none,
+    the original still does -- the swap gives a stage the target's primary
+    and unique keys, not these. `audit --connect` reports it. A stage that carried
     them would fail as soon as its parent was swapped too.
     """
     settings = connect(name, tmp_path_factory)
@@ -304,7 +305,7 @@ def test_a_swap_through_schema_stage_tables_loads_and_drops_the_targets_keys(nam
         swapChild = _copyJob('SELECT id, parent_id FROM {}'.format(child), childCopy, insertStrategy='swap', targetTableStage=childStage)
 
         # Both runs load. The live table alternates between the former stage,
-        # which declares no keys, and the original, which does.
+        # which declares no foreign keys, and the original, which does.
         for expected in (set(), {parentCopy.lower()}):
             _executeDataJob('copy', swapChild, databases)
             assert count(childCopy) == 2

@@ -2593,6 +2593,410 @@
   ]
  },
  "pythonOnly": {
+  "coordinate {\"axis\": \"latitude\"}": [
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "51.510058795753984",
+    "maskedType": "float",
+    "type": "float",
+    "value": "51.50135"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-0.147436564158926",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.14189"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-0.0072319383796113045",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "89.99508520986133",
+    "maskedType": "float",
+    "type": "float",
+    "value": "89.9999"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-89.99359122413028",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-89.9999"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "180.0051232646621",
+    "maskedType": "float",
+    "type": "float",
+    "value": "179.9999"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-180.0067940994239",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-180.0"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "38.714950",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "38.722300"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-9.0",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-9.1"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "6.992454411763035",
+    "maskedType": "float",
+    "type": "int",
+    "value": "7"
+   }
+  ],
+  "coordinate {\"axis\": \"longitude\", \"latitudeColumn\": \"lat\", \"meters\": 5000}": [
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "51.54489397876989",
+    "maskedType": "float",
+    "type": "float",
+    "value": "51.50135"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "51.57129852202206",
+    "maskedType": "float",
+    "type": "float",
+    "value": "51.50135"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "55.855747876989795",
+    "maskedType": "float",
+    "type": "float",
+    "value": "51.50135"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "51.54489397876989",
+    "maskedType": "float",
+    "type": "float",
+    "value": "51.50135"
+   },
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "-0.1696228207946433",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.14189"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "-0.1864396686542591",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.14189"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "-2.9151720794630194",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.14189"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-0.1696228207946433",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-0.14189"
+   },
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "-0.036159691898063784",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "-0.0580864927021878",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "-3.6159691898056394",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-0.036159691898063784",
+    "maskedType": "float",
+    "type": "float",
+    "value": "0.0"
+   },
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "90.02397395069329",
+    "maskedType": "float",
+    "type": "float",
+    "value": "89.9999"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "90.03857210387747",
+    "maskedType": "float",
+    "type": "float",
+    "value": "89.9999"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "92.4072950693307",
+    "maskedType": "float",
+    "type": "float",
+    "value": "89.9999"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "90.02397395069329",
+    "maskedType": "float",
+    "type": "float",
+    "value": "89.9999"
+   },
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "-90.03144387934859",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-89.9999"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "-90.05057170712477",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-89.9999"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "-93.15428793485869",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-89.9999"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-90.03144387934859",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-89.9999"
+   },
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "-179.97398367668944",
+    "maskedType": "float",
+    "type": "float",
+    "value": "179.9999"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "-179.95814705339683",
+    "maskedType": "float",
+    "type": "float",
+    "value": "179.9999"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "-177.38846766894392",
+    "maskedType": "float",
+    "type": "float",
+    "value": "179.9999"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-179.97398367668944",
+    "maskedType": "float",
+    "type": "float",
+    "value": "179.9999"
+   },
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "179.96602950288047",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-180.0"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "179.9454302033716",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-180.0"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "176.60295028804694",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-180.0"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "179.96602950288047",
+    "maskedType": "float",
+    "type": "float",
+    "value": "-180.0"
+   },
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "38.685551",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "38.722300"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "38.663266",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "38.722300"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "35.047363",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "38.722300"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "38.685551",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "38.722300"
+   },
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "-9.0",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-9.1"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "-9.0",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-9.1"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "-6.5",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-9.1"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-9.0",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-9.1"
+   },
+   {
+    "context": "0",
+    "contextType": "int",
+    "masked": "6.962272058815188",
+    "maskedType": "float",
+    "type": "int",
+    "value": "7"
+   },
+   {
+    "context": "51.5",
+    "contextType": "float",
+    "masked": "6.939394290568657",
+    "maskedType": "float",
+    "type": "int",
+    "value": "7"
+   },
+   {
+    "context": "-89.99",
+    "contextType": "float",
+    "masked": "3.2272058815173352",
+    "maskedType": "float",
+    "type": "int",
+    "value": "7"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "6.962272058815188",
+    "maskedType": "float",
+    "type": "int",
+    "value": "7"
+   }
+  ],
   "dateShift {\"maxDays\": 10}": [
    {
     "masked": "2020-02-24",
@@ -2677,6 +3081,296 @@
     "message": "the dateShift strategy needs a date, a timestamp or ISO 8601 text, got int",
     "type": "int",
     "value": "20260921"
+   }
+  ],
+  "dateShift {\"shiftBy\": \"patient_id\"}": [
+   {
+    "context": "101",
+    "contextType": "int",
+    "masked": "2020-02-17",
+    "maskedType": "date",
+    "type": "date",
+    "value": "2020-02-29"
+   },
+   {
+    "context": "101",
+    "contextType": "str",
+    "masked": "2020-02-17",
+    "maskedType": "date",
+    "type": "date",
+    "value": "2020-02-29"
+   },
+   {
+    "context": "P-7",
+    "contextType": "str",
+    "masked": "2020-03-22",
+    "maskedType": "date",
+    "type": "date",
+    "value": "2020-02-29"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "2020-03-16",
+    "maskedType": "date",
+    "type": "date",
+    "value": "2020-02-29"
+   },
+   {
+    "context": "101",
+    "contextType": "int",
+    "masked": "1969-12-20",
+    "maskedType": "date",
+    "type": "date",
+    "value": "1970-01-01"
+   },
+   {
+    "context": "101",
+    "contextType": "str",
+    "masked": "1969-12-20",
+    "maskedType": "date",
+    "type": "date",
+    "value": "1970-01-01"
+   },
+   {
+    "context": "P-7",
+    "contextType": "str",
+    "masked": "1970-01-23",
+    "maskedType": "date",
+    "type": "date",
+    "value": "1970-01-01"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "1970-01-10",
+    "maskedType": "date",
+    "type": "date",
+    "value": "1970-01-01"
+   },
+   {
+    "context": "101",
+    "contextType": "int",
+    "masked": "0001-01-01",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-01"
+   },
+   {
+    "context": "101",
+    "contextType": "str",
+    "masked": "0001-01-01",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-01"
+   },
+   {
+    "context": "P-7",
+    "contextType": "str",
+    "masked": "0001-01-01",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-01"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "0001-01-01",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-01"
+   },
+   {
+    "context": "101",
+    "contextType": "int",
+    "masked": "9999-12-31",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-31"
+   },
+   {
+    "context": "101",
+    "contextType": "str",
+    "masked": "9999-12-31",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-31"
+   },
+   {
+    "context": "P-7",
+    "contextType": "str",
+    "masked": "9999-12-31",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-31"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "9999-12-31",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-31"
+   },
+   {
+    "context": "101",
+    "contextType": "int",
+    "masked": "0001-01-14",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-02"
+   },
+   {
+    "context": "101",
+    "contextType": "str",
+    "masked": "0001-01-14",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-02"
+   },
+   {
+    "context": "P-7",
+    "contextType": "str",
+    "masked": "0001-01-24",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-02"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "0001-01-14",
+    "maskedType": "date",
+    "type": "date",
+    "value": "0001-01-02"
+   },
+   {
+    "context": "101",
+    "contextType": "int",
+    "masked": "9999-12-18",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-30"
+   },
+   {
+    "context": "101",
+    "contextType": "str",
+    "masked": "9999-12-18",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-30"
+   },
+   {
+    "context": "P-7",
+    "contextType": "str",
+    "masked": "9999-12-08",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-30"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "9999-12-22",
+    "maskedType": "date",
+    "type": "date",
+    "value": "9999-12-30"
+   },
+   {
+    "context": "101",
+    "contextType": "int",
+    "masked": "2026-09-09 16:30:05",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 16:30:05"
+   },
+   {
+    "context": "101",
+    "contextType": "str",
+    "masked": "2026-09-09 16:30:05",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 16:30:05"
+   },
+   {
+    "context": "P-7",
+    "contextType": "str",
+    "masked": "2026-10-13 16:30:05",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 16:30:05"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "2026-10-13 16:30:05",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 16:30:05"
+   },
+   {
+    "context": "101",
+    "contextType": "int",
+    "masked": "2026-09-09 23:59:59.999999",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 23:59:59.999999"
+   },
+   {
+    "context": "101",
+    "contextType": "str",
+    "masked": "2026-09-09 23:59:59.999999",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 23:59:59.999999"
+   },
+   {
+    "context": "P-7",
+    "contextType": "str",
+    "masked": "2026-10-13 23:59:59.999999",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 23:59:59.999999"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "2026-10-13 23:59:59.999999",
+    "maskedType": "datetime",
+    "type": "datetime",
+    "value": "2026-09-21 23:59:59.999999"
+   },
+   {
+    "context": "101",
+    "contextType": "int",
+    "masked": "2026-09-09",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21"
+   },
+   {
+    "context": "101",
+    "contextType": "str",
+    "masked": "2026-09-09",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21"
+   },
+   {
+    "context": "P-7",
+    "contextType": "str",
+    "masked": "2026-10-13",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "2026-10-13",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2026-09-21"
    }
   ],
   "dateShift {}": [
@@ -2765,6 +3459,674 @@
     "value": "20260921"
    }
   ],
+  "fakeCity {\"lists\": 2, \"locale\": \"pt_BR\"}": [
+   {
+    "masked": "Palmas",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John"
+   },
+   {
+    "masked": "Maring\u00e1",
+    "maskedType": "str",
+    "type": "str",
+    "value": "MARY"
+   },
+   {
+    "masked": "Niter\u00f3i",
+    "maskedType": "str",
+    "type": "str",
+    "value": "smith"
+   },
+   {
+    "masked": "Uberaba",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John Smith"
+   },
+   {
+    "masked": "Jaboat\u00e3o",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Smith, Mary Ann"
+   },
+   {
+    "masked": "Porto Alegre",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Jan de Jong"
+   },
+   {
+    "masked": "Florian\u00f3polis",
+    "maskedType": "str",
+    "type": "str",
+    "value": "  ana   souza "
+   },
+   {
+    "masked": "Florian\u00f3polis",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Karl-Heinz"
+   },
+   {
+    "masked": "S\u00e3o Paulo",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": "Campinas",
+    "maskedType": "str",
+    "type": "str",
+    "value": "O'Brien"
+   },
+   {
+    "masked": "Porto Velho",
+    "maskedType": "str",
+    "type": "int",
+    "value": "42"
+   }
+  ],
+  "fakeFirstName {\"lists\": 2, \"locale\": \"de_DE\", \"matchGender\": true}": [
+   {
+    "masked": "Kevin",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John"
+   },
+   {
+    "masked": "CLAUDIA",
+    "maskedType": "str",
+    "type": "str",
+    "value": "MARY"
+   },
+   {
+    "masked": "oskar",
+    "maskedType": "str",
+    "type": "str",
+    "value": "smith"
+   },
+   {
+    "masked": "Kai",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John Smith"
+   },
+   {
+    "masked": "Isabell",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Smith, Mary Ann"
+   },
+   {
+    "masked": "Dennis",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Jan de Jong"
+   },
+   {
+    "masked": "bernd",
+    "maskedType": "str",
+    "type": "str",
+    "value": "  ana   souza "
+   },
+   {
+    "masked": "Siegfried",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Karl-Heinz"
+   },
+   {
+    "masked": "Benedikt",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": "Lothar",
+    "maskedType": "str",
+    "type": "str",
+    "value": "O'Brien"
+   },
+   {
+    "masked": "Heinrich",
+    "maskedType": "str",
+    "type": "int",
+    "value": "42"
+   }
+  ],
+  "fakeFirstName {\"lists\": 2}": [
+   {
+    "masked": "Karin",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John"
+   },
+   {
+    "masked": "GILLIAN",
+    "maskedType": "str",
+    "type": "str",
+    "value": "MARY"
+   },
+   {
+    "masked": "ariana",
+    "maskedType": "str",
+    "type": "str",
+    "value": "smith"
+   },
+   {
+    "masked": "Matthias",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John Smith"
+   },
+   {
+    "masked": "Alejandra",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Smith, Mary Ann"
+   },
+   {
+    "masked": "Femmy",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Jan de Jong"
+   },
+   {
+    "masked": "huw",
+    "maskedType": "str",
+    "type": "str",
+    "value": "  ana   souza "
+   },
+   {
+    "masked": "Gillian",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Karl-Heinz"
+   },
+   {
+    "masked": "Faye",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": "Robyn",
+    "maskedType": "str",
+    "type": "str",
+    "value": "O'Brien"
+   },
+   {
+    "masked": "Carmela",
+    "maskedType": "str",
+    "type": "int",
+    "value": "42"
+   }
+  ],
+  "fakeLastName {\"lists\": 2}": [
+   {
+    "masked": "Jacquet",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John"
+   },
+   {
+    "masked": "GARC\u00cdA",
+    "maskedType": "str",
+    "type": "str",
+    "value": "MARY"
+   },
+   {
+    "masked": "armstrong",
+    "maskedType": "str",
+    "type": "str",
+    "value": "smith"
+   },
+   {
+    "masked": "N\u00fa\u00f1ez",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John Smith"
+   },
+   {
+    "masked": "Renard",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Smith, Mary Ann"
+   },
+   {
+    "masked": "Mendez",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Jan de Jong"
+   },
+   {
+    "masked": "mattos",
+    "maskedType": "str",
+    "type": "str",
+    "value": "  ana   souza "
+   },
+   {
+    "masked": "Salvi",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Karl-Heinz"
+   },
+   {
+    "masked": "P\u00e9rez",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": "van Beek",
+    "maskedType": "str",
+    "type": "str",
+    "value": "O'Brien"
+   },
+   {
+    "masked": "Vasconcelos",
+    "maskedType": "str",
+    "type": "int",
+    "value": "42"
+   }
+  ],
+  "fakeName {\"lists\": 2, \"locale\": \"nl_NL\", \"maxLength\": 12}": [
+   {
+    "masked": "Matthijs",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John"
+   },
+   {
+    "masked": "EMMA",
+    "maskedType": "str",
+    "type": "str",
+    "value": "MARY"
+   },
+   {
+    "masked": "bram",
+    "maskedType": "str",
+    "type": "str",
+    "value": "smith"
+   },
+   {
+    "masked": "Matthijs Kra",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John Smith"
+   },
+   {
+    "masked": "Kramer, Emma",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Smith, Mary Ann"
+   },
+   {
+    "masked": "Popke van de",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Jan de Jong"
+   },
+   {
+    "masked": "quinty feens",
+    "maskedType": "str",
+    "type": "str",
+    "value": "  ana   souza "
+   },
+   {
+    "masked": "Evi",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Karl-Heinz"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": "Joep",
+    "maskedType": "str",
+    "type": "str",
+    "value": "O'Brien"
+   },
+   {
+    "masked": "Tjeerd",
+    "maskedType": "str",
+    "type": "int",
+    "value": "42"
+   }
+  ],
+  "fakeName {\"lists\": 2, \"matchGender\": true}": [
+   {
+    "masked": "Bruce",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John"
+   },
+   {
+    "masked": "ILSE",
+    "maskedType": "str",
+    "type": "str",
+    "value": "MARY"
+   },
+   {
+    "masked": "ariana",
+    "maskedType": "str",
+    "type": "str",
+    "value": "smith"
+   },
+   {
+    "masked": "Bruce Armstrong",
+    "maskedType": "str",
+    "type": "str",
+    "value": "John Smith"
+   },
+   {
+    "masked": "Armstrong, Ilse Willow",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Smith, Mary Ann"
+   },
+   {
+    "masked": "Volker Hay",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Jan de Jong"
+   },
+   {
+    "masked": "margarita nascimento",
+    "maskedType": "str",
+    "type": "str",
+    "value": "  ana   souza "
+   },
+   {
+    "masked": "Emilio",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Karl-Heinz"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": "Robyn",
+    "maskedType": "str",
+    "type": "str",
+    "value": "O'Brien"
+   },
+   {
+    "masked": "Carmela",
+    "maskedType": "str",
+    "type": "int",
+    "value": "42"
+   }
+  ],
+  "fpe {\"charset\": \"digits\", \"normalize\": [\"integer\"]}": [
+   {
+    "masked": "AB48CD",
+    "maskedType": "str",
+    "type": "str",
+    "value": "AB12CD"
+   },
+   {
+    "masked": "ab58cd   ",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ab12cd   "
+   },
+   {
+    "masked": " Ab86Cd ",
+    "maskedType": "str",
+    "type": "str",
+    "value": " Ab12Cd "
+   },
+   {
+    "masked": "5106916",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1234567"
+   },
+   {
+    "masked": "-1682096",
+    "maskedType": "str",
+    "type": "str",
+    "value": "-1234567"
+   },
+   {
+    "masked": "1211537",
+    "maskedType": "str",
+    "type": "str",
+    "value": "0012345"
+   },
+   {
+    "masked": "5106916",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1234567"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": "None",
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": "None"
+   }
+  ],
+  "hash {\"normalize\": [\"strip\", \"lower\"]}": [
+   {
+    "masked": "282072304d81b045",
+    "maskedType": "str",
+    "type": "str",
+    "value": "AB12CD"
+   },
+   {
+    "masked": "282072304d81b045",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ab12cd   "
+   },
+   {
+    "masked": "282072304d81b045",
+    "maskedType": "str",
+    "type": "str",
+    "value": " Ab12Cd "
+   },
+   {
+    "masked": "5262842061a1b0e5",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1234567"
+   },
+   {
+    "masked": "027690e9f7eea94b",
+    "maskedType": "str",
+    "type": "str",
+    "value": "-1234567"
+   },
+   {
+    "masked": "4475a51cac491f64",
+    "maskedType": "str",
+    "type": "str",
+    "value": "0012345"
+   },
+   {
+    "masked": "5262842061a1b0e5",
+    "maskedType": "str",
+    "type": "int",
+    "value": "1234567"
+   },
+   {
+    "masked": "d784a029a29fb0f3",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": "None",
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": "None"
+   }
+  ],
+  "json {\"fields\": {\"card\": \"null\"}, \"otherwise\": {\"replacement\": \"label\", \"strategy\": \"redact\"}}": [
+   {
+    "masked": "{'contact': {'email': '[EMAIL]', 'phone': '[PHONE]'}, 'card': None, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'u7585b672d72c@example.test': 1}, 'notes': ['call [PHONE]', None]}",
+    "maskedType": "dict",
+    "type": "dict",
+    "value": "{'contact': {'email': 'Ann.Lee@corp.example.com', 'phone': 5550109999}, 'card': 4111111111111111, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'bob@corp.example': 1}, 'notes': ['call +1 555 010 9999', None]}"
+   },
+   {
+    "masked": "{\"customer_id\": 42, \"ssn\": \"[SSN]\", \"ssnNumber\": \"[PHONE]\"}",
+    "maskedType": "str",
+    "type": "str",
+    "value": "{\"customer_id\": 42, \"ssn\": \"123-45-6789\", \"ssnNumber\": 123456789}"
+   }
+  ],
+  "json {\"fields\": {\"contact.email\": \"email\", \"customer_id\": {\"domain\": \"customers\", \"strategy\": \"key\"}}}": [
+   {
+    "masked": "{'contact': {'email': 'u910e604dfa38@example.test', 'phone': 1286456000}, 'card': 5226276914481111, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'u7585b672d72c@example.test': 1}, 'notes': ['call +0 263 204 5622', None]}",
+    "maskedType": "dict",
+    "type": "dict",
+    "value": "{'contact': {'email': 'Ann.Lee@corp.example.com', 'phone': 5550109999}, 'card': 4111111111111111, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'bob@corp.example': 1}, 'notes': ['call +1 555 010 9999', None]}"
+   },
+   {
+    "masked": "{\"customer_id\": 18, \"ssn\": \"131-13-8212\", \"ssnNumber\": 131138212}",
+    "maskedType": "str",
+    "type": "str",
+    "value": "{\"customer_id\": 42, \"ssn\": \"123-45-6789\", \"ssnNumber\": 123456789}"
+   }
+  ],
+  "json {\"fields\": {\"visits\": \"keep\"}, \"otherwise\": \"keep\"}": [
+   {
+    "masked": "{'contact': {'email': 'Ann.Lee@corp.example.com', 'phone': 5550109999}, 'card': 4111111111111111, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'bob@corp.example': 1}, 'notes': ['call +1 555 010 9999', None]}",
+    "maskedType": "dict",
+    "type": "dict",
+    "value": "{'contact': {'email': 'Ann.Lee@corp.example.com', 'phone': 5550109999}, 'card': 4111111111111111, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'bob@corp.example': 1}, 'notes': ['call +1 555 010 9999', None]}"
+   },
+   {
+    "masked": "{\"customer_id\": 42, \"ssn\": \"123-45-6789\", \"ssnNumber\": 123456789}",
+    "maskedType": "str",
+    "type": "str",
+    "value": "{\"customer_id\": 42, \"ssn\": \"123-45-6789\", \"ssnNumber\": 123456789}"
+   }
+  ],
+  "key {\"normalize\": [\"strip\", \"lower\", \"integer\"]}": [
+   {
+    "masked": "kc97gl",
+    "maskedType": "str",
+    "type": "str",
+    "value": "AB12CD"
+   },
+   {
+    "masked": "kc97gl",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ab12cd   "
+   },
+   {
+    "masked": "kc97gl",
+    "maskedType": "str",
+    "type": "str",
+    "value": " Ab12Cd "
+   },
+   {
+    "masked": "6920316",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1234567"
+   },
+   {
+    "masked": "-6708131",
+    "maskedType": "str",
+    "type": "str",
+    "value": "-1234567"
+   },
+   {
+    "masked": "5978143",
+    "maskedType": "str",
+    "type": "str",
+    "value": "0012345"
+   },
+   {
+    "masked": "6920316",
+    "maskedType": "int",
+    "type": "int",
+    "value": "1234567"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": "None",
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": "None"
+   }
+  ],
+  "largeFakeLists": {
+   "de_DE": {
+    "cities": "aceef33296d7b5339cdba6f8eba521df7568dcefd74230e1c87ce10091afbe52",
+    "femaleNames": "9f6ec4f42424bb940190c664b025f2dd00ef41df73b0e3412eae3c94f8484ed2",
+    "lastNames": "bbfac52209c45b85e820d8f0d38dfb7b361b2514b3a66b076146622f432047fa",
+    "maleNames": "e015877a71e7ff6f11b63ab6e201e014755e30c3e34947da00c3fd9535e2bdbe"
+   },
+   "en_GB": {
+    "cities": "be0dbff965960d7586800e17a33cbdadce3170b4b13095867977975fb1d4945a",
+    "femaleNames": "8004eeb64326d84bcb109a8f2d87dc56ea6a33dbf0ce286e9379727e7e94c9fb",
+    "lastNames": "1cfd6102064c8a69212a110f56e3704868377873a5e2876fc77f94e58413b73e",
+    "maleNames": "c1e0249071e6e27ec65edcf5646a6a93a73eeb561aa0871f099415fa77e06160"
+   },
+   "en_US": {
+    "cities": "9f1ecc3d6f082abc26c32ea69fa36002ee0d74fced9c1d278f422ece2c752518",
+    "femaleNames": "f0ba155d509a53f0681dffa06ac964afd04febfc809f5c21719b2a9bd32dd875",
+    "lastNames": "74df4673e18f6c32fc6ccb1f0d0b0417263a831d3ad221ac0e8d1f03b7a4c6b4",
+    "maleNames": "9479d2bcc60959edf71c19d91e872feed1dbec7f5c12bd985e6deb740b2b6413"
+   },
+   "es_ES": {
+    "cities": "13f52b5473d475daadbb31785090c39e9294449a9437f45520209e7853ac7f8c",
+    "femaleNames": "48c4d9cbff372ba011c1dcbc44d3626d36a55c86d862ab60d5d673c948acd6da",
+    "lastNames": "85d2d15d3252b4421a3a6d92916fd432686646549b9c69641d8c32ae10c949f2",
+    "maleNames": "208403d72e7771f5f7c151eb5ebde0005d19982bd9ef9042fb6150fe42c1280b"
+   },
+   "fr_FR": {
+    "cities": "1574a0d0779f65f56e521a05fc091034f469375bfaef01b0e7eec7cf06f25d8e",
+    "femaleNames": "539eb23ff38766484cb5042507d9d999140e62131b689ab55dc72d52d0491cba",
+    "lastNames": "9484a477681c6d3fe59ecf7bf63821f547bcb9b2740ac7fdfe38709856f47de0",
+    "maleNames": "e2b4691e50eb27f575ba7c64f96cdef5133749fff0486ec8df14da3310365da9"
+   },
+   "it_IT": {
+    "cities": "716f354d648ddd4b62c54a346dd0b08f5eda499adbb8fff0a4ed8a929a2f46ea",
+    "femaleNames": "930bc7bba6853c69b34e3a15163607e26f2562a2123d57b95a167eb4a27b3e55",
+    "lastNames": "07ee8827fe8833741e907376b1e5bcceb0ee50f5179266b5489aa6694604e9b3",
+    "maleNames": "90fb885f4b8b29f067bc2ffd82ec74dc505f5fb658a1392e28a84f24fad9a5b1"
+   },
+   "nl_NL": {
+    "cities": "d377c4870c58efe963b766ebeed23e2bc641182c27cfb1e22197d241f07369f5",
+    "femaleNames": "c49ede20b61ae88de39a174f8139d0b986490bc88c4ed48dbb3052354ce6df83",
+    "lastNames": "be142c27fffaa17a6064ecb574897e85fe86c22f240215d85413c6e8296c3c2f",
+    "maleNames": "7b414c54b9b6009e61ebef109107e7d607104e1be5a70465edb0197103fab1f5"
+   },
+   "pt_BR": {
+    "cities": "69200638c6ccdea79e10e743c536dfec042f0d3e719514b0b9311bedc8cd7fef",
+    "femaleNames": "da7f7654a80c017c30a3aac79129fa3f2f1420481034f47730ba45ff57e88ce9",
+    "lastNames": "197e9dea8710c53aad612cb344d3ca83e8a41e1be7381bab05b28356eef3f407",
+    "maleNames": "1bdb8716634ffe84bec834fea866184a589316f9cad58f24c56aac36d14dfce7"
+   }
+  },
   "redact {\"detect\": [\"email\"], \"patterns\": [\"ACC-\\\\d{6}\"], \"replacement\": \"mask\"}": [
    {
     "masked": "Called Ann at +1 (555) 010-9999, email uda2456fd0327@example.test; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3.",

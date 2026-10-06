@@ -78,9 +78,13 @@ NAME_RULES: Tuple[Tuple[str, Tuple[str, ...], Dict[str, Any], str], ...] = (
      'name suggests a date of birth'),
     ('compensation', ('salary', 'income', 'wage', 'wages', 'compensation', 'bonus'), {'strategy': 'number', 'variance': 0.1},
      'name suggests compensation'),
-    ('coordinate', ('latitude', 'longitude', 'lat', 'lng', 'lon'), {'strategy': 'number', 'variance': 0.01}, 'name suggests a coordinate'),
-    ('sensitiveAttribute', ('gender', 'sex', 'race', 'ethnicity', 'religion', 'nationality'), {'strategy': 'shuffle'},
-     'name suggests a sensitive attribute; shuffle keeps the distribution but is not anonymization'),
+    # Two rules of one name, so a discovery.yaml leaving `coordinate` out leaves out both.
+    ('coordinate', ('latitude', 'lat'), {'strategy': 'coordinate', 'axis': 'latitude', 'meters': 1000},
+     'name suggests a latitude; moved up to a kilometre, wherever it is'),
+    ('coordinate', ('longitude', 'lng', 'lon'), {'strategy': 'coordinate', 'axis': 'longitude', 'meters': 1000},
+     'name suggests a longitude; moved up to a kilometre, wherever it is'),
+    ('sensitiveAttribute', ('gender', 'sex', 'race', 'ethnicity', 'religion', 'nationality'), {'strategy': 'null'},
+     'name suggests a special category of personal data (GDPR article 9); shuffle would keep every real value in the table'),
     ('freeText', ('note', 'notes', 'comment', 'comments', 'description', 'remarks', 'memo', 'bio', 'message', 'body', 'freetext'),
      {'strategy': 'null'}, 'name suggests free text, which can hold PII anywhere; redact keeps the text but only removes identifiers with a known shape'),
     )
@@ -93,7 +97,8 @@ VALUE_RULES: Tuple[Tuple[str, Callable[[str], bool], Dict[str, Any], str], ...] 
      'sampled values look like national identifiers'),
     ('card', isCard, {'strategy': 'digits', 'keepTrailing': 4}, 'sampled values look like card numbers'),
     ('ip', lambda text: bool(IPV4.match(text)), {'strategy': 'hash'}, 'sampled values look like IP addresses'),
-    ('uuid', lambda text: bool(UUID_TEXT.match(text)), {'strategy': 'keep'}, 'sampled values are UUIDs, usually surrogate keys -- review'),
+    ('uuid', lambda text: bool(UUID_TEXT.match(text)), {'strategy': 'key', 'charset': 'hex'},
+     'sampled values are UUIDs, which other systems -- logs, a CRM -- may hold too; key masks them one-to-one, so they stay unique'),
     # Before phone numbers, which ISO dates would otherwise pass for.
     ('date', isIsoDate, {'strategy': 'keep'}, 'sampled values are dates -- review whether they identify anyone'),
     ('phone', isPhone, {'strategy': 'digits'}, 'sampled values look like phone numbers'),

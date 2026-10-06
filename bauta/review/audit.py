@@ -7,14 +7,15 @@ Works on plain data; the CLI supplies whatever needs a connection.
 from __future__ import annotations
 
 import datetime
+import decimal
 import re
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
 from ..configuration import ConnectionConfig, DataJobConfig
 from ..database.dialects import ForeignKey, bareName, unqualifiedName
-from ..generate.discovery import BUILTIN_RULES, DiscoveryRules, personalDataHint
+from ..generate.discovery import BUILTIN_RULES, DiscoveryRules, personalDataHint, valueHint
 from ..jobs.fullRefresh import fullRefreshProblem
-from ..masking import MaskingError, MaskingPlan, changesValues, keyFingerprint, resolveStrategy
+from ..masking import MaskingError, MaskingPlan, changesValues, keyFingerprint, policyFor, resolveStrategy
 
 SEVERITIES = ('error', 'warning', 'info')
 
@@ -60,9 +61,12 @@ class _Usage(NamedTuple):
 
 
 def _describePolicy(policy: Mapping[str, Any]) -> str:
-    """A strategy and its options, as a reviewer would compare them."""
+    """A strategy and its options, as a reviewer would compare them: all but
+    `normalize`, which makes one value held two ways in two columns mask alike,
+    and so differs between columns that agree.
+    """
 
-    options = ', '.join('{}: {}'.format(name, policy[name]) for name in sorted(policy) if name not in ('strategy', 'domain'))
+    options = ', '.join('{}: {}'.format(name, policy[name]) for name in sorted(policy) if name not in ('strategy', 'domain', 'normalize'))
 
     return '{} ({})'.format(policy['strategy'], options) if options else policy['strategy']
 
@@ -114,6 +118,67 @@ def _auditDomains(target: str, usages: Sequence[_Usage], findings: List[Finding]
                                     'Mask the domain one way, or give columns that should not match a domain of their own'.format(
                                         target, domain, what.format(len(variants)),
                                         '; '.join('{} for {}'.format(noun.format(variant), _labels(group)) for variant, group in sorted(variants.items())))))
+
+
+# The strategies whose mask of a value depends on how it is held: `key` and
+# `fpe` mask 42 and '42' differently, and every keyed strategy masks 'AB12'
+# and 'AB12  ' differently. `hash` keys numbers on their digits, so only
+# padding matters to it.
+_TYPED_STRATEGIES = frozenset({'key', 'fpe'})
+_PADDED_STRATEGIES = frozenset({'key', 'fpe', 'hash'})
+_INTEGER_TEXT = re.compile(r'-?[1-9][0-9]*|0')
+
+
+def _forms(values: Sequence[Any]) -> Set[str]:
+
+    forms = set()
+    for value in values:
+        if isinstance(value, bool) or value is None:
+            continue
+        if isinstance(value, int) or (isinstance(value, decimal.Decimal) and value.is_finite() and value == value.to_integral_value()):
+            forms.add('number')
+        elif isinstance(value, str):
+            forms.add('padded text' if value != value.strip() else 'text')
+            if _INTEGER_TEXT.fullmatch(value.strip()):
+                forms.add('integer text')
+
+    return forms
+
+
+def _auditSampledDomains(target: str, sampled: Sequence[_Sampled], findings: List[Finding]) -> None:
+    """Columns sharing a domain, and so meant to mask a value alike, whose
+    sampled values hold it differently: one id as a number in one table and as
+    text in another, or one code padded with spaces, as CHAR columns are, in one
+    and not another. Each masks its own way, so references between them stop
+    matching in the copy, with nothing to say so but `verify-references`.
+    """
+
+    byDomain: Dict[Tuple[str, str], List[_Sampled]] = {}
+    for column in sampled:
+        byDomain.setdefault((column.domain, column.keyFingerprint), []).append(column)
+
+    for (domain, _), columns in sorted(byDomain.items()):
+        if len(columns) < 2:
+            continue
+
+        def labels(chosen: Iterable[_Sampled]) -> str:
+            return ', '.join(sorted('{}.{}'.format(column.job, column.column) for column in chosen))
+
+        typed = [column for column in columns if column.strategy in _TYPED_STRATEGIES]
+        numbers = [column for column in typed if 'number' in _forms(column.values) and 'integer' not in column.normalize]
+        texts = [column for column in typed if 'integer text' in _forms(column.values) and 'integer' not in column.normalize]
+        if numbers and texts:
+            findings.append(Finding('warning', None, 'domain {} in {} holds ids as numbers in {} and as text in {}, and key and fpe mask the two '
+                                    'differently, so they stop matching in the copy. Add normalize: [integer] to the text column(s)'.format(
+                                        domain, target, labels(numbers), labels(texts))))
+
+        padded = [column for column in columns if column.strategy in _PADDED_STRATEGIES and 'padded text' in _forms(column.values)
+                  and 'strip' not in column.normalize]
+        if padded and len(padded) < len(columns):
+            findings.append(Finding('warning', None, 'domain {} in {}: sampled values of {} have leading or trailing spaces, as a CHAR column '
+                                    'pads them, and mask differently from the same values unpadded in {}. Add normalize: [strip] to each '
+                                    'column in the domain'.format(domain, target, labels(padded),
+                                                                  labels(column for column in columns if column not in padded))))
 
 
 def _auditForeignKeys(target: str, jobs: Mapping[str, DataJobConfig], usagesByJob: Mapping[str, Sequence[_Usage]],
@@ -355,14 +420,15 @@ def _auditSwaps(target: str, jobs: Mapping[str, DataJobConfig], declared: Sequen
             findings.append(Finding('error', name, '{}, {}, and the next run cannot empty {}. Recreate the key on {} in postTargetAdhocQueries, '
                                     'or load {} with upsert and a stage table'.format(where, what, stage, final, final)))
 
-        # The other side: the swapped table's own keys stay on the old table,
-        # and the stage that replaces it has none, so the copy stops enforcing
-        # them until the next swap brings the original back.
+        # The other side: the swapped table's own foreign keys stay on the old
+        # table, and the stage that replaces it is given the target's primary
+        # and unique keys but none of these, so the copy stops enforcing them
+        # until the next swap brings the original back.
         own = sorted({(foreignKey.table, ', '.join(foreignKey.columns), foreignKey.referencedTable) for foreignKey in declared
                       if foreignKey.table.upper() == final.upper() and foreignKey.referencedTable.upper() != final.upper()})
         if own and not any(_mentions(query, final) for query in job.postTargetAdhocQueries):
-            findings.append(Finding('warning', name, 'in {}, {} declares foreign key(s) {}, but {} replaces it by swap with {}, which declares '
-                                    'none, so after a run the copy stops enforcing them. Recreate them on {} in postTargetAdhocQueries, or load '
+            findings.append(Finding('warning', name, 'in {}, {} declares foreign key(s) {}, but {} replaces it by swap with {}, which is given '
+                                    'its primary and unique keys but none of these, so after a run the copy stops enforcing them. Recreate them on {} in postTargetAdhocQueries, or load '
                                     'it with upsert and a stage table'.format(
                                         target, final, '; '.join('{} -> {}'.format(columns, parent) for _, columns, parent in own),
                                         name, stage, final)))
@@ -380,8 +446,48 @@ def _declaredColumns(plan: MaskingPlan) -> List[Dict[str, Any]]:
     return columns
 
 
+def _sampledColumns(returned: Optional[Sequence[str]], rows: Optional[Sequence[Sequence[Any]]]) -> Dict[str, List[Any]]:
+    """Each returned column's sampled values, by its name folded to upper case."""
+
+    if not returned or not rows:
+        return {}
+
+    return {column.upper(): [row[index] for row in rows] for index, column in enumerate(returned)}
+
+
+def _kept(name: str, column: str, values: Optional[Sequence[Any]], rules: DiscoveryRules, findings: List[Finding]) -> Optional[str]:
+    """Questions a column copied as it is whose sampled values look like
+    personal data, whatever it is called: `SELECT ssn AS ref` with `ref: keep`
+    passes every check made by name. A UUID is noted rather than warned
+    about: often a surrogate key, but one other systems' logs may share.
+    """
+
+    hint = valueHint(values, rules) if values else None
+    if hint is None:
+        return None
+
+    rule, reason = hint
+    findings.append(Finding('info' if rule == 'uuid' else 'warning', name, 'column {} is kept unmasked, but {}'.format(column, reason)))
+
+    return reason
+
+
+class _Sampled(NamedTuple):
+    """A masked column's sampled values, beside how they are masked: for
+    checking that the columns sharing a domain hold one value one way."""
+
+    job: str
+    column: str
+    strategy: str
+    domain: str
+    keyFingerprint: str
+    normalize: Tuple[str, ...]
+    values: Sequence[Any]
+
+
 def _auditMaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence[str]], findings: List[Finding],
-                    usages: Dict[str, List[_Usage]], rules: DiscoveryRules) -> Dict[str, Any]:
+                    usages: Dict[str, List[_Usage]], rules: DiscoveryRules, rows: Optional[Sequence[Sequence[Any]]] = None,
+                    sampled: Optional[List[_Sampled]] = None) -> Dict[str, Any]:
 
     assert job.masking is not None
     plan = MaskingPlan(key=job.masking.key.get_secret_value(), columns=job.masking.columns, defaultStrategy=job.masking.defaultStrategy)
@@ -395,11 +501,20 @@ def _auditMaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence[s
         except MaskingError as error:
             findings.append(Finding('error', name, 'the policy does not match what sourceQuery returns: {}'.format(error)))
 
+    samples = _sampledColumns(returned, rows) if resolved else {}
+    fingerprint = keyFingerprint(job.masking.key.get_secret_value())
+
     for entry in columns:
         hint = personalDataHint(entry['column'], rules)
         entry['personalDataHint'] = hint
+        values = samples.get(entry['column'].upper())
         if hint and not changesValues(entry):
             findings.append(Finding('warning', name, 'column {} is kept unmasked, but its {}'.format(entry['column'], hint)))
+        elif not changesValues(entry):
+            entry['valueHint'] = _kept(name, entry['column'], values, rules, findings)
+        elif values is not None and sampled is not None and entry['domain'] is not None:
+            policy = policyFor(entry['column'], plan.columns, plan.defaultStrategy) or {}
+            sampled.append(_Sampled(name, entry['column'], entry['strategy'], entry['domain'], fingerprint, tuple(policy.get('normalize', ())), values))
 
     defaultStrategy = plan.defaultStrategy
     if defaultStrategy is not None:
@@ -431,15 +546,16 @@ def _auditMaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence[s
         findings.append(Finding('warning', name, 'shuffle on an incremental job: its small chunks leave values on or near their own rows'))
 
     return {
-        'keyFingerprint': keyFingerprint(job.masking.key.get_secret_value()),
+        'keyFingerprint': fingerprint,
         'defaultStrategy': defaultStrategy,
         'columnsResolved': resolved,
+        'sampledRows': len(rows) if resolved and rows is not None else None,
         'columns': columns,
         }
 
 
 def _auditUnmaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence[str]], maskedSources: Set[str],
-                      findings: List[Finding], rules: DiscoveryRules) -> None:
+                      findings: List[Finding], rules: DiscoveryRules, rows: Optional[Sequence[Sequence[Any]]] = None) -> None:
     """A job with no masking policy.
 
     Copying unmasked is a choice a reviewer has to see, so it is a finding
@@ -451,8 +567,15 @@ def _auditUnmaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence
     table copied from a new source is exactly the case that matters.
     """
 
-    personal = [(column, personalDataHint(column, rules)) for column in (returned or [])]
-    personal = [(column, hint) for column, hint in personal if hint]
+    samples = _sampledColumns(returned, rows)
+    personal = []
+    for column in returned or []:
+        hint = personalDataHint(column, rules)
+        if hint is None and samples.get(column.upper()):
+            found = valueHint(samples[column.upper()], rules)
+            hint = found[1] if found is not None and found[0] != 'uuid' else None
+        if hint:
+            personal.append((column, hint))
 
     if personal:
         findings.append(Finding('warning' if job.unmasked else 'error', name,
@@ -483,7 +606,8 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
               generatedAt: Optional[datetime.datetime] = None, rules: DiscoveryRules = BUILTIN_RULES,
               connections: Optional[Mapping[str, ConnectionConfig]] = None,
               foreignKeysElsewhere: Optional[Mapping[str, Mapping[str, int]]] = None,
-              unreadableTargets: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+              unreadableTargets: Optional[Mapping[str, str]] = None,
+              samples: Optional[Mapping[str, Sequence[Sequence[Any]]]] = None) -> Dict[str, Any]:
     """The audit report, as a JSON-ready dict.
 
     `returnedColumns` maps a masked job to the columns its query returns, so
@@ -502,10 +626,14 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
     keys to the other schemas that do, and how many each. `unreachable` maps a
     job whose sourceQuery couldn't be run to why; `unreadableTargets` one
     whose target table's columns couldn't be read, most often because it
-    doesn't exist yet.
+    doesn't exist yet. `samples` maps a job to rows its sourceQuery returned,
+    in returnedColumns' order, read to question the values of columns kept as
+    they are, and of columns sharing a domain; they are never reported.
     """
 
     returnedColumns = returnedColumns or {}
+    samples = samples or {}
+    sampled: List[_Sampled] = []
     encryption = encryption or {}
     unreachable = unreachable or {}
     unreadableTargets = unreadableTargets or {}
@@ -527,11 +655,11 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
                                         job.targetTableFinal, job.targetConnection, unreadableTargets[name])))
 
         if job.masking is not None:
-            entry.update(_auditMaskedJob(name, job, returnedColumns.get(name), findings, usages, rules))
+            entry.update(_auditMaskedJob(name, job, returnedColumns.get(name), findings, usages, rules, samples.get(name), sampled))
             if encryption.get(job.sourceConnection) is False:
                 findings.append(Finding('warning', name, 'reads unmasked data from {} over a connection that is not encrypted'.format(job.sourceConnection)))
         else:
-            _auditUnmaskedJob(name, job, returnedColumns.get(name), maskedSources, findings, rules)
+            _auditUnmaskedJob(name, job, returnedColumns.get(name), maskedSources, findings, rules, samples.get(name))
 
         if job.watermarkColumn and connections is not None:
             problem = fullRefreshProblem(job, connections.get(job.targetConnection))
@@ -546,6 +674,7 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
     for target in sorted({job.targetConnection for job in jobs.values()}):
         targetJobs = {name: job for name, job in jobs.items() if job.targetConnection == target}
         _auditDomains(target, [usage for name in sorted(targetJobs) for usage in usages.get(name, [])], findings)
+        _auditSampledDomains(target, [column for column in sampled if column.job in targetJobs], findings)
         if foreignKeys and foreignKeys.get(target):
             _auditForeignKeys(target, targetJobs, usages, targetColumns or {}, foreignKeys[target], findings)
             _auditCoverage(target, targetJobs, foreignKeys[target], findings)

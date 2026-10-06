@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import itertools
+import re
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple, Type, TypeVar
@@ -67,6 +68,54 @@ def _groupForeignKeys(rows: Sequence[Sequence[Any]]) -> List[ForeignKey]:
                    referencedColumns=tuple(entry['referencedColumns']), name=name)
         for (table, name), entry in grouped.items()
         ]
+
+
+def _uniqueColumnGroups(rows: Sequence[Sequence[Any]]) -> List[Tuple[str, ...]]:
+    """Folds (keyName, column) rows, ordered by position within each key, into
+    each key's columns, leaving out a key with a NULL column -- an
+    expression, or a prefix of a column -- and a column list already seen.
+    """
+
+    grouped: Dict[str, List[Optional[str]]] = {}
+    for name, column in rows:
+        grouped.setdefault(name, []).append(column)
+
+    groups: List[Tuple[str, ...]] = []
+    for columns in grouped.values():
+        if any(column is None for column in columns):
+            continue
+        group = tuple(str(column) for column in columns)
+        if group not in groups:
+            groups.append(group)
+
+    return groups
+
+
+_TABLE_NAME_PART = r'(?:"(?:[^"]|"")*"|\[[^\]]*\]|`(?:[^`]|``)*`|[^\s.(]+)'
+
+# The head of a CREATE TABLE statement as SQLite and DuckDB keep it, up to the
+# end of the table's name, schema-qualified or not.
+_CREATE_TABLE_HEAD = re.compile(r'^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?{0}(?:\s*\.\s*{0})?'.format(_TABLE_NAME_PART), re.IGNORECASE)
+
+
+def _withKeys(createStatement: str, table: str, primaryKey: Sequence[str], uniqueKeys: Sequence[Sequence[str]]) -> str:
+    """A table's own CREATE TABLE statement, naming it as `table` spells it,
+    with a primary key and unique constraints added after its last column.
+
+    The column list's closing parenthesis is the statement's last: what may
+    follow it -- WITHOUT ROWID, STRICT -- are words.
+    """
+
+    head = _CREATE_TABLE_HEAD.match(createStatement)
+    if head is None:
+        raise ConfigurationError('could not read the statement that created {}'.format(table))
+
+    statement = 'CREATE TABLE {}{}'.format(table, createStatement[head.end():]).rstrip().rstrip(';').rstrip()
+    closing = statement.rindex(')')
+    clauses = (['PRIMARY KEY ({})'.format(', '.join(primaryKey))] if primaryKey else []) + \
+        ['UNIQUE ({})'.format(', '.join(columns)) for columns in uniqueKeys]
+
+    return '{}, {}{}'.format(statement[:closing], ', '.join(clauses), statement[closing:])
 
 
 class ColumnDefinition(NamedTuple):
@@ -334,6 +383,39 @@ class DatabaseDialect(ABC):
     def primaryKey(self, cursor: Cursor, table: str) -> List[str]:
 
         return [row[0] for row in self._catalog(cursor, self.primaryKeyQuery(), table)]
+
+    def uniqueKeysQuery(self) -> str:
+        """One table's unique constraints and unique indexes, its primary key
+        aside, as rows of (name, column) ordered by name and position. A
+        column that is an expression, or only a prefix of one, comes back as
+        NULL, and its key is left out: copying it would take the database's
+        own DDL, not a column list.
+        """
+
+        raise NotImplementedError('{} cannot describe unique keys'.format(type(self).__name__))
+
+    def uniqueKeys(self, cursor: Cursor, table: str) -> List[Tuple[str, ...]]:
+        """The column lists of the table's unique keys over plain columns, each
+        once, its primary key aside. A partial or filtered one is left out by
+        each dialect's query, since it isn't unique over every row.
+        """
+
+        return _uniqueColumnGroups(self._catalog(cursor, self.uniqueKeysQuery(), table))
+
+    def addKeys(self, cursor: Cursor, table: str, catalogTable: str, primaryKey: Sequence[str], uniqueKeys: Sequence[Sequence[str]]) -> None:
+        """Gives `table`, as a statement names it, a primary key and unique
+        constraints over the quoted columns given; the caller commits.
+
+        Unnamed, so each database names them as it would any such constraint,
+        and no name can collide with one the swap's other table already has
+        -- the target's own, which keep their names when the tables trade
+        theirs. PostgreSQL, MySQL, MariaDB and Oracle take this as it is.
+        """
+
+        if primaryKey:
+            cursor.execute('ALTER TABLE {} ADD PRIMARY KEY ({})'.format(table, ', '.join(primaryKey)))
+        for columns in uniqueKeys:
+            cursor.execute('ALTER TABLE {} ADD UNIQUE ({})'.format(table, ', '.join(columns)))
 
     def columnDefinitions(self, cursor: Cursor, table: str) -> List[ColumnDefinition]:
 

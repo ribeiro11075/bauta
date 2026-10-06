@@ -19,7 +19,7 @@ See [Prove the copy is safe](../../guides/prove-the-copy-is-safe.md#coverage-wha
 | `--connection CONNECTION` |  | The source connection alias to check; required when the jobs read from more than one. |
 | `--schema SCHEMA` |  | The schema to list, instead of the connection's own. |
 | `--job JOB` |  | Only these jobs count as covering a table. Repeatable. |
-| `--format {text,json}` | `text` | Output format. |
+| `--format {text,json,html}` | `text` | Text, json, or html: one self-contained page for a reviewer, best with --output. |
 | `--output OUTPUT` |  | Write to this file instead of stdout. |
 
 It also takes the [common flags](index.md#common-flags): `--config`, `--connections`, `--log`, `--log-format`, `--log-level`, `--quiet`.

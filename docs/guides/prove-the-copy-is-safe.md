@@ -27,8 +27,10 @@ bauta audit --connect --strict   # also asks the databases; fails on warnings
 | error | A masked query couldn't be run to check (`--connect`). |
 | error | A masked job's target table couldn't be read, so its columns couldn't be matched to the policy: most often it doesn't exist yet. Create it with [`schema`](../reference/commands/schema.md), or name its columns in `targetColumns` (`--connect`). |
 | error | A `swap` job replaces a table that a foreign key declared in the target references, or one an earlier swap left on its stage table. The key stays on the old table, now the stage, and the next run can't empty the stage (`--connect`). |
-| warning | A `swap` job replaces a table that declares foreign keys of its own. Its stage table has none, so after a run the copy stops enforcing them (`--connect`). |
+| warning | A `swap` job replaces a table that declares foreign keys of its own. Its stage table is given the target's primary and unique keys but none of its foreign keys, so after a run the copy stops enforcing them (`--connect`). |
 | warning | A column is kept unmasked although its name suggests personal data (`email`, `ssn`, `phone`, ...), by the built-in rules or [your own](propose-a-policy.md#your-own-rules-discoveryyaml). |
+| warning | A column is kept unmasked although its sampled values look like personal data, whatever it is called: `SELECT ssn AS ref` with `ref: keep` passes every check by name. The value rules [`discover`](propose-a-policy.md) uses, and the ones it applies inside JSON documents (`--connect`). An unmasked job with such a column is an error, as for one named like it. |
+| warning | A domain whose columns hold its values differently, so `key`, `fpe` or `hash` masks them differently and their references stop matching: an id as a number in one column and as text in another, or values padded with spaces, as `CHAR` columns pad them, in one and not another. [`normalize`](../reference/strategies.md#values-held-more-than-one-way-normalize) makes them agree (`--connect`). |
 | warning | `defaultStrategy` is `keep`, so any column added to the source later is copied unmasked. |
 | warning | A job copies from a database without masking while other jobs mask what they read from it. |
 | warning | A masked job reads over a connection that isn't encrypted, as the server reports it (`--connect`). |
@@ -43,8 +45,9 @@ bauta audit --connect --strict   # also asks the databases; fails on warnings
 | note | Columns that fall to `defaultStrategy`, by name (`--connect`). |
 | note | A target doesn't declare foreign keys its sources do between the tables copied into it, so nothing there stops a row that references nothing; [`verify-references`](copy-a-subset.md#verify-references-checking-the-copys-references) counts them (`--connect`). |
 | note | `redact`, or `json` redacting what its fields don't name, which removes identifiers with a recognisable shape but not names. |
+| note | A column kept unmasked whose sampled values are UUIDs, which other systems may hold too (`--connect`). |
 
-Without `--connect`, columns are shown as declared. With it, each masked query is run for a single row, discarded unexamined, to list the columns it really returns and the policy each one gets.
+Without `--connect`, columns are shown as declared. With it, each job's query is run to list the columns it really returns and the policy each one gets, and its first `--sample` rows (1,000 by default) are read to question kept columns and shared domains by their values. The rows stay in the memory of the `audit` process; no value appears in the report, its JSON or its errors. `--sample 0` reads none, as before.
 
 The foreign-key check reads the foreign keys of each target database and of the sources copied into it, since a copy often declares none, each from the schemas its jobs use, as [`verify-references`](copy-a-subset.md#verify-references-checking-the-copys-references) reads them. A key's tables are matched to jobs by `targetTableFinal`'s name, without its schema, and a masked job's target columns to its query's columns by position, as the load matches them. A job that doesn't mask copies every column as it is, and so does `keep`; a reference masked with `null` points at nothing, so it can't break.
 
@@ -52,7 +55,7 @@ The check for a parent copied in part uses the same keys and the same matching b
 
 The check on `swap` jobs reads only the keys the target declares, since a key only the source has constrains nothing in the copy. A job whose `postTargetAdhocQueries` name the referencing table is taken to recreate its keys there. See [how a swap works](../concepts/how-it-works.md#how-a-swap-works).
 
-`audit` exits 1 on an error, and with `--strict` on a warning too, so it can gate a CI pipeline. `--format json` writes the same report for other tools, and `--output FILE` writes it to a file. `--job` narrows it.
+`audit` exits 1 on an error, and with `--strict` on a warning too, so it can gate a CI pipeline. `--format json` writes the same report for other tools, `--format html` [one page for a reviewer](#a-report-for-reviewers), and `--output FILE` writes it to a file. `--job` narrows it.
 
 
 ## `coverage`: what the jobs do not cover
@@ -92,4 +95,20 @@ A table counts as covered when a job reading that database names it in its `sour
 
 For a table nothing covers, `coverage` reads its column names and marks the ones that look like personal data, by the same rules as [`discover`](propose-a-policy.md), including your own from [`discovery.yaml`](propose-a-policy.md#your-own-rules-discoveryyaml). Columns of covered tables aren't read.
 
-**`coverage` exits 1 when any table is NOT COVERED**, so it can follow `run` in CI and fail the build when production grows a table the copy doesn't account for. `--database` picks the alias when the jobs read from more than one; `--job` narrows which jobs count as covering.
+**`coverage` exits 1 when any table is NOT COVERED**, so it can follow `run` in CI and fail the build when production grows a table the copy doesn't account for. `--connection` picks the alias when the jobs read from more than one; `--job` narrows which jobs count as covering.
+
+
+## A report for reviewers
+
+A privacy or compliance reviewer who doesn't run the CLI can be handed either report as one HTML page:
+
+```
+bauta audit --connect --format html --output audit.html
+bauta coverage --format html --output coverage.html
+```
+
+Each opens with a summary -- how many errors, warnings and notes, or how many tables are in each state, and whether that is ready to rely on -- then a section per job, with how it masks each column, its key's fingerprint and what was found about it, or a section per state listing its tables and the jobs or reasons that cover them.
+
+- **It holds what the text report holds, and nothing more:** names of jobs, connections, tables and columns, strategies, key fingerprints and findings. Never a value from a table, and never a key. Every name is escaped, so a table or job named like markup reads as text.
+- **One file, with nothing fetched.** No script, font, stylesheet or image from anywhere else, so it reads the same attached to a ticket, opened offline or archived beside a release. It follows the reader's light or dark setting.
+- **The exit status is the command's,** so the step that writes the page for the reviewer can also fail the build.

@@ -127,6 +127,48 @@ def test_the_key_fingerprint_is_stable_and_does_not_reveal_the_key():
     assert KEY not in keyFingerprint(KEY)
 
 
+@pytest.mark.parametrize('key', ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'abababababababababab', '1212121212121212', 'abcdefgabcdefgabcdefg'])
+def test_a_key_that_is_a_pattern_is_refused_without_quoting_it(key):
+    from bauta.masking import validateKey
+
+    with pytest.raises(ValueError, match='pattern rather than a secret') as error:
+        MaskingPlan(key, {'a': 'hash'})
+    assert key[:8] not in str(error.value)
+
+    with pytest.raises(ValueError, match='manifest signing key'):
+        validateKey(key, 'manifest signing key')
+
+
+def test_key_strength_counts_repetition_and_the_alphabet_against_a_key():
+    import secrets
+    from bauta.masking import KEY_RECOMMENDED_BITS, keyStrengthBits
+
+    assert keyStrengthBits(secrets.token_urlsafe(32)) > 200
+    assert keyStrengthBits('Password1234567!') < KEY_RECOMMENDED_BITS
+    assert keyStrengthBits('abcdefgh' * 4) < keyStrengthBits(secrets.token_urlsafe(24))
+    assert keyStrengthBits('') == 0
+
+
+def test_a_weak_key_is_warned_about_once_by_its_fingerprint(caplog):
+    import logging
+    import secrets
+    from bauta.masking import warnIfWeakKey
+
+    weak, strong = 'weak-but-allowed-' + secrets.token_hex(2), secrets.token_urlsafe(32)
+    packageLogger = logging.getLogger('bauta')
+    packageLogger.addHandler(caplog.handler)
+    try:
+        for _ in range(3):
+            warnIfWeakKey(weak)
+            warnIfWeakKey(strong)
+    finally:
+        packageLogger.removeHandler(caplog.handler)
+
+    warnings = [record.getMessage() for record in caplog.records if 'estimated' in record.getMessage()]
+    assert len(warnings) == 1 and keyFingerprint(weak) in warnings[0]
+    assert weak not in warnings[0]
+
+
 # --- NULLs and the simple strategies ----------------------------------------
 
 @pytest.mark.parametrize('name', ['hash', 'email', 'digits', 'number', 'dateShift', 'fakeName', 'key', 'keep'])
@@ -1327,6 +1369,230 @@ def test_a_value_of_any_other_type_is_still_refused_without_being_echoed():
     assert 'ann' not in str(error.value)
 
 
+# --- dateShift by a column, and coordinate -----------------------------------------
+
+def test_dateshift_by_the_day_can_put_a_start_after_its_end():
+    """What shiftBy is for: each day moves its own way."""
+    start = datetime.date(2024, 1, 1)
+    rows = [(start + datetime.timedelta(days=offset), start + datetime.timedelta(days=offset + 1)) for offset in range(60)]
+
+    masked = _maskedTogether({'starts': {'strategy': 'dateShift', 'domain': 'd'}, 'ends': {'strategy': 'dateShift', 'domain': 'd'}}, rows)
+
+    assert any(end < begin for begin, end in masked)
+
+
+def test_dateshift_by_a_column_moves_every_date_of_one_subject_alike():
+    start = datetime.date(2024, 1, 1)
+    rows = [(patient, start + datetime.timedelta(days=offset), start + datetime.timedelta(days=offset + 3),
+             datetime.datetime(2024, 2, 1, 9, 30) + datetime.timedelta(days=offset))
+            for patient in (101, 102, 103) for offset in range(0, 40, 7)]
+    policy = {'strategy': 'dateShift', 'shiftBy': 'patient_id'}
+
+    masked = _maskedTogether({'patient_id': 'keep', 'admitted': policy, 'discharged': policy, 'seen_at': dict(policy, maxDays=10)}, rows)
+
+    for (patient, admitted, discharged, seen), (_, maskedAdmitted, maskedDischarged, maskedSeen) in zip(rows, masked):
+        shift = maskedAdmitted - admitted
+        assert shift and maskedDischarged - discharged == shift and maskedDischarged - maskedAdmitted == discharged - admitted
+        assert abs((maskedSeen - seen).days) <= 10 and maskedSeen.time() == seen.time()
+    shifts = {patient: masked[index][1] - rows[index][1] for index, (patient, *_) in enumerate(rows)}
+    assert len(set(shifts.values())) > 1, 'different subjects move differently'
+
+
+def test_dateshift_by_a_column_agrees_across_tables_in_the_columns_domain():
+    def shifted(column, rows):
+        return _maskedTogether({'patient_id': 'keep', column: {'strategy': 'dateShift', 'shiftBy': 'patient_id'}}, rows)
+
+    ((_, admitted),) = shifted('admitted', [(7, datetime.date(2024, 1, 1))])
+    ((_, billed),) = shifted('billed_on', [(7, '2024-01-01')])
+
+    assert admitted.isoformat() == billed
+    plan = MaskingPlan(KEY, {'patient_id': 'keep', 'admitted': {'strategy': 'dateShift', 'shiftBy': 'PATIENT_ID'}}).bind(['patient_id', 'admitted'])
+    assert [entry.domain for entry in plan.manifest] == [None, 'patient_id']
+
+
+def test_dateshift_by_a_null_subject_shifts_by_the_day():
+    day = datetime.date(2024, 5, 5)
+
+    ((_, bySubject),) = _maskedTogether({'p': 'keep', 'd': {'strategy': 'dateShift', 'shiftBy': 'p', 'domain': 'x'}}, [(None, day)])
+    ((byDay,),) = _maskedTogether({'d': {'strategy': 'dateShift', 'domain': 'x'}}, [(day,)])
+
+    assert bySubject == byDay
+
+
+@pytest.mark.parametrize('columns,policy,message', [
+    (['d'], {'strategy': 'dateShift', 'shiftBy': 'missing'}, 'names missing, which must be another column'),
+    (['d'], {'strategy': 'dateShift', 'shiftBy': 'd'}, 'names d, which must be another column'),
+    ])
+def test_a_context_column_must_be_another_returned_column(columns, policy, message):
+    with pytest.raises(MaskingError, match=message):
+        MaskingPlan(KEY, {'d': policy}).bind(columns)
+
+
+def test_a_json_field_cannot_mask_by_a_column_of_the_row():
+    with pytest.raises(ValueError, match='shiftBy names a column of the row'):
+        validateColumnPolicy({'strategy': 'json', 'fields': {'seen': {'strategy': 'dateShift', 'shiftBy': 'patient_id'}}})
+
+
+def _metres(before, after, latitude):
+    import math
+    (lat, lng), (maskedLat, maskedLng) = before, after
+    return (float(maskedLat) - float(lat)) * 111320, (float(maskedLng) - float(lng)) * 111320 * math.cos(math.radians(float(latitude)))
+
+
+@pytest.mark.parametrize('point', [(51.50135, -0.14189), (0.3476, 32.5825), (-33.8688, 151.2093), (64.1466, -21.9426), (0.0, 0.0)])
+def test_coordinates_move_by_a_distance_on_the_ground_wherever_they_are(point):
+    policies = {'lat': {'strategy': 'coordinate', 'axis': 'latitude', 'meters': 2000},
+                'lng': {'strategy': 'coordinate', 'axis': 'longitude', 'meters': 2000, 'latitudeColumn': 'lat'}}
+
+    ((masked),) = _maskedTogether(policies, [point])
+
+    for moved in _metres(point, masked, point[0]):
+        assert 999 <= abs(moved) <= 2001
+
+
+def test_coordinates_keep_their_type_and_scale_and_equal_values_move_alike():
+    policies = {'lat': {'strategy': 'coordinate', 'axis': 'latitude'}, 'lng': {'strategy': 'coordinate', 'axis': 'longitude'}}
+
+    (asDecimal, asFloat, again, empty) = _maskedTogether(policies, [(decimal.Decimal('38.722300'), decimal.Decimal('-9.139300')),
+                                                                   (38.7223, -9.1393), (38.7223, -9.1393), (None, None)])
+
+    assert all(value.as_tuple().exponent == -6 for value in asDecimal) and asDecimal != (decimal.Decimal('38.722300'), decimal.Decimal('-9.139300'))
+    assert asFloat == again and abs(float(asDecimal[0]) - asFloat[0]) < 1e-6
+    assert empty == (None, None)
+
+
+def test_coordinates_stay_on_the_globe():
+    policies = {'lat': {'strategy': 'coordinate', 'axis': 'latitude', 'meters': 1000000},
+                'lng': {'strategy': 'coordinate', 'axis': 'longitude', 'meters': 1000000}}
+
+    for lat, lng in _maskedTogether(policies, [(89.9 - index * 0.01, 179.99 - index * 0.01) for index in range(50)]):
+        assert -90 <= lat <= 90 and -180 <= lng < 180
+
+
+def test_coordinate_options_are_checked():
+    for policy, message in (({'strategy': 'coordinate'}, 'requires option'), ({'strategy': 'coordinate', 'axis': 'up'}, 'must be one of'),
+                            ({'strategy': 'coordinate', 'axis': 'latitude', 'latitudeColumn': 'x'}, 'for a longitude only'),
+                            ({'strategy': 'coordinate', 'axis': 'latitude', 'meters': 0}, 'between 1')):
+        with pytest.raises(ValueError, match=message):
+            validateColumnPolicy(policy)
+    with pytest.raises(MaskingError, match='needs a number, got str'):
+        _maskedTogether({'lat': {'strategy': 'coordinate', 'axis': 'latitude'}}, [('51.5',)])
+
+
+# --- fake names from the larger lists ------------------------------------------------
+
+LARGE = {'lists': 2}
+
+
+def test_larger_lists_give_far_more_distinct_names():
+    people = [('Given{}'.format(index), 'Family{}'.format(index)) for index in range(3000)]
+
+    def distinct(policy):
+        masked = _maskedTogether({'first': dict(policy, strategy='fakeFirstName'), 'last': dict(policy, strategy='fakeLastName')}, people)
+        return len({first for first, _ in masked}), len({last for _, last in masked})
+
+    assert distinct({}) == (len(FIRST_NAMES), len(LAST_NAMES))
+    larger = distinct(LARGE)
+    assert larger[0] > 10 * len(FIRST_NAMES) and larger[1] > 10 * len(LAST_NAMES)
+
+
+def test_a_full_name_agrees_with_its_parts_in_their_own_columns_and_tables():
+    policies = {'first_name': dict(LARGE, strategy='fakeFirstName'), 'last_name': dict(LARGE, strategy='fakeLastName'),
+                'full_name': dict(LARGE, strategy='fakeName'), 'listed_as': dict(LARGE, strategy='fakeName')}
+
+    ((first, last, full, listed),) = _maskedTogether(policies, [('John', 'Smith', 'John Smith', 'Smith, John')])
+    ((elsewhere,),) = _maskedTogether({'contact': dict(LARGE, strategy='fakeName')}, [('john  SMITH',)])
+
+    assert full == '{} {}'.format(first, last) and listed == '{}, {}'.format(last, first)
+    assert elsewhere.split()[0].casefold() == first.casefold() and first != 'John'
+
+
+def test_surname_particles_stay_with_the_surname():
+    ((full, last),) = _maskedTogether({'full': dict(LARGE, strategy='fakeName'), 'last': dict(LARGE, strategy='fakeLastName')},
+                                      [('Jan van der Berg', 'van der Berg')])
+
+    assert full.endswith(' ' + last) and len(full.split()) == 1 + len(last.split())
+
+
+def test_case_is_written_back_as_it_came():
+    ((upper, lower),) = _maskedTogether({'a': dict(LARGE, strategy='fakeFirstName'), 'b': dict(LARGE, strategy='fakeFirstName')},
+                                        [('JOHN', 'john')])
+
+    assert upper.isupper() and lower.islower() and upper.casefold() == lower
+
+
+def test_match_gender_keeps_a_known_first_name_s_gender():
+    from bauta.masking.fakeData import FEMALE_NAMES, MALE_NAMES
+
+    policy = dict(LARGE, strategy='fakeFirstName', matchGender=True)
+    women = ['Mary', 'Sophie', 'Lucía', 'Giulia', 'Helena', 'Jade', 'Fenna', 'Hannah']
+    men = ['James', 'Lukas', 'Mateo', 'Francesco', 'Miguel', 'Gabriel', 'Daan', 'George']
+
+    masked = _maskedTogether({'a': policy, 'b': policy}, list(zip(women, men)))
+
+    assert all(woman.casefold() in FEMALE_NAMES and man.casefold() in MALE_NAMES for woman, man in masked)
+
+
+def test_the_larger_lists_are_opt_in_and_python_only():
+    for policy, message in (({'strategy': 'fakeFirstName', 'matchGender': True}, 'with lists: 2 only'),
+                            ({'strategy': 'fakeCity', 'lists': 3}, 'must be 1 or 2'), ({'strategy': 'fakeCity', 'matchGender': True}, 'does not take')):
+        with pytest.raises(ValueError, match=message):
+            validateColumnPolicy(policy)
+    plan = MaskingPlan(KEY, {'a': dict(LARGE, strategy='fakeName'), 'b': 'fakeName'}).bind(['a', 'b'])
+    assert [entry.domain for entry in plan.manifest] == ['fake name', 'b']
+    assert plan.strategies[0]._native is None
+
+
+# --- normalize -----------------------------------------------------------------
+
+def _maskedTogether(policies, rows):
+    names = list(policies)
+    return MaskingPlan(KEY, policies).bind(names).apply(rows)
+
+
+@pytest.mark.parametrize('strategy', ['key', 'hash', 'fpe'])
+def test_strip_and_lower_mask_values_a_database_compares_as_equal_alike(strategy):
+    """A CHAR column pads with spaces, and a case-insensitive collation joins
+    'AB12' to 'ab12'; masked as written they'd stop matching.
+    """
+    policy = {'strategy': strategy, 'domain': 'codes', 'normalize': ['strip', 'lower']}
+
+    masked = _maskedTogether({'code': policy}, [('AB12CD34',), ('ab12cd34   ',), (' Ab12Cd34',)])
+
+    assert len({row[0] for row in masked}) == 1
+
+
+def test_without_normalize_padding_and_case_change_the_mask():
+    masked = _maskedTogether({'code': {'strategy': 'key', 'domain': 'codes'}}, [('AB12',), ('AB12  ',), ('ab12',)])
+
+    assert masked[0][0] != masked[1][0].strip() and masked[0][0] != masked[2][0]
+
+
+@pytest.mark.parametrize('strategy', ['key', 'fpe'])
+def test_integer_masks_an_id_held_as_text_as_it_masks_the_number_and_keeps_it_text(strategy):
+    policies = {'asNumber': {'strategy': strategy, 'domain': 'customers'},
+                'asText': {'strategy': strategy, 'domain': 'customers', 'normalize': ['integer']}}
+
+    ((number, text), (_, leading), (_, word)) = _maskedTogether(policies, [(1234567, '1234567'), (None, '0012345'), (None, 'C-77')])
+
+    assert isinstance(text, str) and text == str(number)
+    # Only text that spells an integer one way: the rest masks as text.
+    assert len(leading) == 7 and leading != '0012345' and word[1:2] == '-' and len(word) == 4
+
+
+def test_normalize_steps_apply_in_one_order_and_are_checked():
+    assert validateColumnPolicy({'strategy': 'key', 'normalize': ['integer', 'strip']})['normalize'] == ['strip', 'integer']
+    for strategy, steps in (('hash', ['integer']), ('key', []), ('key', ['trim']), ('email', ['strip']), ('key', 'strip')):
+        with pytest.raises(ValueError):
+            validateColumnPolicy({'strategy': strategy, 'normalize': steps})
+
+
+def test_normalize_leaves_values_that_are_not_text_alone():
+    masked = _maskedTogether({'id': {'strategy': 'key', 'normalize': ['strip', 'lower', 'integer']}}, [(42,), (None,)])
+
+    assert masked[0][0] == _maskedTogether({'id': 'key'}, [(42,)])[0][0] and masked[1][0] is None
+
+
 # --- json ----------------------------------------------------------------------
 
 def _json(policy, values, key=GOLDEN_KEY, extra=None):
@@ -1348,6 +1614,51 @@ def test_json_masks_each_named_field_with_its_own_policy_and_redacts_the_rest():
     assert masked['contact']['phone'] != '+1 555 010 9999' and masked['tags'][0]['by'].endswith('@example.test')
     assert (masked['visits'], masked['vip'], masked['gone']) == (3, True, None)
     assert list(masked) == list(document)
+
+
+def test_json_masks_identifiers_held_as_numbers_and_keeps_them_numbers():
+    document = {'phone': 5550109999, 'card': 4111111111111111, 'ssn': 123456789, 'visits': 3, 'total': 1234567.5, 'year': 2026,
+                'negative': -5550109999, 'vip': True}
+
+    ((masked,),) = _json({'fields': {'visits': 'keep'}}, [document])
+
+    for name in ('phone', 'card', 'ssn', 'negative'):
+        assert isinstance(masked[name], int) and masked[name] != document[name]
+        assert len(str(abs(masked[name]))) == len(str(abs(document[name])))
+    assert str(masked['card']).endswith('1111') and masked['negative'] < 0
+    # Too short to be one, or not whole: kept.
+    assert (masked['visits'], masked['total'], masked['year'], masked['vip']) == (3, 1234567.5, 2026, True)
+
+
+def test_a_number_masks_as_the_same_digits_written_as_text():
+    ((masked,),) = _json({'fields': {'x': 'null'}}, [{'asNumber': 5550109999, 'asText': '5550109999'}])
+
+    assert str(masked['asNumber']) == masked['asText']
+
+
+def test_json_labels_a_number_it_redacts_with_labels():
+    ((masked,),) = _json({'fields': {'x': 'null'}, 'otherwise': {'strategy': 'redact', 'replacement': 'label'}}, [{'phone': 5550109999}])
+
+    assert masked == {'phone': '[PHONE]'}
+
+
+def test_json_masks_identifiers_in_object_keys_unless_otherwise_keeps():
+    document = {'byEmail': {'ann@corp.example': {'visits': 1}}, 'plain key': 2}
+
+    ((masked,),) = _json({'fields': {'x': 'null'}}, [document])
+    ((nulled,),) = _json({'fields': {'x': 'null'}, 'otherwise': 'null'}, [document])
+    ((kept,),) = _json({'fields': {'x': 'null'}, 'otherwise': 'keep'}, [document])
+
+    (maskedKey,) = masked['byEmail']
+    assert maskedKey.endswith('@example.test') and masked['plain key'] == 2
+    assert list(nulled['byEmail']) == [maskedKey]
+    assert kept == document
+
+
+def test_json_matches_field_paths_against_keys_as_they_came():
+    ((masked,),) = _json({'fields': {'ann@corp.example.n': 'null'}}, [{'ann@corp.example': {'n': 5}}])
+
+    assert list(masked.values()) == [{'n': None}]
 
 
 def test_a_json_field_masks_in_the_domain_it_names_so_it_matches_a_column():

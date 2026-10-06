@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..configuration import DataJobConfig, FilesConnection, InsertStrategy
 from ..log import LOGGER_NAME
+from ..log.scrubbing import describeError
 from .columnar import ColumnarTarget, newRunId
 from .formats import Parts, PartSettings, extension
 from .stores import Store
@@ -166,7 +167,7 @@ class FileTarget(ColumnarTarget):
                 logger.debug('Removed snapshot {} of {}'.format(name, self.loadName))
             except Exception as error:
                 # The new snapshot is published; an old one left is untidy, not wrong.
-                logger.warning('{}: could not remove old snapshot {} of {} -- {}'.format(self.job, name, self.loadName, error), extra={'job': self.job})
+                logger.warning('{}: could not remove old snapshot {} of {} -- {}'.format(self.job, name, self.loadName, describeError(error)), extra={'job': self.job})
 
 
     def _removeStaging(self) -> None:
