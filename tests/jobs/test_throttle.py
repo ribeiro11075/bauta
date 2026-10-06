@@ -10,7 +10,6 @@ from bauta.configuration import Configuration, ConfigurationError, DataJobsFile,
 from bauta.jobs import throttle
 from bauta.jobs.memory import FileMemory
 from bauta.jobs.pipeline import _executeDataJob
-from bauta.jobs.runner import runDataJobs
 from bauta.jobs.throttle import BURST_SECONDS, ReadLimit, StageTimes, readLimitFor, timedChunks
 from tests.jobConfigs import dataJob, dataJobFields
 
@@ -197,38 +196,87 @@ def test_a_job_reading_from_a_limited_connection_waits_for_it(sqliteJob):
     assert outcome.stages['throttled'] == pytest.approx(0.5, abs=0.2)
 
 
-def test_a_runs_jobs_share_their_sources_read_limit(tmp_path):
-    """Each job runs in a process of its own. A limit each process kept for
-    itself would let two jobs read twice what the connection was given.
-
-    Each job alone fits its rows within the burst and waits for nothing; only
-    a limit the two share makes either wait.
+def _readThrough(shared, start, rows, results):
+    """One process reading `rows` through the shared limit once `start` is
+    set, a hundred at a time, putting on `results` when it began and when it
+    had read them all, by the system's monotonic clock, which every process
+    shares.
     """
+    import time
+
+    start.wait()
+    limit = ReadLimit(400, shared)
+    began = time.monotonic()
+    for _ in range(rows // 100):
+        limit.take(100)
+    results.put((began, time.monotonic()))
+
+
+def test_processes_reading_through_one_shared_limit_share_its_budget():
+    """Each job runs in a process of its own. A limit each kept for itself
+    would let two read twice what the connection was given.
+
+    What the limit promises is the rate, whenever each process happens to be
+    scheduled: 800 rows at 400 a second, a second's worth allowed at once,
+    can't all be read sooner than a second after reading began. Each limited
+    alone would read its 400 at once. (How long each waited depends on when
+    each woke, which a slow machine spreads apart, and proves nothing.)
+    """
+    from bauta.jobs.workers import PROCESS_CONTEXT
+
+    shared = PROCESS_CONTEXT.Value('d', float('-inf'))
+    start, results = PROCESS_CONTEXT.Event(), PROCESS_CONTEXT.Queue()
+    processes = [PROCESS_CONTEXT.Process(target=_readThrough, args=(shared, start, 400, results)) for _ in range(2)]
+    for process in processes:
+        process.start()
+    start.set()
+    spans = [results.get(timeout=60) for _ in processes]
+    for process in processes:
+        process.join(60)
+
+    first = min(began for began, _ in spans)
+    last = max(finished for _, finished in spans)
+    assert last - first >= 0.95
+
+
+def test_a_run_hands_every_job_the_same_shared_limit_for_its_source(tmp_path, monkeypatch):
+    """The limit is shared only if each job's process is handed the run's
+    one value for the connection, not a limit of its own.
+    """
+    from bauta.jobs import runner, workers
+
+    handed = []
+    original = workers._JobProcess.__init__
+
+    def recording(self, *args, **kwargs):
+        handed.append(args[7] if len(args) > 7 else kwargs.get('readLimits'))
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(workers._JobProcess, '__init__', recording)
     source = tmp_path / 'source.db'
     connection = sqlite3.connect(source)
     connection.execute('CREATE TABLE src (id INT PRIMARY KEY, name TEXT)')
-    connection.executemany('INSERT INTO src VALUES (?, ?)', [(index, 'n') for index in range(400)])
+    connection.execute("INSERT INTO src VALUES (1, 'n')")
     connection.commit()
     connection.close()
-    connections = {'source': connectionConfig(type='sqlite', path=str(source), maxRowsReadPerSecond=400)}
+    connections = {'source': connectionConfig(type='sqlite', path=str(source), maxRowsReadPerSecond=400),
+                   'other': connectionConfig(type='sqlite', path=str(source))}
     for name in ('a', 'b'):
         target = tmp_path / '{}.db'.format(name)
         connection = sqlite3.connect(target)
         connection.execute('CREATE TABLE tgt (id INT PRIMARY KEY, name TEXT)')
         connection.close()
         connections[name] = connectionConfig(type='sqlite', path=str(target))
-
     jobs = {name: dataJobFields(sourceConnection='source', targetConnection=name, sourceQuery='SELECT id, name FROM src', targetTableFinal='tgt',
-                                chunkSize=100, unmasked=True) for name in ('a', 'b')}
-    result = runDataJobs(jobsFile=Configuration.validateJobConfiguration({'workers': 2, 'jobs': jobs}, DataJobsFile),
-                         connectionConfiguration=connections, memory=FileMemory(tmp_path / 'memory.yaml'))
+                                unmasked=True) for name in ('a', 'b')}
 
-    assert result.succeeded
-    assert sum(outcome.rowCount for outcome in result.outcomes) == 800
-    # 800 rows at 400 a second, less the burst, owe a second. The jobs may
-    # wait at the same moment, so their waits add up to between one second
-    # and two; kept apart, each would fit in the burst and wait for nothing.
-    assert 0.7 <= sum(outcome.stages['throttled'] for outcome in result.outcomes) <= 2.4
+    result = runner.runDataJobs(jobsFile=Configuration.validateJobConfiguration({'workers': 2, 'jobs': jobs}, DataJobsFile),
+                                connectionConfiguration=connections, memory=FileMemory(tmp_path / 'memory.yaml'))
+
+    assert result.succeeded and sum(outcome.rowCount for outcome in result.outcomes) == 2
+    [first, second] = handed
+    # One value for the limited connection, the same object for both jobs; none for the other.
+    assert set(first) == {'source'} and first['source'] is second['source']
 
 
 def test_stage_times_can_be_added_to_from_many_threads():
