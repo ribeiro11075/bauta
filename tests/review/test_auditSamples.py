@@ -138,3 +138,22 @@ def test_a_padded_domain_that_strips_is_not_flagged():
     report = auditJobs({'maskOrders': _masked({'customer_id': {'strategy': 'key', 'domain': 'customers'}})},
                        returnedColumns={'maskOrders': ['customer_id']}, samples={'maskOrders': [('AB12    ',)]})
     assert report['findings'] == []
+
+
+def test_json_columns_of_documents_among_nulls_and_of_bare_strings_are_caught_from_text(tmp_path, monkeypatch, capsys):
+    """SQLite holds JSON as text with nothing to say so, as MySQL returns it:
+    every value parsed, nulls left out, where every value had to start with
+    { or [, so one null document hid the rest."""
+    import sqlite3
+
+    from tests.review.jsonColumns import assertBothCatchIt, rows
+
+    monkeypatch.chdir(tmp_path)
+    connection = sqlite3.connect(str(tmp_path / 'source.db'))
+    connection.execute('CREATE TABLE people_events (id INT PRIMARY KEY, events TEXT, contact TEXT)')
+    connection.executemany('INSERT INTO people_events VALUES (?, ?, ?)', rows())
+    connection.commit()
+    connection.close()
+    sqlite3.connect(str(tmp_path / 'copy.db')).close()
+
+    assertBothCatchIt(tmp_path, 'source:\n  type: sqlite\n  path: ../source.db\ncopy:\n  type: sqlite\n  path: ../copy.db\n', 'people_events', capsys)

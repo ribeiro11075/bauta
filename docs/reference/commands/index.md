@@ -9,6 +9,7 @@
 | [`bauta audit`](audit.md) | Report what each job does with data, and what a reviewer should question. |
 | [`bauta verify-references`](verify-references.md) | Count rows in each target whose foreign key points at nothing. |
 | [`bauta coverage`](coverage.md) | List a source database's tables and what the jobs do with each. |
+| [`bauta bench`](bench.md) | Measure how fast each job reads and masks from its real source, writing nothing. |
 | [`bauta verify-manifest`](verify-manifest.md) | Check that a manifest is unaltered, and who signed it. |
 | [`bauta history`](history.md) | Show recent job outcomes recorded with run --history. |
 | [`bauta jobs`](jobs.md) | Show the job graph and which jobs are due. |

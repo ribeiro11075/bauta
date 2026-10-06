@@ -19,6 +19,7 @@ from .dependencyGraph import JobOutcome, JobStatus
 from .memory import MemoryBackend
 from .partitions import CoreBudget
 from .pipeline import _runDataJob, setCoreBudget
+from .throttle import setSharedReadLimits
 
 logger = logging.getLogger(LOGGER_NAME)
 
@@ -85,18 +86,21 @@ def _initializeWorker(connection: Any, parentAlive: Any, logLevel: int) -> Conne
 
 def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobConfig: DataJobConfig,
                 connectionConfiguration: Dict[str, ConnectionConfig], memory: MemoryBackend, maskingThreads: int = 1,
-                budget: Optional[CoreBudget] = None) -> None:
+                budget: Optional[CoreBudget] = None, readLimits: Optional[Dict[str, Any]] = None) -> None:
     """The whole life of one job's process: run the job, and send its log
     records and then its outcome back on `connection`, which it alone writes to.
 
     `parentAlive` ends the process if the run that started it dies; see
-    _exitWhenOrphaned.
+    _exitWhenOrphaned. `readLimits` are the run's, shared with its other
+    jobs; see throttle.sharedReadLimits.
     """
 
     forwarder = _initializeWorker(connection, parentAlive, logLevel)
     setMaskingThreads(maskingThreads)
     if budget is not None:
         setCoreBudget(budget)
+    if readLimits:
+        setSharedReadLimits(readLimits)
 
     try:
         forwarder.send('outcome', _runDataJob(job, jobConfig, connectionConfiguration, memory))
@@ -115,7 +119,8 @@ class _JobProcess:
     """
 
     def __init__(self, job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig],
-                 memory: MemoryBackend, logLevel: int, maskingThreads: int = 1, budget: Optional[CoreBudget] = None) -> None:
+                 memory: MemoryBackend, logLevel: int, maskingThreads: int = 1, budget: Optional[CoreBudget] = None,
+                 readLimits: Optional[Dict[str, Any]] = None) -> None:
         self.job = job
         self.startedAt = time.time()
         self.deadline = self.startedAt + jobConfig.timeoutSeconds if jobConfig.timeoutSeconds else None
@@ -129,7 +134,7 @@ class _JobProcess:
         childEnd, self._alive = PROCESS_CONTEXT.Pipe(duplex=False)
         self.process = PROCESS_CONTEXT.Process(
             target=_jobProcess, name='bauta {}'.format(job), daemon=True,
-            args=(sendingEnd, childEnd, logLevel, job, jobConfig, connectionConfiguration, memory, maskingThreads, budget))
+            args=(sendingEnd, childEnd, logLevel, job, jobConfig, connectionConfiguration, memory, maskingThreads, budget, readLimits))
         self.process.start()
         sendingEnd.close()
         childEnd.close()

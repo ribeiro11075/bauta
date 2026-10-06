@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime
 import decimal
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..driver import Connection, Cursor, native
 from ...configuration import DatabaseConfig, DatabaseType, OracleConnection
@@ -64,6 +64,9 @@ class OracleDialect(DatabaseDialect):
 
     databaseType = DatabaseType.ORACLE
 
+    # A NUMBER's; BINARY_DOUBLE and BINARY_FLOAT hold both. See bindTypes.
+    REFUSED_FLOATS = frozenset({'nan', 'inf'})
+
     _NUMBER_TYPE_NAMES = {'DB_TYPE_NUMBER', 'DB_TYPE_BINARY_INTEGER', 'DB_TYPE_BINARY_FLOAT', 'DB_TYPE_BINARY_DOUBLE'}
     _DATE_TYPE_NAMES = {'DB_TYPE_DATE', 'DB_TYPE_TIMESTAMP', 'DB_TYPE_TIMESTAMP_TZ', 'DB_TYPE_TIMESTAMP_LTZ'}
     _TEXT_TYPE_NAMES = {'DB_TYPE_VARCHAR', 'DB_TYPE_CHAR', 'DB_TYPE_NVARCHAR', 'DB_TYPE_NCHAR', 'DB_TYPE_CLOB', 'DB_TYPE_NCLOB', 'DB_TYPE_LONG'}
@@ -119,6 +122,33 @@ class OracleDialect(DatabaseDialect):
     def placeholders(self, count: int) -> List[str]:
 
         return [':{}'.format(i + 1) for i in range(count)]
+
+
+    # The columns a float must bind to as itself rather than as a NUMBER.
+    _BINARY_FLOATING_TYPES = ('DB_TYPE_BINARY_DOUBLE', 'DB_TYPE_BINARY_FLOAT')
+
+    def holdsNonFinite(self, columnType: Any) -> bool:
+
+        return getattr(columnType, 'name', None) in self._BINARY_FLOATING_TYPES
+
+
+    def bindTypes(self, cursor: Cursor, columnTypes: Optional[Sequence[Any]]) -> None:
+        """Binds what goes to a BINARY_DOUBLE or BINARY_FLOAT column as one.
+
+        oracledb binds a Python float as a NUMBER, which holds neither NaN nor
+        the infinities, and nothing beyond 1e126: -1e308 failed with DPY-4003
+        and NaN with DPY-4004, though the column holds all three. Sizes last
+        for one statement only, so a table without such columns needs none.
+        """
+
+        names = [getattr(columnType, 'name', None) for columnType in columnTypes or ()]
+        if not any(name in self._BINARY_FLOATING_TYPES for name in names):
+            return
+
+        import oracledb
+
+        # Not part of the Cursor protocol: an oracledb cursor's own.
+        getattr(cursor, 'setinputsizes')(*[getattr(oracledb, name) if name in self._BINARY_FLOATING_TYPES else None for name in names])
 
 
     def columnCategory(self, dataType: Any) -> Optional[ColumnCategory]:

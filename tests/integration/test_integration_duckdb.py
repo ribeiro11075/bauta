@@ -384,3 +384,62 @@ def test_a_subset_plans_and_selects_on_duckdb_as_on_sqlite(liveDatabase):
     assert sorted(row[0] for row in liveDatabase.query(plan.queries['customers'])) == [4, 8, 12]
     assert sorted(row[1] for row in liveDatabase.query(plan.queries['orders'])) == [4, 4, 8, 8, 12, 12]
     assert {row[0] for row in liveDatabase.query(plan.queries['regions'])} == {1}
+
+
+def test_a_json_array_mixing_numbers_and_objects_loads(liveDatabase):
+    """[1, {"z": "x"}] from a PostgreSQL jsonb fits no Arrow list type, and
+    bound row by row DuckDB cast it to a STRUCT and refused it. It goes as
+    its JSON text, which a JSON column reads and a LIST column casts.
+    """
+    table = 'mixed_json_{}'.format(uuid.uuid4().hex[:8])
+    liveDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, doc JSON, numbers INTEGER[])'.format(table))
+    try:
+        liveDatabase.insert(table=table, data=[(1, [1, {'z': 'x'}], [1, 2]), (2, None, None), (3, {'a': [1, {'b': 2}]}, [3])],
+                            columns=['id', 'doc', 'numbers'])
+
+        assert liveDatabase.query('SELECT id, doc, numbers FROM {} ORDER BY id'.format(table)) == [
+            (1, '[1, {"z": "x"}]', [1, 2]), (2, None, None), (3, '{"a": [1, {"b": 2}]}', [3])]
+    finally:
+        liveDatabase.alter('DROP TABLE {}'.format(table))
+
+
+def test_a_duckdb_json_column_masked_by_a_plain_strategy_masks_its_value_and_stays_json(liveDatabase, connectionSettings, tmp_path):
+    """DuckDB returns JSON as its text, so `email` keyed on the address in its
+    quotes and returned one a JSON column couldn't read as JSON.
+    """
+    import json
+
+    from bauta.jobs.pipeline import _executeDataJob
+    from tests.jobConfigs import dataJob
+
+    suffix = uuid.uuid4().hex[:8]
+    source, target = 'json_src_{}'.format(suffix), 'json_tgt_{}'.format(suffix)
+    for table in (source, target):
+        liveDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, address JSON, plain TEXT, doc JSON)'.format(table))
+    liveDatabase.alter('''INSERT INTO {} VALUES (1, '"person1@realcorp.com"', 'person1@realcorp.com', '{{"a": [1, 2]}}')'''.format(source))
+    liveDatabase.commit()
+    liveDatabase.close()
+    job = dataJob(sourceConnection='db', targetConnection='db', sourceQuery='SELECT id, address, plain, doc FROM {}'.format(source),
+                  targetTableFinal=target, masking={'key': 'a-json-column-masking-test-key-0123', 'columns': {
+                      'id': 'keep', 'address': {'strategy': 'email', 'domain': 'email'}, 'plain': {'strategy': 'email', 'domain': 'email'},
+                      'doc': 'keep'}})
+
+    _executeDataJob('json', job, {'db': connectionSettings})
+
+    from bauta.database import Database
+    with Database(connectionSettings=connectionSettings) as database:
+        [(address, plain)] = database.query('SELECT address, plain FROM {}'.format(target))
+    assert json.loads(address) == plain and plain.endswith('@example.test')
+
+    # JSON Lines writes DuckDB's JSON as the JSON it is: the masked address a
+    # string, not a string holding a quoted one, and a kept document nested.
+    import gzip
+
+    from bauta.configuration import connectionConfig
+
+    files = connectionConfig(type='files', root=str(tmp_path / 'lake'), format='ndjson')
+    _executeDataJob('json', job.model_copy(update={'targetConnection': 'lake', 'targetTableFinal': 'docs', 'insertStrategy': 'overwrite'}),
+                    {'db': connectionSettings, 'lake': files})
+    [part] = (tmp_path / 'lake').rglob('*.ndjson.gz')
+    [line] = [json.loads(text) for text in gzip.decompress(part.read_bytes()).decode('utf-8').splitlines()]
+    assert line['address'] == plain and line['doc'] == {'a': [1, 2]}

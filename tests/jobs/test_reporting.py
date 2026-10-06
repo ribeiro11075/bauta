@@ -17,7 +17,8 @@ def _result(*outcomes: JobOutcome, interrupted: bool = False) -> RunResult:
     return RunResult(outcomes=list(outcomes), interrupted=interrupted)
 
 
-COMPLETED = JobOutcome(job='loadOrders', status=JobStatus.COMPLETED, rowCount=42, startedAt=1_790_000_000.0, finishedAt=1_790_000_012.5)
+COMPLETED = JobOutcome(job='loadOrders', status=JobStatus.COMPLETED, rowCount=42, startedAt=1_790_000_000.0, finishedAt=1_790_000_012.5,
+                       stages={'read': 2.1, 'mask': 1.4, 'write': 10.3, 'throttled': 0.0})
 FAILED = JobOutcome(job='loadCustomers', status=JobStatus.FAILED, error='OperationalError: timeout', attempts=3,
                     startedAt=1_790_000_000.0, finishedAt=1_790_000_001.0)
 SKIPPED = JobOutcome(job='loadInvoices', status=JobStatus.SKIPPED, error='predecessor(s) did not complete: loadCustomers')
@@ -28,8 +29,9 @@ def test_history_records_describe_each_outcome():
 
     assert completed == {'runId': 'run-1', 'job': 'loadOrders', 'status': 'completed', 'rowCount': 42, 'attempts': 1,
                          'startedAt': '2026-09-21T14:13:20+00:00', 'finishedAt': '2026-09-21T14:13:32+00:00', 'durationSeconds': 12.5,
-                         'error': None}
+                         'error': None, 'readSeconds': 2.1, 'maskSeconds': 1.4, 'writeSeconds': 10.3, 'throttledSeconds': 0.0}
     assert skipped['startedAt'] is None and skipped['error'].startswith('predecessor')
+    assert skipped['readSeconds'] is None and skipped['writeSeconds'] is None
 
 
 def test_file_history_appends_and_reads_newest_first(tmp_path):
@@ -61,7 +63,28 @@ def test_database_history_round_trips(tmp_path):
     records = history.read(limit=2)
     assert [(record['runId'], record['job']) for record in records] == [('run-2', 'loadOrders'), ('run-1', 'loadCustomers')]
     assert records[0]['durationSeconds'] == 12.5 and records[1]['error'] == 'OperationalError: timeout'
+    assert (records[0]['readSeconds'], records[0]['maskSeconds'], records[0]['writeSeconds']) == (2.1, 1.4, 10.3)
+    assert records[1]['readSeconds'] is None
     assert [record['status'] for record in history.read(job='loadInvoices')] == ['skipped']
+
+
+def test_a_history_table_made_before_stage_timings_still_records_and_reads(tmp_path):
+    """The four _seconds columns came after the table's first definition. A
+    table made without them must go on working, recording everything else,
+    rather than failing every run's history on a column it doesn't have.
+    """
+    path = tmp_path / 'history.db'
+    connection = sqlite3.connect(path)
+    connection.execute('CREATE TABLE bauta_history (run_id VARCHAR(36) NOT NULL, job VARCHAR(255) NOT NULL, status VARCHAR(16) NOT NULL, '
+                       'row_count NUMERIC(19), attempts INT, started_at DOUBLE PRECISION, finished_at DOUBLE PRECISION, error VARCHAR(2000), '
+                       'PRIMARY KEY (run_id, job))')
+    connection.close()
+    history = DatabaseHistory(connectionConfig(type='sqlite', path=str(path)))
+
+    history.append(_result(COMPLETED), 'run-1')
+
+    [record] = history.read()
+    assert record['rowCount'] == 42 and record['readSeconds'] is None and record['throttledSeconds'] is None
 
 
 def test_history_renders_as_a_table():
@@ -69,6 +92,22 @@ def test_history_renders_as_a_table():
 
     assert text.splitlines()[1].split()[:5] == ['2026-09-21', '14:13:21', 'loadCustomers', 'failed', '0']
     assert 'OperationalError: timeout' in text
+
+
+def test_history_shows_where_a_completed_jobs_time_went_and_a_dash_where_there_is_none():
+    header, completed, failed = renderHistory(historyRecords(_result(COMPLETED, FAILED), 'run-1')).splitlines()
+
+    assert header.split()[6:10] == ['READ', 'MASK', 'WRITE', 'WAITED']
+    assert completed.split()[5:9] == ['12.5', '2.1', '1.4', '10.3']
+    assert failed.split()[6:10] == ['-', '-', '-', '-']
+
+
+def test_a_record_written_before_stage_timings_renders():
+    record = historyRecords(_result(COMPLETED), 'run-1')[0]
+    for field in ('readSeconds', 'maskSeconds', 'writeSeconds', 'throttledSeconds'):
+        del record[field]
+
+    assert renderHistory([record]).splitlines()[1].split()[6:10] == ['-', '-', '-', '-']
 
 
 @pytest.fixture

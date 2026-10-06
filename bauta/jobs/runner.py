@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import signal
 import time
 from multiprocessing.connection import wait as waitForAny
@@ -21,7 +22,8 @@ from .dependencyGraph import DependencyGraph, JobOutcome, JobStatus
 from .keys import _requireUnchangedMaskingKeys
 from .memory import MemoryBackend
 from .partitions import CoreBudget
-from .workers import _JobProcess
+from .throttle import sharedReadLimits
+from .workers import PROCESS_CONTEXT, _JobProcess
 
 logger = logging.getLogger(LOGGER_NAME)
 
@@ -190,7 +192,8 @@ def _coreBudget(dependencyGraph: DependencyGraph, job: str, jobConfig: Any, mask
 
 
 def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfiguration: Dict[str, ConnectionConfig],
-              memory: MemoryBackend, termination: Dict[str, bool], logLevel: int, maskingThreads: Union[str, int] = 1) -> None:
+              memory: MemoryBackend, termination: Dict[str, bool], logLevel: int, maskingThreads: Union[str, int] = 1,
+              readLimits: Optional[Dict[str, Any]] = None) -> None:
     """Runs one cycle's jobs to completion, each as soon as its predecessors
     finish and one of the `workers` slots is free.
 
@@ -199,6 +202,9 @@ def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfigur
     it. So the last job of a cycle, running alone, gets the whole of `auto`'s
     half of the cores. A running job keeps its share; cores freed after it
     started go to the next to start.
+
+    `readLimits` are handed to every job, so all of them reading from a
+    limited connection share its limit; see throttle.sharedReadLimits.
     """
 
     running: List[_JobProcess] = []
@@ -219,7 +225,8 @@ def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfigur
                     if native and getattr(jobConfig, 'masking', None) is not None:
                         logger.info('{}: masking with {} thread(s) ({} job(s) running, {} core(s))'.format(job, threads, alongside, availableCores()),
                                     extra={'job': job})
-                    running.append(_JobProcess(job, jobConfig, connectionConfiguration, memory, logLevel, threads, budget))  # type: ignore[arg-type]
+                    running.append(_JobProcess(job, jobConfig, connectionConfiguration, memory, logLevel, threads, budget,  # type: ignore[arg-type]
+                                               readLimits))
 
             if not running:
                 # Nothing running and nothing startable means every job is
@@ -273,7 +280,8 @@ def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, Conne
         maskingModule.effectiveMaskingThreads(jobsFile.maskingThreads)
     except ValueError as error:
         raise ConfigurationError(str(error)) from None
-    if any(job.masking is not None and job.active for job in jobsFile.jobs.values()):
+    masks = any(job.masking is not None and job.active for job in jobsFile.jobs.values())
+    if masks:
         problem = maskingModule.requireNativeProblem(jobsFile.requireNative)
         if problem:
             raise ConfigurationError(problem)
@@ -281,13 +289,23 @@ def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, Conne
     Log(logFile=logFile, level=logLevel, logFormat=logFormat)
     logger.info('Starting data job runner with {} worker(s)'.format(jobsFile.workers))
 
+    # Said once, as the run starts, where a run that goes on in Python would
+    # otherwise only be slower: a line at the top beats a slow night.
+    unavailable = maskingModule.nativeUnavailableReason() if masks else None
+    if unavailable is not None and os.environ.get('BAUTA_NATIVE') != '0':
+        logger.warning('Masking in Python, about ten times slower than the native masker: {}'.format(unavailable), extra={'event': 'maskingInPython'})
+
+    # For the whole run, not a cycle: a limit is a rate, and --forever's
+    # cycles follow each other closely enough to share it.
+    readLimits = sharedReadLimits(connectionConfiguration, PROCESS_CONTEXT)
+
     with _terminationHandling() as termination:
 
         while True:
             dependencyGraph = DependencyGraph(jobs=jobsFile.jobs, memory=memory.read(), connectionLimits=connectionLimits(connectionConfiguration))
             logger.info('Starting cycle with {} active job(s)'.format(len(dependencyGraph.activeJobs)))
 
-            _runCycle(dependencyGraph, jobsFile.workers, connectionConfiguration, memory, termination, logLevel, jobsFile.maskingThreads)
+            _runCycle(dependencyGraph, jobsFile.workers, connectionConfiguration, memory, termination, logLevel, jobsFile.maskingThreads, readLimits)
             _logCycleSummary(dependencyGraph)
 
             if onCycle is not None:

@@ -220,10 +220,16 @@ def test_database_history_and_key_fingerprints_work_on_every_server(server):
 
     history = DatabaseHistory(settings, table=historyTable)
     history.append(RunResult(outcomes=[JobOutcome(job='a', status=JobStatus.FAILED, error='x' * 3000, startedAt=1.0e9, finishedAt=1.0e9 + 2.5),
-                                       JobOutcome(job='b', status=JobStatus.SKIPPED)]), 'run-1')
+                                       JobOutcome(job='b', status=JobStatus.SKIPPED),
+                                       JobOutcome(job='c', status=JobStatus.COMPLETED, rowCount=7, startedAt=1.0e9, finishedAt=1.0e9 + 1,
+                                                  stages={'read': 0.25, 'mask': 0.5, 'write': 0.125, 'throttled': 0.0})]), 'run-1')
     records = history.read(limit=5)
 
-    assert {record['job'] for record in records} == {'a', 'b'}
+    assert {record['job'] for record in records} == {'a', 'b', 'c'}
+    completed = next(record for record in records if record['job'] == 'c')
+    assert [completed[field] for field in ('readSeconds', 'maskSeconds', 'writeSeconds', 'throttledSeconds')] == [0.25, 0.5, 0.125, 0.0]
+    assert all(type(completed[field]) is float for field in ('readSeconds', 'throttledSeconds'))
+    assert next(record for record in records if record['job'] == 'b')['readSeconds'] is None
     failed = next(record for record in records if record['job'] == 'a')
     assert failed['durationSeconds'] == 2.5 and len(failed['error']) == 2000
     assert type(failed['rowCount']) is int and type(failed['attempts']) is int
@@ -321,3 +327,72 @@ def test_foreign_keys_are_read_from_the_schema_named(server, otherSchema):
         assert pairs(database.getForeignKeys()) == set()
     assert database.foreignKeysElsewhere([None]).get(otherSchema.upper() if serverName == 'oracle' else otherSchema) == 1
     assert otherSchema.lower() not in {schema.lower() for schema in database.foreignKeysElsewhere([otherSchema])}
+
+
+def test_nan_and_infinity_are_refused_by_name_where_a_server_cannot_hold_them(server):
+    """MySQL and MariaDB read NaN as a column name ("Unknown column 'nan'"),
+    SQL Server the same, and an Oracle NUMBER refused it as an invalid
+    number: none of which says what was wrong, or where. PostgreSQL holds both.
+    """
+    import math
+
+    from bauta.database import UnloadableValueError
+
+    serverName, database, table = server
+    name = table('(id INT PRIMARY KEY, v DOUBLE PRECISION)')
+
+    for value, kind in ((float('nan'), 'NaN'), (float('-inf'), 'an infinity')):
+        if serverName == 'postgresql':
+            database.upsert(table=name, data=[(1, value)], columns=['id', 'v'])
+            held = database.query('SELECT v FROM {}'.format(name))[0][0]
+            assert math.isnan(held) if kind == 'NaN' else held == value
+        else:
+            with pytest.raises(UnloadableValueError, match=r'column [vV] was sent {}, which .* cannot hold'.format(kind)):
+                database.upsert(table=name, data=[(1, 1.5), (2, value)], columns=['id', 'v'])
+            database.rollback()
+
+
+@pytest.mark.parametrize('name', ['mysql'])
+def test_a_mysql_json_column_masked_by_a_plain_strategy_masks_its_value_and_stays_json(name, tmp_path):
+    """MySQL returns JSON as its text, so `email` keyed on the address in its
+    quotes and returned one a JSON column refused. MariaDB's JSON is
+    LONGTEXT, reported as text, and keeps the text as it is.
+    """
+    import json
+
+    from bauta.jobs.pipeline import _executeDataJob
+    from tests.jobConfigs import dataJob
+
+    settings = serverSettings(name)
+    suffix = uuid.uuid4().hex[:8]
+    source, target = 'json_src_{}'.format(suffix), 'json_tgt_{}'.format(suffix)
+    with Database(connectionSettings=settings) as database:
+        for table in (source, target):
+            database.alter('CREATE TABLE {} (id INT PRIMARY KEY, address JSON, plain TEXT, n JSON, nint BIGINT)'.format(table))
+        try:
+            database.alter('''INSERT INTO {} VALUES (1, '"person1@realcorp.com"', 'person1@realcorp.com', '4815162342', 4815162342)'''.format(source))
+            job = dataJob(sourceConnection='db', targetConnection='db', sourceQuery='SELECT id, address, plain, n, nint FROM {}'.format(source),
+                          targetTableFinal=target, masking={'key': 'a-json-column-masking-test-key-0123', 'columns': {
+                              'id': 'keep', 'address': {'strategy': 'email', 'domain': 'email'}, 'plain': {'strategy': 'email', 'domain': 'email'},
+                              'n': {'strategy': 'key', 'domain': 'n'}, 'nint': {'strategy': 'key', 'domain': 'n'}}})
+
+            _executeDataJob('json', job, {'db': settings})
+
+            [(address, plain, number, integer)] = database.query('SELECT address, plain, n, nint FROM {}'.format(target))
+            assert json.loads(address) == plain and plain.endswith('@example.test') and json.loads(number) == integer != 4815162342
+
+            # JSON Lines writes MySQL's JSON as the JSON it is, as PostgreSQL's:
+            # a masked string a string, a masked number a number.
+            import gzip
+
+            from bauta.configuration import connectionConfig
+
+            files = connectionConfig(type='files', root=str(tmp_path / 'lake'), format='ndjson')
+            _executeDataJob('json', job.model_copy(update={'targetConnection': 'lake', 'targetTableFinal': 'docs', 'insertStrategy': 'overwrite'}),
+                            {'db': settings, 'lake': files})
+            [part] = (tmp_path / 'lake').rglob('*.ndjson.gz')
+            [line] = [json.loads(text) for text in gzip.decompress(part.read_bytes()).decode('utf-8').splitlines()]
+            assert line['address'] == plain and line['n'] == integer
+        finally:
+            for table in (source, target):
+                database.alter('DROP TABLE IF EXISTS {}'.format(table))

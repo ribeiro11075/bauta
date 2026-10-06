@@ -154,3 +154,11 @@ def test_epoch_conversion_is_utc_not_local_time(monkeypatch):
     finally:
         monkeypatch.delenv('TZ', raising=False)
         time.tzset()
+
+
+def test_null_if_not_finite_clears_nan_and_the_infinities_and_nothing_else():
+    """nullIf can't: NaN equals nothing, itself included."""
+    from bauta.transform.builtinTransforms import nullIfNotFinite
+
+    assert [nullIfNotFinite(value) for value in (float('nan'), float('inf'), float('-inf'))] == [None, None, None]
+    assert [nullIfNotFinite(value) for value in (1.5, 0, None, 'nan')] == [1.5, 0, None, 'nan']

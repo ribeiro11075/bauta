@@ -9,7 +9,7 @@ FF1. A strategy of your own subclasses bauta.masking.Strategy.
 from .core import (INTEGRITY_FIELD, REQUIRE_NATIVE_VARIABLE, KEY_MINIMUM_DISTINCT_CHARACTERS, KEY_MINIMUM_LENGTH, KEY_RECOMMENDED_BITS, MASK_CACHE_SIZE, MASKING_THREADS_VARIABLE, MAXIMUM_KEY_LENGTH, POLICY_FIELDS,
                    BoundMasking, ColumnMasking, KeyedHash, ManifestVerification, MaskingError, MaskingPlan, Strategy, availableCores,
                    buildMaskingManifest, canonical, changesValues, coreShare, effectiveMaskingThreads, keyFingerprint, keyStrengthBits, maskingIdentity,
-                   maskingImplementation, maskingThreadsFor, nativeVersion, policyFor, requireNativeProblem, resolveStrategy, sealManifest, setMaskingThreads,
+                   maskingImplementation, maskingThreadsFor, nativeVersion, nativeUnavailableReason, policyFor, requireNativeProblem, requiresNative, resolveStrategy, sealManifest, setMaskingThreads,
                    splitMaskingIdentity, validateColumnPolicy, validateKey, verifyManifest, warnIfWeakKey)
 from .fakeData import (CITIES, COMPANY_SUFFIXES, COMPANY_WORDS, DEFAULT_LOCALE, FIRST_NAMES, LAST_NAMES, LOCALES, STREET_NAMES, STREET_SUFFIXES,
                        Locale)
@@ -53,6 +53,8 @@ __all__ = [
     'policyFor',
     'REQUIRE_NATIVE_VARIABLE',
     'requireNativeProblem',
+    'requiresNative',
+    'nativeUnavailableReason',
     'resolveStrategy',
     'sealManifest',
     'setMaskingThreads',

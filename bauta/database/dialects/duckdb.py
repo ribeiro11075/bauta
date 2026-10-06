@@ -63,6 +63,14 @@ def _asArrowTable(rows: Sequence[Sequence[Any]]) -> Any:
         try:
             arrays['c{}'.format(index)] = pyarrow.array([_arrowValue(value) for value in values])
         except (pyarrow.ArrowException, TypeError, ValueError, OverflowError):
+            if all(value is None or isinstance(value, (list, dict)) for value in values):
+                # A JSON array mixing numbers and objects, which no Arrow list
+                # type holds, as its JSON text: DuckDB reads that into a JSON
+                # column, and casts it to a LIST, where bound row by row the
+                # list was cast to a STRUCT and refused.
+                arrays['c{}'.format(index)] = pyarrow.array([None if value is None else json.dumps(value, default=str) for value in values],
+                                                            type=pyarrow.string())
+                continue
             if not all(value is None or (isinstance(value, _AS_TEXT) and not isinstance(value, bool)) for value in values):
                 return None
             arrays['c{}'.format(index)] = pyarrow.array([None if value is None else str(value) for value in values], type=pyarrow.string())

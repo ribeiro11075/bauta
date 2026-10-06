@@ -324,6 +324,27 @@ class DatabaseDialect(ABC):
 
         return None
 
+    # The floats this database's ordinary float columns can't hold: `nan`,
+    # `inf` (either sign). A load carrying one is refused, naming the column,
+    # rather than left to the driver -- MySQL and SQL Server read NaN as a
+    # column name, and SQLite stores it as NULL. See holdsNonFinite.
+    REFUSED_FLOATS: frozenset = frozenset()
+
+    def holdsNonFinite(self, columnType: Any) -> bool:
+        """Whether a column of this type code holds what REFUSED_FLOATS
+        names, where some of this database's columns do.
+        """
+
+        return False
+
+
+    def bindTypes(self, cursor: Cursor, columnTypes: Optional[Sequence[Any]]) -> None:
+        """Declares how the next statement's parameters bind, given the type
+        codes of the columns they go to, where the driver's own choice from
+        the Python value can't reach the column. Nothing, for most drivers.
+        """
+
+
     def bulkInsert(self, cursor: Cursor, table: str, columns: List[str], rows: Sequence[Sequence[Any]]) -> bool:
         """Loads `rows` in fewer round trips than executemany, for drivers whose
         executemany sends a statement per row. False means nothing was sent.

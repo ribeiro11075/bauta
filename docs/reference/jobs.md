@@ -23,7 +23,7 @@ jobs:
 | `memory` | optional, `memory.yaml` | Where `run` keeps run state: last runs, watermarks and key fingerprints. A file, or a [table](#tables). `--memory FILE` or `--memory-connection ALIAS` overrides it. See [run state](../guides/run-on-a-schedule.md#run-state). |
 | `history` | optional | Where `run` records each job's outcome after every cycle, for `bauta history`. A JSON-lines file, or a [table](#tables). Not recorded when unset. `--history FILE` or `--history-connection ALIAS` overrides it. See [run history](../guides/watch-what-ran.md#run-history). |
 | `manifest` | optional | Where `run` writes its [masking manifest](../guides/keep-a-manifest.md#what-it-records), for `bauta verify-manifest`. A file, replaced each run, or a [table](#tables), which keeps every run's. Not written when unset. `--manifest FILE` or `--manifest-connection ALIAS` overrides it. |
-| `requireNative` | optional, `false` | Whether a run with masked jobs stops before it starts when the [native masker](../guides/make-it-faster.md#the-native-masker) isn't in use -- not installed, another version, or `BAUTA_NATIVE=0` -- rather than masking in Python, about ten times slower. For a scheduled run with a window to keep. `validate` checks it too. `BAUTA_REQUIRE_NATIVE=1` sets it. |
+| `requireNative` | optional | Whether a run with masked jobs stops before it starts when the [native masker](../guides/make-it-faster.md#the-native-masker) isn't in use, rather than masking in Python, about ten times slower. Unset, it stops where the extension is installed but another version than `bauta`'s, which an upgrade leaves behind, and goes on where it was never installed or `BAUTA_NATIVE=0` turns it off. `true` stops in every case, for a scheduled run with a window to keep; `false` never stops. `validate` checks it too. `BAUTA_REQUIRE_NATIVE=1` or `=0` overrides it. |
 | `maskingThreads` | optional, `1` | Threads the [native masker](../guides/make-it-faster.md#the-native-masker) masks each job with: `1`, a number up to the cores available, or `auto` to divide half the cores between the jobs running. Results are the same for any count. `BAUTA_MASKING_THREADS` overrides it. See [masking threads](../guides/make-it-faster.md#masking-threads). |
 | `defaults` | optional | Settings every job takes unless it names its own. See [defaults](#defaults). |
 | `include` | optional | More files of `jobs` and `acknowledged`, as paths or glob patterns relative to this one. See [splitting the jobs across files](configuration.md#splitting-the-jobs-across-files). |
@@ -156,6 +156,7 @@ These ship with the package, in `bauta.transform.builtinTransforms`. Every one p
 | `regexReplace(pattern, replacement='')` | A regular-expression replacement; `\1` refers to a group. |
 | `digitsOnly` | Only the digits: `+1 (555) 010-9999` → `15550109999`. |
 | `nullIfBlank` | NULL for empty or whitespace-only text. |
+| `nullIfNotFinite` | NULL for a float that is NaN or infinite, which MySQL, MariaDB, SQL Server and an Oracle `NUMBER` can't hold. A load sending one there fails, naming the column. |
 | `nullIf(*values)` | NULL for any of the listed values: `nullIf('N/A', -1)`. |
 | `defaultIfNull(default)` | `default` in place of NULL: `defaultIfNull('unknown')`. |
 | `currency(symbol='$', decimals=2)` | `1234.5` → `$1,234.50`, `-5` → `-$5.00`; `currency('€')`, `currency('¥', 0)`. |

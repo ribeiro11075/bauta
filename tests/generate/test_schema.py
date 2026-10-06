@@ -205,14 +205,29 @@ def test_statements_create_parents_first_with_keys_and_constraints():
     assert 'CONSTRAINT orders_customer_id_fkey FOREIGN KEY ([customer_id]) REFERENCES [customers] ([id])' in statements[1].sql
 
 
-@pytest.mark.parametrize('target,expected', [
-    (DatabaseType.ORACLE, '"RANK" NUMBER(10)'), (POSTGRESQL, '"rank" INTEGER'), (DatabaseType.MYSQL, '`Rank` INT'), (MSSQL, '[Rank] INT'),
+@pytest.mark.parametrize('source,target,expected', [
+    (POSTGRESQL, DatabaseType.ORACLE, '"RANK" NUMBER(10)'), (MSSQL, POSTGRESQL, '"rank" INTEGER'), (POSTGRESQL, DatabaseType.MYSQL, '`Rank` INT'),
+    (POSTGRESQL, MSSQL, '[Rank] INT'),
     ])
-def test_column_names_are_quoted_as_the_target_would_store_them_unquoted(target, expected):
-    """So a reserved word works, and the column still answers to its unquoted name."""
-    definition = table('scores', [('Rank', 'integer', True)], primaryKey=[])
+def test_column_names_are_quoted_as_the_target_would_store_them_unquoted(source, target, expected):
+    """So a reserved word works, and the column still answers to its unquoted
+    name, where the copy goes to another kind of database.
+    """
+    definition = table('scores', [('Rank', 'int' if source == MSSQL else 'integer', True)], primaryKey=[])
 
-    assert expected in createStatements(POSTGRESQL, target, [definition])[0].sql
+    assert expected in createStatements(source, target, [definition])[0].sql
+
+
+def test_between_two_of_the_same_database_a_column_keeps_its_spelling():
+    """A mixed-case column, "Order" on PostgreSQL, became order: a copy whose
+    columns no longer matched production's, so a query quoting "Order" failed
+    against it.
+    """
+    definition = table('orders', [('id', 'integer', False), ('Order', 'integer', True), ('CustomerName', 'text', True)], primaryKey=['id'])
+
+    sql = createStatements(POSTGRESQL, POSTGRESQL, [definition])[0].sql
+
+    assert '"Order" INTEGER' in sql and '"CustomerName" TEXT' in sql and 'PRIMARY KEY ("id")' in sql
 
 
 def test_a_foreign_key_to_a_table_not_being_created_is_left_out_and_noted():
@@ -497,3 +512,18 @@ def test_hugeint_needs_39_digits_and_a_target_holding_fewer_says_it_clamps():
     rendered, note = renderType(DatabaseType.MSSQL, portable, isKey=False)
 
     assert (portable.precision, rendered) == (39, 'DECIMAL(38,0)') and 'clamped' in note
+
+
+def test_a_postgresql_array_keeps_its_type_between_postgresql_databases_and_is_text_elsewhere():
+    """Arrays were TEXT even PostgreSQL to PostgreSQL, where the array type
+    is right there. The catalog reports them with their element type and size.
+    """
+    definition = table('posts', [('id', 'integer', False), ('tags', 'character varying(20)[]', True), ('scores', 'integer[]', True)],
+                       primaryKey=['id'])
+
+    [same] = createStatements(POSTGRESQL, POSTGRESQL, [definition])
+    [other] = createStatements(POSTGRESQL, MSSQL, [definition])
+
+    assert '"tags" character varying(20)[]' in same.sql and '"scores" integer[]' in same.sql and not same.notes
+    assert '[tags] NVARCHAR(MAX)' in other.sql
+    assert 'tags: PostgreSQL array character varying(20)[]; mapped to text' in other.notes

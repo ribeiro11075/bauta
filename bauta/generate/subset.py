@@ -67,6 +67,9 @@ class _Builder:
         self.counter = 0
         self.bodies: Dict[str, str] = {}
         self.dependencies: Dict[str, List[str]] = {}
+        # The conditions exists() wrote, which are never NULL, so NOT of one
+        # is exact; the root's filter is the user's SQL, and may be.
+        self.existsConditions: Set[str] = set()
 
 
     def alias(self, prefix: str) -> str:
@@ -87,15 +90,48 @@ class _Builder:
         conditions = ' AND '.join('{}.{} = {}.{}'.format(inner, self.quote(innerColumn), outerAlias, self.quote(outerColumn))
                                   for innerColumn, outerColumn in pairs)
         dependencies.append(selection)
+        condition = 'EXISTS (SELECT 1 FROM {} {} WHERE {})'.format(selection, inner, conditions)
+        self.existsConditions.add(condition)
 
-        return 'EXISTS (SELECT 1 FROM {} {} WHERE {})'.format(selection, inner, conditions)
+        return condition
 
 
     def define(self, selection: str, table: str, conditions: Sequence[str], alias: str, dependencies: List[str]) -> None:
+        """A table's selection: its rows meeting any of `conditions`.
 
-        self.bodies[selection] = 'SELECT * FROM {} {} WHERE {}'.format(
-            self.quoteTable(self.names[table]), alias, ' OR '.join('({})'.format(condition) for condition in conditions))
+        One condition is one WHERE. Several are a UNION ALL of one branch per
+        condition, each leaving out the rows an earlier branch took, rather
+        than one WHERE joining them with OR. PostgreSQL can't turn EXISTS
+        under an OR into a join: it ran each as a subplan, hashed only if it
+        fit in work_mem and otherwise reading the whole selection again for
+        every row -- 18 seconds for 2,000 customers of 200,000, where each
+        branch here is a semi-join or anti-join, whatever work_mem is.
+
+        UNION ALL rather than UNION, which compares whole rows and so refuses
+        json, CLOB and text columns. A branch leaves out earlier rows with NOT
+        EXISTS, which is exact because EXISTS is never NULL; the root's own
+        filter may be NULL, so it is always the last branch, and never
+        negated.
+
+        Only where selections are materialized, each computed once however
+        often it is named. Elsewhere a selection is copied into each place
+        that names it, and the branches name each one more often: SQL Server
+        gave up planning the deepest chain planSubset allows. Those keep OR.
+        """
+
+        source = '{} {}'.format(self.quoteTable(self.names[table]), alias)
         self.dependencies[selection] = dependencies
+
+        if len(conditions) == 1 or not self.materialize:
+            self.bodies[selection] = 'SELECT * FROM {} WHERE {}'.format(source, ' OR '.join('({})'.format(condition) for condition in conditions))
+            return
+
+        exists = [condition for condition in conditions if condition in self.existsConditions]
+        others = [condition for condition in conditions if condition not in self.existsConditions]
+        ordered = exists + ([' OR '.join('({})'.format(condition) for condition in others)] if others else [])
+        self.bodies[selection] = ' UNION ALL '.join(
+            'SELECT * FROM {} WHERE {}'.format(source, ' AND '.join(['({})'.format(condition)] + ['NOT {}'.format(earlier) for earlier in exists[:position]]))
+            for position, condition in enumerate(ordered))
 
 
     def query(self, selection: str) -> str:

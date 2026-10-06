@@ -194,7 +194,8 @@ def _discoverUpdate(arguments: argparse.Namespace, log: Log) -> int:
 
 def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
     """Generates one data job per table for a referentially complete subset,
-    loading parents before children, with masking proposals if --mask is set.
+    loading parents before children, with masking proposals if --mask is set
+    or the target requires masking.
     """
 
     from ..generate.discovery import JobDraft, proposeTable, renderJobs
@@ -207,6 +208,15 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
 
     if arguments.target == arguments.connection:
         raise UsageError('--target must differ from --connection: a subset is loaded into another database, not over its source')
+
+    # A target that requires masking refuses every job without a policy, so
+    # jobs generated without one could only fail validation.
+    mask = arguments.mask or targetSettings.requireMasking
+    if mask and not arguments.mask:
+        log.logging.info('{} requires masking, so each table gets a proposed policy, as with --mask'.format(arguments.target))
+    elif not mask:
+        log.logging.warning('These jobs copy every column as it is in {}. --mask proposes a masking policy for each table, as discover does; '
+                            'without it, add one to each job before running them'.format(arguments.connection))
 
     with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
         # The root's schema's keys: a subset follows references within it.
@@ -228,7 +238,7 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
         drafts = []
         for table in plan.tables:
             proposal = proposeTable(database, table, sampleSize=arguments.sample, foreignKeys=foreignKeys, rules=rules,
-                                    maskKeys=arguments.mask_keys) if arguments.mask else None
+                                    maskKeys=arguments.mask_keys) if mask else None
             drafts.append(JobDraft(table=table, sourceQuery=plan.queries[table], predecessors=plan.parents[table], proposal=proposal))
 
     heading = _generatedHeading('subset', arguments.connection, arguments.target) + [

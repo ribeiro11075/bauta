@@ -15,7 +15,6 @@ Exit codes, which are the interface for anything that schedules work:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from typing import Any, Optional, Sequence
 
@@ -24,7 +23,7 @@ from ..log.scrubbing import describeError
 from .common import (CONFIG_DIRECTORY_VARIABLE, EXIT_BAD_CONFIGURATION, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, MANIFEST_KEY_VARIABLE,
                      NOTIFY_URL_VARIABLE, UsageError, _configureLogging, _toolVersion)
 from .generate import _commandClear, _commandDiscover, _commandSchema, _commandSubset, _commandSynthesize
-from .review import _commandAudit, _commandCoverage, _commandVerifyReferences
+from .review import _commandAudit, _commandBench, _commandCoverage, _commandVerifyReferences
 from .run import _commandHistory, _commandJobs, _commandRun, _commandValidate, _commandVerifyManifest
 
 __all__ = [
@@ -139,15 +138,12 @@ class _PrintVersion(argparse.Action):
         super().__init__(option_strings, dest=dest, default=default, nargs=0, help=help)
 
     def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace, values: Any, option_string: Optional[str] = None) -> None:
-        from ..masking import nativeVersion
+        from ..masking import nativeUnavailableReason, nativeVersion
 
         native = nativeVersion()
-        if native:
-            masker = 'bauta-rs {}'.format(native)
-        elif os.environ.get('BAUTA_NATIVE') == '0':
-            masker = 'python (BAUTA_NATIVE=0 turns the native masker off)'
-        else:
-            masker = 'python (pip install "bauta[native]" for the native masker)'
+        # Why not, as the extension found it: "not installed" and "installed,
+        # another version" need different fixes.
+        masker = 'bauta-rs {}'.format(native) if native else 'python ({})'.format(nativeUnavailableReason())
         print('bauta {}'.format(_toolVersion()))
         print('masking: {}'.format(masker))
         parser.exit()
@@ -214,6 +210,14 @@ def _buildParser() -> argparse.ArgumentParser:
                                 help='text, json, or html: one self-contained page for a reviewer, best with --output (default: text)')
     coverageParser.add_argument('--output', help='write to this file instead of stdout')
 
+    benchParser = subparsers.add_parser('bench', help='measure how fast each job reads and masks from its real source, writing nothing')
+    _addCommonArguments(benchParser, memory=False)
+    benchParser.add_argument('--job', action='append', help='measure only this job (repeatable; default: every active job)')
+    benchParser.add_argument('--rows', type=_positiveInteger, default=100_000, help='rows to read from each job\'s query (default: 100000)')
+    benchParser.add_argument('--format', default='text', choices=['text', 'json'], help='default: text')
+    benchParser.add_argument('--output', help='write the report here instead of stdout; must not already exist')
+    benchParser.set_defaults(handler=_commandBench)
+
     verifyParser = subparsers.add_parser('verify-manifest', help='check that a manifest is unaltered, and who signed it')
     verifyParser.add_argument('manifest', nargs='?', help='a manifest file (default: --manifest-connection, else jobs.yaml\'s `manifest`)')
     _addManifestLocationArguments(verifyParser)
@@ -261,7 +265,8 @@ def _buildParser() -> argparse.ArgumentParser:
     subsetParser.add_argument('--no-children', action='store_true', help='copy only the root rows and what they reference, not rows referencing them')
     subsetParser.add_argument('--ignore-foreign-key', action='append', metavar='TABLE.COLUMN',
                               help='do not follow this foreign key (repeatable); needed to break a cycle')
-    subsetParser.add_argument('--mask', action='store_true', help='also propose a masking policy for every table, as discover does')
+    subsetParser.add_argument('--mask', action='store_true', help='also propose a masking policy for every table, as discover does; '
+                                                                  'on by default where --target has requireMasking')
     _addGeneratorArguments(subsetParser)
     _addRulesArgument(subsetParser)
     subsetParser.set_defaults(handler=_commandSubset)

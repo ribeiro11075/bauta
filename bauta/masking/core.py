@@ -65,8 +65,11 @@ FEISTEL_ROUNDS = 10
 HMAC_BLOCK_SIZE = 64
 
 
-# Why _nativeModule found no extension to use, for requireNative to say.
+# Why _nativeModule found no extension to use, for requireNative to say, and
+# which of the three reasons it was: `off` (BAUTA_NATIVE=0), `missing` (not
+# installed) or `mismatch` (installed, another version).
 _nativeUnavailable: Optional[str] = None
+_nativeUnavailableKind: Optional[str] = None
 
 
 @functools.cache
@@ -79,17 +82,17 @@ def _nativeModule() -> Any:
     slower.
     """
 
-    global _nativeUnavailable
-    _nativeUnavailable = None
+    global _nativeUnavailable, _nativeUnavailableKind
+    _nativeUnavailable = _nativeUnavailableKind = None
 
     if os.environ.get('BAUTA_NATIVE') == '0':
-        _nativeUnavailable = 'BAUTA_NATIVE=0 turns it off'
+        _nativeUnavailable, _nativeUnavailableKind = 'BAUTA_NATIVE=0 turns it off', 'off'
         return None
 
     try:
         import bauta_rs
     except ImportError:
-        _nativeUnavailable = 'bauta-rs is not installed; pip install "bauta[native]" installs it'
+        _nativeUnavailable, _nativeUnavailableKind = 'bauta-rs is not installed; pip install "bauta[native]" installs it', 'missing'
         return None
 
     try:
@@ -102,6 +105,7 @@ def _nativeModule() -> Any:
     if installed != expected:
         _nativeUnavailable = 'bauta-rs {} is installed, which does not match bauta {}; pip install "bauta[native]=={}" installs the one that does'.format(
             installed, expected, expected)
+        _nativeUnavailableKind = 'mismatch'
         logging.getLogger(LOGGER_NAME).warning(
             'Masking in Python: bauta-rs %s does not match bauta %s, and only the same version is certain to mask identically. '
             'pip install "bauta[native]==%s" installs the matching one.', installed, expected, expected)
@@ -121,19 +125,51 @@ def nativeExtension() -> Any:
 REQUIRE_NATIVE_VARIABLE = 'BAUTA_REQUIRE_NATIVE'
 
 
-def requireNativeProblem(required: bool) -> Optional[str]:
-    """Why a run that requires the native masker -- jobs.yaml's requireNative,
-    or BAUTA_REQUIRE_NATIVE=1 -- can't have it, or None. Without the
-    requirement a missing or mismatched extension only means masking in
-    Python, about ten times slower, with a warning a scheduled run's log may
-    bury; a run with a time window to keep can ask to stop instead.
+def requiresNative(required: Optional[bool]) -> Optional[bool]:
+    """Whether a run must have the native masker: BAUTA_REQUIRE_NATIVE=1 or =0
+    over jobs.yaml's requireNative. True and False are as said; None, the
+    default, requires it only where it is installed but can't be used.
     """
 
-    if not (required or os.environ.get(REQUIRE_NATIVE_VARIABLE) == '1') or _nativeModule() is not None:
+    setting = os.environ.get(REQUIRE_NATIVE_VARIABLE)
+    if setting in ('1', '0'):
+        return setting == '1'
+
+    return required
+
+
+def requireNativeProblem(required: Optional[bool]) -> Optional[str]:
+    """Why a run with masked jobs can't start for want of the native masker,
+    or None. See requiresNative for what `required` means.
+
+    Masking in Python is only slower, about ten times, but a scheduled run's
+    log buries the warning that says so. By default a run stops where the
+    extension is installed and another version than this package's -- an
+    upgrade that left it behind, which nobody meant -- and goes on in Python
+    where it was never installed or BAUTA_NATIVE=0 turns it off, both of
+    which somebody chose. requireNative: true stops it in every case;
+    false never does.
+    """
+
+    requirement = requiresNative(required)
+
+    if requirement is False or _nativeModule() is not None:
         return None
+
+    if requirement is None:
+        if _nativeUnavailableKind != 'mismatch':
+            return None
+        return ('masking would run in Python, about ten times slower: {}. To mask in Python anyway, set requireNative: false '
+                'in jobs.yaml, or ${}=0'.format(_nativeUnavailable, REQUIRE_NATIVE_VARIABLE))
 
     return 'the native masker is required (requireNative, or ${}=1), but masking would run in Python, about ten times slower: {}'.format(
         REQUIRE_NATIVE_VARIABLE, _nativeUnavailable)
+
+
+def nativeUnavailableReason() -> Optional[str]:
+    """Why masking runs in Python, or None where the native masker is in use."""
+
+    return None if _nativeModule() is not None else _nativeUnavailable
 
 
 def nativeVersion() -> Optional[str]:

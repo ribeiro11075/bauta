@@ -122,3 +122,24 @@ def test_microseconds_survive_an_insert_and_an_upsert(liveDatabase, oddTable):
     liveDatabase.upsert(table=oddTable, data=[(2, None, None, moment, clock)], chunkSize=10)
 
     assert liveDatabase.query('SELECT moment, clock FROM {} ORDER BY id'.format(oddTable)) == [(moment, clock), (moment, clock)]
+
+
+def test_an_empty_binary_value_loads_on_every_path(liveDatabase):
+    """pymssql writes b'' as '', a varchar, which SQL Server won't convert to a
+    binary column on its own: an empty bytea failed to load into
+    VARBINARY(MAX). Every path -- multi-row and row by row, insert and
+    upsert -- must carry it.
+    """
+    table = 'empty_binary_{}'.format(uuid.uuid4().hex[:8])
+    liveDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, v VARBINARY(MAX), t NVARCHAR(10))'.format(table))
+    try:
+        liveDatabase.insert(table=table, data=[(1, b'', 'a'), (2, b'\x00\x01', 'b'), (3, None, 'c')], columns=['id', 'v', 't'])
+        liveDatabase.upsert(table=table, data=[(1, b'\x05', 'a'), (4, b'', 'd')], columns=['id', 'v', 't'])
+        # Text and a number in one column send a chunk row by row.
+        liveDatabase.insert(table=table, data=[(5, b'', 'x'), (6, b'', 7)], columns=['id', 'v', 't'])
+        liveDatabase.upsert(table=table, data=[(7, b'', 'x'), (8, b'', 8)], columns=['id', 'v', 't'])
+
+        assert liveDatabase.query('SELECT id, v FROM {} ORDER BY id'.format(table)) == [
+            (1, b'\x05'), (2, b'\x00\x01'), (3, None), (4, b''), (5, b''), (6, b''), (7, b''), (8, b'')]
+    finally:
+        liveDatabase.alter('DROP TABLE {}'.format(table))

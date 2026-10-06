@@ -239,7 +239,7 @@ def valueHint(values: Sequence[Any], rules: DiscoveryRules = BUILTIN_RULES) -> O
         classified = _classifyDocuments(documents, rules)
         return (None, classified[1]) if classified is not None else None
 
-    values = [_classifiable(value) for value in values]
+    values = [_classifiable(value) for value in _jsonStrings(values)]
     rule = _matchingValueRule(values, _inferCategory(values), rules)
     if rule is None or not changesValues(rule.policy):
         return None
@@ -247,22 +247,55 @@ def valueHint(values: Sequence[Any], rules: DiscoveryRules = BUILTIN_RULES) -> O
     return rule.name, rule.reason
 
 
-def _documents(values: Sequence[Any]) -> List[Any]:
-    """The sampled values as JSON documents, where they are some: dicts and
-    lists as psycopg and oracledb return them, or text that parses as an
-    object or an array, as MySQL and DuckDB return them. Empty otherwise.
+def _parsedJson(values: Sequence[Any]) -> Optional[List[Any]]:
+    """Every sampled value parsed as JSON, nulls left out, or None where one
+    isn't text that parses. Read from text alone, as MySQL, SQLite and DuckDB
+    return JSON: PostgreSQL's arrives parsed (see database.values.decodedJson).
     """
 
     present = [value for value in values if value is not None]
-    if present and all(isinstance(value, (dict, list)) for value in present):
-        return present
-    if present and all(isinstance(value, str) and value.lstrip()[:1] in ('{', '[') for value in present):
-        try:
-            return [json.loads(value) for value in present]
-        except ValueError:
-            return []
+    if not present or not all(isinstance(value, str) for value in present):
+        return None
+    try:
+        return [json.loads(value) for value in present]
+    except ValueError:
+        return None
 
-    return []
+
+def _documents(values: Sequence[Any]) -> List[Any]:
+    """The sampled values as JSON documents, where they are some: dicts and
+    lists as psycopg and oracledb return them, or text that parses as JSON
+    with an object or an array among it, as MySQL and DuckDB return it.
+    Nulls are left out, and a scalar among the documents is kept, where every
+    value used to have to be an object or an array: one null document, or one
+    bare string, hid the personal data in all the rest. Empty otherwise.
+    """
+
+    structured = (dict, list)
+    documents = [value for value in values if isinstance(value, structured)]
+    if not documents:
+        parsed = _parsedJson(values)
+        documents = [value for value in parsed or () if isinstance(value, structured)]
+
+    # A bare scalar is no path a `json` policy can name; the documents are.
+    return documents
+
+
+def _jsonStrings(values: Sequence[Any]) -> Sequence[Any]:
+    """Values that are each a JSON string, `"ana@corp.example"` as a MySQL
+    JSON column holds a bare string, as the strings themselves, so the rules
+    read the address rather than its quotes. Any other values as they are.
+    """
+
+    present = [value for value in values if value is not None]
+    if not present or not all(isinstance(value, str) and value.startswith('"') for value in present):
+        return values
+
+    parsed = _parsedJson(values)
+    if parsed is None or not all(isinstance(value, str) for value in parsed):
+        return values
+
+    return parsed
 
 
 def _leaves(document: Any, path: Tuple[str, ...], into: Dict[Tuple[str, ...], List[Any]]) -> None:
@@ -385,7 +418,7 @@ def suggestColumn(table: str, column: str, category: Optional[ColumnCategory], v
     # A JSON document or an IP address as the text a strategy masks, so a
     # name rule's guess is checked against what will be masked: an inet
     # column named ip_address fits `hash`.
-    values = [_classifiable(value) for value in values]
+    values = [_classifiable(value) for value in _jsonStrings(values)]
 
     words = nameWords(column)
     for rule in rules.names:

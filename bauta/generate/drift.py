@@ -14,7 +14,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence
 
 import yaml
 
-from ..configuration import DataJobConfig
+from ..configuration import DataJobConfig, parseYaml
 from ..database.dialects import catalogTable
 from .discovery import BUILTIN_RULES, DEFAULT_SAMPLE_SIZE, DiscoveryRules, Suggestion, _flow, _scalar, proposeTable, suggestColumn
 
@@ -221,7 +221,7 @@ def _checkApplied(text: str, drift: JobDrift) -> None:
     """
 
     try:
-        document = yaml.safe_load(text)
+        document = parseYaml(text)
         columns = {str(column).upper() for column in document['jobs'][drift.job]['masking']['columns']}
     except (yaml.YAMLError, KeyError, TypeError) as error:
         raise DriftError('the edited file would not read back ({}); apply the change by hand'.format(error)) from error

@@ -39,6 +39,9 @@ class Column:
         # A declared text column takes numbers and dates as their text.
         self.lenient = declared is not None
         self.documents = False
+        # Holds JSON text alone, whatever its value: a PostgreSQL json or
+        # jsonb column, which JSON Lines writes as it is.
+        self.jsonText = False
         # Can't be null: an Iceberg table's key, or a column it requires.
         self.required = False
 
@@ -52,6 +55,18 @@ class ColumnarTarget(LoadTarget):
 
     # Where the columns are written, for messages.
     loadName: str
+
+    def holdJson(self, indexes: Sequence[int]) -> None:
+        """JSON columns arrive as their text, not as the dicts that mark a
+        column as documents: the pipeline says which they are, by the same
+        type codes it decodes and encodes them by, so JSON Lines writes each
+        value as the JSON it is -- PostgreSQL's, MySQL's and DuckDB's alike.
+        """
+
+        for index in indexes:
+            if index < len(self.columns):
+                self.columns[index].documents = self.columns[index].jsonText = True
+
 
     def __init__(self, job: str, jobConfig: DataJobConfig, rowGroupSize: int) -> None:
         self.job = job

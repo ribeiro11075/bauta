@@ -127,6 +127,7 @@ nav:
           - coverage: reference/commands/coverage.md
           - verify-manifest: reference/commands/verify-manifest.md
           - verify-references: reference/commands/verify-references.md
+          - bench: reference/commands/bench.md
       - reference/environment.md
       - reference/tables.md
       - Python API: reference/python-api.md

@@ -148,6 +148,10 @@ class _Connection(_BaseConnection):
 
     type: DatabaseType
     options: CleanedMapping = Field(default_factory=dict, repr=False)
+    # The most rows a second jobs may read from this database, all of them
+    # together, partitions and all, so a copy can't take more of production
+    # than it was given. None is no limit. See jobs.throttle.ReadLimit.
+    maxRowsReadPerSecond: Optional[float] = Field(default=None, gt=0)
 
 
 class _CurrentSchema(BaseModel):

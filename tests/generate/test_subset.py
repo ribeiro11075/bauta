@@ -162,8 +162,9 @@ def test_ignore_entries_must_name_a_column():
 
 def test_no_scope_reuses_an_alias_from_a_scope_enclosing_it(shop):
     """A shared subquery may appear twice side by side, reusing its aliases --
-    that's harmless. Reuse inside an *enclosing* scope would shadow the outer
-    alias and silently correlate against the wrong table.
+    that's harmless, and so is a branch of a UNION ALL reusing the one before
+    it, a scope of its own. Reuse inside an *enclosing* scope would shadow the
+    outer alias and silently correlate against the wrong table.
     """
     import re
 
@@ -172,8 +173,11 @@ def test_no_scope_reuses_an_alias_from_a_scope_enclosing_it(shop):
     for query in plan.queries.values():
         enclosing = []
         depth = 0
-        for token in re.findall(r'\) s\d+|\(|\)|FROM \w+ t\d+', query):
-            if token.startswith(')'):
+        for token in re.findall(r'\) s\d+|\(|\)|FROM \w+ t\d+|UNION ALL', query):
+            if token == 'UNION ALL':
+                # The branch before it ends here: its scope encloses nothing after.
+                enclosing = [(level, alias) for level, alias in enclosing if level < depth]
+            elif token.startswith(')'):
                 depth -= 1
                 enclosing = [(level, alias) for level, alias in enclosing if level <= depth]
                 if token != ')':
@@ -259,3 +263,63 @@ def test_a_deep_chain_selects_the_same_rows_either_way(materialize, sqliteMemory
 
     assert assertReferentiallyComplete(connection, plan) is None
     assert len(connection.execute(plan.queries['c0']).fetchall()) == 5
+
+
+def test_materialized_selections_are_the_same_rows_as_or_and_each_row_once(shop):
+    """Materialized, a table selected for several reasons is a UNION ALL of a
+    branch per reason, each leaving out what an earlier one took: PostgreSQL
+    ran EXISTS under an OR as a subplan that read the whole selection again
+    for every row. A customer both gold and with a kept order must still
+    come out once, and the rows must be exactly those OR selects.
+    """
+    asOr = planSubset(foreignKeysOf(shop), root='customers', where="tier = 'gold'")
+    asUnion = planSubset(foreignKeysOf(shop), root='customers', where="tier = 'gold'", materialize=True)
+
+    assert 'UNION ALL' in asUnion.queries['customers'] and 'UNION ALL' not in asOr.queries['customers']
+    for table in asOr.tables:
+        unionRows = shop.execute(asUnion.queries[table]).fetchall()
+        assert sorted(unionRows) == sorted(shop.execute(asOr.queries[table]).fetchall()), table
+        assert len(unionRows) == len(set(unionRows)), table
+    assertReferentiallyComplete(shop, asUnion)
+
+
+def test_a_root_filter_that_is_null_for_some_rows_loses_none_of_them(shop):
+    """The root's filter is the user's SQL, and NULL where a column is: NOT of
+    it would drop rows from a later branch that the OR form keeps. It is the
+    last branch, and never negated.
+    """
+    shop.execute("UPDATE customers SET tier = NULL WHERE id % 5 = 0")
+    shop.commit()
+    where = "tier <> 'basic'"
+
+    asOr = planSubset(foreignKeysOf(shop), root='customers', where=where)
+    asUnion = planSubset(foreignKeysOf(shop), root='customers', where=where, materialize=True)
+
+    query = asUnion.queries['customers']
+    assert query.rindex(where) > query.rindex('UNION ALL') and 'NOT ({})'.format(where) not in query
+    for table in asOr.tables:
+        assert sorted(shop.execute(asUnion.queries[table]).fetchall()) == sorted(shop.execute(asOr.queries[table]).fetchall()), table
+
+
+def test_no_materialized_scope_reuses_an_alias_from_a_scope_enclosing_it(shop):
+    plan = planSubset(foreignKeysOf(shop), root='customers', where="tier = 'gold'", materialize=True)
+
+    for query in plan.queries.values():
+        enclosing = []
+        depth = 0
+        for token in re.findall(r'\) s\d+|\(|\)|FROM \w+ t\d+|UNION ALL', query):
+            if token == 'UNION ALL':
+                enclosing = [(level, alias) for level, alias in enclosing if level < depth]
+            elif token.startswith(')'):
+                depth -= 1
+                enclosing = [(level, alias) for level, alias in enclosing if level <= depth]
+                if token != ')':
+                    alias = token.split()[1]
+                    assert alias not in {alias for _, alias in enclosing}
+                    enclosing.append((depth, alias))
+            elif token == '(':
+                depth += 1
+            else:
+                alias = token.split()[2]
+                assert alias not in {alias for _, alias in enclosing}
+                enclosing.append((depth, alias))

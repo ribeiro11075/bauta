@@ -29,6 +29,8 @@ class MSSQLDialect(DatabaseDialect):
 
     databaseType = DatabaseType.MSSQL
 
+    REFUSED_FLOATS = frozenset({'nan', 'inf'})
+
     def openConnection(self, settings: DatabaseConfig) -> Any:
 
         import pymssql
@@ -177,9 +179,10 @@ class MSSQLDialect(DatabaseDialect):
                 "WHERE s.name = COALESCE({}, SCHEMA_NAME()) AND t.is_ms_shipped = 0 ORDER BY t.name")
 
 
-    def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str], rowCount: int = 1) -> str:
+    def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str], rowCount: int = 1,
+                    placeholders: Optional[List[str]] = None) -> str:
 
-        rowValues = ', '.join(['({})'.format(', '.join(self.placeholders(len(allColumns))))] * rowCount)
+        rowValues = ', '.join(['({})'.format(', '.join(placeholders or self.placeholders(len(allColumns))))] * rowCount)
         columnNames = ', '.join(allColumns)
         mergeClause = _mergeUpdateInsertClause('target', 'source', allColumns, primaryKeyColumns, nonPrimaryKeyColumns)
 
@@ -218,13 +221,49 @@ class MSSQLDialect(DatabaseDialect):
 
         return True
 
+    def _valuePlaceholders(self, rows: Sequence[Sequence[Any]], count: int) -> Optional[List[str]]:
+        """The placeholders for `rows`, or None where the plain ones do.
+
+        pymssql writes an empty bytes value into the statement as '', a
+        varchar, which SQL Server won't convert to a binary column on its
+        own: an empty bytea failed to load into VARBINARY(MAX). A column
+        holding one is converted explicitly, which SQL Server allows; a
+        non-empty value, written as 0x..., converts the same.
+        """
+
+        empty = set()
+        for index, column in enumerate(zip(*rows)):
+            # A bytes column's types are few, and checked before its values.
+            if bytes in set(map(type, column)) and any(type(value) is bytes and not value for value in column):
+                empty.add(index)
+
+        if not empty:
+            return None
+
+        return ['CONVERT(VARBINARY(MAX), %s)' if index in empty else '%s' for index in range(count)]
+
+
+    def _rowByRow(self, cursor: Cursor, statement: str, rows: Sequence[Sequence[Any]]) -> None:
+        """Each row on its own, the way executemany would, for rows the
+        plain placeholders can't carry.
+        """
+
+        for row in rows:
+            cursor.execute(statement, tuple(row))
+
+
     def bulkInsert(self, cursor: Cursor, table: str, columns: List[str], rows: Sequence[Sequence[Any]]) -> bool:
         """Multi-row INSERT ... VALUES: pymssql's executemany sends a statement per row."""
 
-        if not self._multiRowSafe(rows):
-            return False
+        placeholders = self._valuePlaceholders(rows, len(columns))
 
-        rowValues = '({})'.format(', '.join(self.placeholders(len(columns))))
+        if not self._multiRowSafe(rows):
+            if placeholders is None:
+                return False
+            self._rowByRow(cursor, 'INSERT INTO {} ({}) VALUES ({})'.format(table, ', '.join(columns), ', '.join(placeholders)), rows)
+            return True
+
+        rowValues = '({})'.format(', '.join(placeholders or self.placeholders(len(columns))))
 
         for offset in range(0, len(rows), self.VALUES_ROW_LIMIT):
             batch = rows[offset:offset + self.VALUES_ROW_LIMIT]
@@ -240,12 +279,17 @@ class MSSQLDialect(DatabaseDialect):
         requires: it refuses to update a target row twice.
         """
 
+        placeholders = self._valuePlaceholders(rows, len(allColumns))
+
         if not self._multiRowSafe(rows):
-            return False
+            if placeholders is None:
+                return False
+            self._rowByRow(cursor, self.upsertQuery(table, allColumns, primaryKeyColumns, nonPrimaryKeyColumns, placeholders=placeholders), rows)
+            return True
 
         for offset in range(0, len(rows), self.VALUES_ROW_LIMIT):
             batch = rows[offset:offset + self.VALUES_ROW_LIMIT]
-            cursor.execute(self.upsertQuery(table, allColumns, primaryKeyColumns, nonPrimaryKeyColumns, rowCount=len(batch)),
+            cursor.execute(self.upsertQuery(table, allColumns, primaryKeyColumns, nonPrimaryKeyColumns, rowCount=len(batch), placeholders=placeholders),
                            tuple(value for row in batch for value in row))
 
         return True

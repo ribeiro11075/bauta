@@ -1437,6 +1437,51 @@ def _pathText(path: Tuple[str, ...]) -> str:
     return '.'.join(path).replace('.[]', '[]')
 
 
+class _JsonNumber(float):
+    """A JSON number with a fraction or an exponent, as a float -- what every
+    strategy masks, and keys on, as it always has -- that remembers how it
+    was written. A float holds 17 digits: 12345678901234567890.123 came back
+    as 12345678901234567000, and 1.10 as 1.1, from documents only masked
+    elsewhere. Written back unmasked, it is written as it came.
+    """
+
+    text: str
+
+    def __new__(cls, text: str) -> '_JsonNumber':
+
+        number = super().__new__(cls, text)
+        number.text = text
+        return number
+
+
+def _jsonDocument(text: str) -> Tuple[Any, bool]:
+    """JSON text parsed, and whether it holds a number _JsonNumber keeps."""
+
+    found = False
+
+    def number(text: str) -> _JsonNumber:
+        nonlocal found
+        found = True
+        return _JsonNumber(text)
+
+    return json.loads(text, parse_float=number), found
+
+
+def _jsonText(node: Any) -> str:
+    """A document as json.dumps writes it, spaced and escaped alike, except
+    that a _JsonNumber is written as it came.
+    """
+
+    if isinstance(node, dict):
+        return '{' + ', '.join('{}: {}'.format(json.dumps(str(key), ensure_ascii=False), _jsonText(value)) for key, value in node.items()) + '}'
+    if isinstance(node, list):
+        return '[' + ', '.join(_jsonText(value) for value in node) + ']'
+    if isinstance(node, _JsonNumber):
+        return node.text
+
+    return json.dumps(node, ensure_ascii=False)
+
+
 class JsonStrategy(Strategy):
     """Masks inside a JSON document: each path `fields` names with its own
     policy, and every other value with `otherwise` -- by default `redact`,
@@ -1533,10 +1578,12 @@ class JsonStrategy(Strategy):
 
         if isinstance(value, str):
             try:
-                document = json.loads(value)
+                document, exact = _jsonDocument(value)
             except ValueError:
                 raise MaskingError('the json strategy needs a JSON document, and this text is not one') from None
-            return json.dumps(self._walk(document, ()), ensure_ascii=False)
+            masked = self._walk(document, ())
+            # json.dumps, in C, wherever no number needs writing as it came.
+            return _jsonText(masked) if exact else json.dumps(masked, ensure_ascii=False)
 
         if isinstance(value, (dict, list)):
             return self._walk(value, ())

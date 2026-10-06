@@ -73,3 +73,24 @@ def test_a_swap_stopped_part_way_leaves_both_tables_where_they_were(connectionSe
 
     assert liveDatabase.query('SELECT id FROM {}'.format(peopleTable)) == [(2,)]
     liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(stageTable))
+
+
+def test_a_binary_double_holds_what_a_number_cannot(liveDatabase):
+    """oracledb binds a float as a NUMBER, which holds neither NaN nor the
+    infinities, nor anything past 1e126: -1e308 failed with DPY-4003 and NaN
+    with DPY-4004, though BINARY_DOUBLE holds all three.
+    """
+    import math
+
+    table = 'binary_doubles_{}'.format(uuid.uuid4().hex[:8])
+    liveDatabase.alter('CREATE TABLE {} (id NUMBER PRIMARY KEY, d BINARY_DOUBLE, f BINARY_FLOAT, n NUMBER)'.format(table))
+    try:
+        liveDatabase.insert(table=table, data=[(1, -1e308, float('inf'), 1.5), (2, float('nan'), 2.5, None), (3, None, None, 3)],
+                            columns=['id', 'd', 'f', 'n'])
+        liveDatabase.upsert(table=table, data=[(3, float('-inf'), float('nan'), 4), (4, 1e300, 1.0, 5)], columns=['id', 'd', 'f', 'n'])
+
+        rows = liveDatabase.query('SELECT id, d, f, n FROM {} ORDER BY id'.format(table))
+        assert rows[0][1:3] == (-1e308, float('inf')) and math.isnan(rows[1][1]) and rows[2][1] == float('-inf') and math.isnan(rows[2][2])
+        assert rows[3][1] == 1e300 and [int(row[3]) for row in rows if row[3] is not None] == [1, 4, 5]
+    finally:
+        liveDatabase.alter('DROP TABLE {}'.format(table))

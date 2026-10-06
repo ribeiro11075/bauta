@@ -540,3 +540,88 @@ def test_a_run_requiring_the_native_masker_stops_before_any_job_runs(monkeypatch
                         memory=FileMemory(tmp_path / 'memory.yaml'))
     finally:
         masking._nativeModule.cache_clear()
+
+
+def test_by_default_a_run_stops_where_the_extension_is_installed_but_another_version(standInExtension, monkeypatch):
+    """The upgrade that leaves bauta-rs behind: every masked job ten times
+    slower, said once in a log nobody reads until the window is missed.
+    Nobody chooses that, so by default it stops the run, saying how to fix
+    it and how to go on in Python.
+    """
+    import bauta.masking.core as masking
+
+    extension, _ = standInExtension
+    extension.__version__ = '0.0.1'
+    monkeypatch.delenv('BAUTA_REQUIRE_NATIVE', raising=False)
+
+    problem = masking.requireNativeProblem(None)
+
+    assert 'bauta-rs 0.0.1 is installed, which does not match' in problem
+    assert 'requireNative: false' in problem and 'BAUTA_REQUIRE_NATIVE=0' in problem
+
+
+def test_requiring_it_false_or_variable_zero_masks_in_python_past_a_mismatch(standInExtension, monkeypatch):
+    import bauta.masking.core as masking
+
+    extension, _ = standInExtension
+    extension.__version__ = '0.0.1'
+
+    assert masking.requireNativeProblem(False) is None
+
+    monkeypatch.setenv('BAUTA_REQUIRE_NATIVE', '0')
+    assert masking.requireNativeProblem(None) is None
+    # The variable is over the file, as BAUTA_MASKING_THREADS is.
+    assert masking.requireNativeProblem(True) is None
+
+
+def test_by_default_a_run_goes_on_in_python_where_the_extension_was_never_installed_or_is_turned_off(monkeypatch):
+    """Both are someone's choice -- the native masker is an extra, and
+    BAUTA_NATIVE=0 is asked for -- so neither stops a run unless
+    requireNative: true says it must.
+    """
+    import bauta.masking.core as masking
+
+    monkeypatch.delenv('BAUTA_REQUIRE_NATIVE', raising=False)
+    monkeypatch.delenv('BAUTA_NATIVE', raising=False)
+    monkeypatch.setitem(sys.modules, 'bauta_rs', None)
+    masking._nativeModule.cache_clear()
+    try:
+        assert masking.requireNativeProblem(None) is None
+        assert 'not installed' in masking.requireNativeProblem(True)
+        assert 'not installed' in masking.nativeUnavailableReason()
+
+        monkeypatch.setenv('BAUTA_NATIVE', '0')
+        masking._nativeModule.cache_clear()
+        assert masking.requireNativeProblem(None) is None
+        assert 'BAUTA_NATIVE=0' in masking.requireNativeProblem(True)
+    finally:
+        masking._nativeModule.cache_clear()
+
+
+def test_a_run_says_once_as_it_starts_that_it_masks_in_python(monkeypatch, tmp_path):
+    import bauta.masking.core as masking
+    from bauta.configuration import Configuration, DataJobsFile
+    from bauta.jobs.memory import FileMemory
+    from bauta.jobs.runner import runDataJobs
+    from tests.jobConfigs import dataJobFields
+
+    monkeypatch.delenv('BAUTA_NATIVE', raising=False)
+    monkeypatch.delenv('BAUTA_REQUIRE_NATIVE', raising=False)
+    monkeypatch.setitem(sys.modules, 'bauta_rs', None)
+    masking._nativeModule.cache_clear()
+    warnings = []
+    handler = logging.Handler(level=logging.WARNING)
+    handler.emit = lambda record: warnings.append(record.getMessage())
+    jobs = {'workers': 1, 'jobs': {'masked': dataJobFields(active=False, masking={'key': KEY, 'columns': {'id': 'key'}}),
+                                   'other': dataJobFields(masking={'key': KEY, 'columns': {'id': 'key'}}, refresh=10 ** 9)}}
+    try:
+        memory = FileMemory(tmp_path / 'memory.yaml')
+        memory.recordRun(job='other')
+        logging.getLogger('bauta').addHandler(handler)
+        runDataJobs(jobsFile=Configuration.validateJobConfiguration(jobs, DataJobsFile), connectionConfiguration={}, memory=memory)
+    finally:
+        logging.getLogger('bauta').removeHandler(handler)
+        masking._nativeModule.cache_clear()
+
+    assert [warning for warning in warnings if 'Masking in Python' in warning] == [
+        'Masking in Python, about ten times slower than the native masker: bauta-rs is not installed; pip install "bauta[native]" installs it']

@@ -708,10 +708,11 @@ class DataJobsFile(BaseModel):
     # as each job starts with the jobs running alongside it. See
     # masking.maskingThreadsFor and runner._runCycle.
     maskingThreads: Union[Literal['auto'], Annotated[int, Field(ge=1)]] = 1
-    # Whether a run stops before it starts, rather than masking in Python, when
-    # the native masker isn't installed or isn't this version. See
-    # masking.requireNativeProblem.
-    requireNative: bool = False
+    # Whether a run with masked jobs stops before it starts, rather than masking
+    # in Python: true when the native masker isn't in use for any reason, false
+    # never, and by default (None) only when it is installed but another
+    # version. See masking.requireNativeProblem.
+    requireNative: Optional[bool] = None
     # Tables no job copies, on purpose: connection alias -> table -> why. What
     # `bauta coverage` reads, so a table left out is a decision on the page
     # rather than something nobody noticed.

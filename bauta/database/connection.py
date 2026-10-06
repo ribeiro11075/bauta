@@ -5,7 +5,7 @@ from types import TracebackType
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type
 
 from .driver import Connection, Cursor
-from .values import WANTS_COLUMN_TYPES, ValuePreparer, prepareParameters
+from .values import WANTS_COLUMN_TYPES, ValuePreparer, decodedJson, prepareParameters, refuseNonFinite
 from ..configuration import (WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseConfig, DatabaseType, DuckDBConnection, FilesConnection,
                              IcebergConnection, SQLiteConnection, isSchemePath)
 from .dialects import ColumnDefinition, DatabaseDialect, DuckDBDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
@@ -497,7 +497,8 @@ class Database:
         with chunks:
             firstChunk = next(chunks, [])
 
-        return columns, list(firstChunk)
+        # JSON parsed, since it is classified rather than loaded; see decodedJson.
+        return columns, decodedJson(firstChunk, getattr(chunks, 'description', None), self.type)
 
 
     def _getColumnBuckets(self, table: str, columns: Optional[List[str]] = None) -> Tuple[List[str], List[str], List[str]]:
@@ -539,6 +540,18 @@ class Database:
         return self._preparers[table]
 
 
+    _DISPLAY_NAMES = {DatabaseType.MYSQL: 'MySQL', DatabaseType.MARIADB: 'MariaDB', DatabaseType.MSSQL: 'SQL Server', DatabaseType.ORACLE: 'Oracle',
+                      DatabaseType.SQLITE: 'SQLite'}
+
+    def _refuseUnloadable(self, table: str, batch: List[Tuple[Any, ...]], columns: Sequence[str], columnTypes: Optional[Sequence[Any]]) -> None:
+        """Raises UnloadableValueError for a float the target can't hold; see
+        DatabaseDialect.REFUSED_FLOATS.
+        """
+
+        refuseNonFinite(self.dialect.REFUSED_FLOATS, batch, columns, table, self._DISPLAY_NAMES.get(self.type, self.type.value),
+                        lambda index: columnTypes is not None and index < len(columnTypes) and self.dialect.holdsNonFinite(columnTypes[index]))
+
+
     def insert(self, table: str, data: List[Tuple[Any, ...]], chunkSize: int = 100, columns: Optional[List[str]] = None) -> None:
         """`columns` defaults to all of the table's, in its order; `data` must
         match. Each batch uses the dialect's bulk path where it has one, and
@@ -555,7 +568,9 @@ class Database:
         preparer = self._preparer(table)
         for batch in self._batches(data, chunkSize):
             batch = preparer.prepare(batch, columnTypes)
+            self._refuseUnloadable(table, batch, catalogColumns, columnTypes)
             if not self.dialect.bulkInsert(self.cursor, statementTable, resolvedColumns, batch):
+                self.dialect.bindTypes(self.cursor, columnTypes)
                 self.cursor.executemany(query, batch)
             self.connection.commit()
 
@@ -574,6 +589,7 @@ class Database:
         # rest, collapsing it was work thrown away.
         canCollapse = len(keyIndexes) == len(primaryKeyColumns) and type(self.dialect).bulkUpsert is not DatabaseDialect.bulkUpsert
 
+        catalogColumns = allColumns
         allColumns, primaryKeyColumns, nonPrimaryKeyColumns = self.quoted(allColumns), self.quoted(primaryKeyColumns), self.quoted(nonPrimaryKeyColumns)
         statementTable = self.statementName(table)
         query = self.dialect.upsertQuery(table=statementTable, allColumns=allColumns, primaryKeyColumns=primaryKeyColumns,
@@ -582,11 +598,13 @@ class Database:
         preparer = self._preparer(table)
         for batch in self._batches(data, chunkSize):
             batch = preparer.prepare(batch, columnTypes)
+            self._refuseUnloadable(table, batch, catalogColumns, columnTypes)
             loaded = False
             if canCollapse:
                 lastPerKey = list({tuple(row[index] for index in keyIndexes): row for row in batch}.values())
                 loaded = self.dialect.bulkUpsert(self.cursor, statementTable, allColumns, primaryKeyColumns, nonPrimaryKeyColumns, lastPerKey)
             if not loaded:
+                self.dialect.bindTypes(self.cursor, columnTypes)
                 self.cursor.executemany(query, batch)
             self.connection.commit()
 

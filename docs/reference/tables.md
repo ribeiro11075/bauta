@@ -20,6 +20,10 @@ CREATE TABLE bauta_history (
     started_at DOUBLE PRECISION,
     finished_at DOUBLE PRECISION,
     error VARCHAR(2000),
+    read_seconds DOUBLE PRECISION,
+    mask_seconds DOUBLE PRECISION,
+    write_seconds DOUBLE PRECISION,
+    throttled_seconds DOUBLE PRECISION,
     PRIMARY KEY (run_id, job)
     )
 
@@ -30,6 +34,15 @@ CREATE TABLE bauta_manifest (
     content VARCHAR(2000) NOT NULL,
     PRIMARY KEY (run_id, part)
     )
+```
+
+The four `_seconds` columns of `bauta_history` hold how long each completed job was busy [reading, masking and writing](../guides/watch-what-ran.md#where-the-time-went), and waiting on a read limit. A table made by 0.2.4 or earlier works without them, and records the rest; add all four to keep them too:
+
+```sql
+ALTER TABLE bauta_history ADD read_seconds DOUBLE PRECISION
+ALTER TABLE bauta_history ADD mask_seconds DOUBLE PRECISION
+ALTER TABLE bauta_history ADD write_seconds DOUBLE PRECISION
+ALTER TABLE bauta_history ADD throttled_seconds DOUBLE PRECISION
 ```
 
 A manifest is stored in pieces of `content`, in `part` order, because its JSON can be longer than any one text type every database shares. See [manifests in a table](../guides/keep-a-manifest.md#in-a-table).

@@ -11,12 +11,13 @@ from .models import (FILE_STRATEGIES, WATERMARK_PLACEHOLDER, BaseJobConfig, Conf
                      InsertStrategy, MaskingConfig, NameRuleConfig, PartitionsConfig, StorageLocation, TableLocation, ValueRuleConfig, connectionConfig, filePathProblem,
                      findCycle, isLake, partitionLimitProblems, targetKind, targetProblems)
 from .columnTypes import ColumnType, parseColumnType
-from .files import INCLUDE_KEY, JobsDocument, loadYamlFile, readJobsFile
+from .files import INCLUDE_KEY, JobsDocument, loadYamlFile, parseYaml, readJobsFile
 
 __all__ = [
     'INCLUDE_KEY',
     'JobsDocument',
     'loadYamlFile',
+    'parseYaml',
     'readJobsFile',
     'anchorPaths',
     'isSchemePath',

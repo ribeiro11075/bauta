@@ -62,6 +62,9 @@ class SQLiteDialect(_OnConflictDialect):
 
     databaseType = DatabaseType.SQLITE
 
+    # It stores NaN as NULL, without a word; the infinities it keeps.
+    REFUSED_FLOATS = frozenset({'nan'})
+
     def openConnection(self, settings: DatabaseConfig) -> Any:
 
         import sqlite3

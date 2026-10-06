@@ -4,6 +4,7 @@ jobs, history and verify-manifest.
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import logging
@@ -144,21 +145,108 @@ def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile
     manifest.update(tool={'name': 'bauta', 'version': _toolVersion()}, configuration=configuration)
 
     signingKey = os.environ.get(arguments.manifest_key_variable)
-    manifest = sealManifest(manifest, signingKey=signingKey)
 
     if isinstance(location, Path):
+        from ..jobs.memory import exclusiveLock
+
         location.parent.mkdir(parents=True, exist_ok=True)
-        location.write_text(json.dumps(manifest, indent=2) + '\n')
-        where = str(location)
+        # `run --job` runs go side by side, each with its own jobs: each
+        # adds its jobs to the file under this lock, where each used to
+        # replace it with only its own.
+        with exclusiveLock(location.with_name(location.name + '.lock')):
+            destination = location
+            if arguments.job:
+                manifest, destination = _mergedManifest(location, manifest, signingKey, arguments.manifest_key_variable, log)
+            _writeAtomically(destination, json.dumps(sealManifest(manifest, signingKey=signingKey), indent=2) + '\n')
+        where = str(destination)
     else:
         from ..jobs.reporting import DatabaseManifests, newRunId
 
         runId = newRunId()
+        manifest = sealManifest(manifest, signingKey=signingKey)
         DatabaseManifests(_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['manifest']).write(manifest, runId)
         where = '{}, run {}'.format(_describeLocation(location), runId)
 
     log.logging.info('Wrote the masking manifest for {} job(s) to {}, {}'.format(
         len(manifest['jobs']), where, 'signed' if signingKey else 'unsigned (set ${} to sign it)'.format(arguments.manifest_key_variable)))
+
+
+def _writeAtomically(path: Path, text: str) -> None:
+    """Replaces `path` with `text` in one step, so a reader -- or a run dying
+    part-way -- never sees half a file.
+    """
+
+    temporary = path.with_name('.{}.{}.tmp'.format(path.name, os.getpid()))
+    try:
+        temporary.write_text(text)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _setAside(location: Path, label: str) -> Path:
+    """Where to keep a manifest file beside `location` under `label`, stamped
+    with the time in UTC so a second one never replaces the first.
+    """
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+
+    return location.with_name('{}.{}-{}'.format(location.name, label, stamp))
+
+
+def _mergedManifest(location: Path, manifest: Dict[str, Any], signingKey: Optional[str], keyVariable: str,
+                    log: Log) -> Tuple[Dict[str, Any], Path]:
+    """`manifest`, for a `run --job`, with the jobs the file at `location`
+    already records and this run didn't run, and where to write it. Each job
+    keeps when it was masked and by which implementation, since they now
+    differ by job.
+
+    What is carried over is re-sealed, so it must verify first, and a file
+    that doesn't is never destroyed, being what an auditor would examine:
+
+    - altered, or unreadable: moved aside as `<name>.rejected-<time>`, and
+      the file started afresh with this run's jobs;
+    - signed with a key this run can't check -- another key, or none set --
+      left as it is, since that is a task set up wrong rather than a file
+      tampered with, and one such task would otherwise empty it of every
+      other job's entry. This run's manifest goes beside it, as
+      `<name>.unmerged-<time>`.
+    """
+
+    for entry in manifest['jobs']:
+        entry.update(generatedAt=manifest['generatedAt'], maskedBy=manifest['maskedBy'])
+
+    if not location.exists():
+        return manifest, location
+
+    try:
+        earlier = json.loads(location.read_text())
+        verification = verifyManifest(earlier, signingKey=signingKey)
+        why = None if verification.digestValid else 'it was altered'
+    except (ValueError, OSError) as error:
+        verification, why = None, 'it could not be read: {}'.format(error)
+
+    if why is not None:
+        rejected = _setAside(location, 'rejected')
+        os.replace(location, rejected)
+        log.logging.error('{} does not verify ({}); kept as {} for examination, and started afresh with this run\'s job(s)'.format(
+            location, why, rejected))
+        return manifest, location
+
+    assert verification is not None
+    if verification.signed and not verification.signatureValid:
+        unmerged = _setAside(location, 'unmerged')
+        log.logging.error('{} is signed with key {}, which {}, so this run\'s job(s) cannot be added to it; left as it is, and this run\'s '
+                          'manifest written to {}'.format(location, verification.signingKeyFingerprint,
+                                                          'is not this run\'s' if signingKey else '${} is not set to check'.format(keyVariable),
+                                                          unmerged))
+        return manifest, unmerged
+
+    ran = {entry['job'] for entry in manifest['jobs']}
+    carried = [dict(entry, generatedAt=entry.get('generatedAt', earlier.get('generatedAt')), maskedBy=entry.get('maskedBy', earlier.get('maskedBy')))
+               for entry in earlier.get('jobs', []) if entry.get('job') not in ran]
+
+    return dict(manifest, jobs=sorted(carried + manifest['jobs'], key=lambda entry: str(entry['job']))), location
 
 
 def _readManifest(arguments: argparse.Namespace) -> Tuple[str, Dict[str, Any]]:
@@ -303,11 +391,11 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
         location = _resolveLocation(arguments, setting, getattr(jobsFile, setting))
         print('{}: {}'.format(setting, _describeLocation(location) if location else missing))
 
-    from ..masking import MASKING_THREADS_VARIABLE, availableCores, maskingThreadsFor, nativeVersion
+    from ..masking import MASKING_THREADS_VARIABLE, availableCores, maskingThreadsFor, nativeUnavailableReason, nativeVersion
 
     if any(job.masking is not None for job in jobsFile.jobs.values()):
         if nativeVersion() is None:
-            print('masking: in Python, one thread per job (pip install "bauta[native]" to use more)')
+            print('masking: in Python, one thread per job, about ten times slower than the native masker: {}'.format(nativeUnavailableReason()))
         else:
             concurrent = max(1, min(jobsFile.workers, sum(job.active for job in jobsFile.jobs.values())))
             source = '${}={}'.format(MASKING_THREADS_VARIABLE, os.environ[MASKING_THREADS_VARIABLE]) if os.environ.get(MASKING_THREADS_VARIABLE) \

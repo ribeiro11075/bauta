@@ -125,6 +125,15 @@ def nullIf(value: Any, *sentinels: Any) -> Any:
     return None if value in sentinels else value
 
 
+def nullIfNotFinite(value: Any) -> Any:
+    """NULL for a float that is NaN or infinite, which MySQL, MariaDB, SQL
+    Server and an Oracle NUMBER can't hold, and SQLite stores as NULL
+    anyway. `nullIf` can't do it: NaN equals nothing, itself included.
+    """
+
+    return None if isinstance(value, float) and not math.isfinite(value) else value
+
+
 def defaultIfNull(value: Any, default: Any) -> Any:
     """`default` where the value is NULL: `defaultIfNull('unknown')`."""
 

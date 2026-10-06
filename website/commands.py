@@ -34,6 +34,7 @@ GUIDES = {
     'schema': ('Copy a subset', '../../guides/copy-a-subset.md#schema-creating-the-targets-tables'),
     'synthesize': ('Generate data', '../../guides/generate-data.md'),
     'clear': ('Copy a subset', '../../guides/copy-a-subset.md#clear-emptying-the-copy-before-a-refresh'),
+    'bench': ('Make it faster', '../../guides/make-it-faster.md#measure-a-job'),
     }
 
 HEADER = '<!-- Generated from the parser by website/commands.py. Change the flag, then run `python website/commands.py`. -->\n'

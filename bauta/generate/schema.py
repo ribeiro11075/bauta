@@ -11,7 +11,7 @@ import re
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from ..configuration import DatabaseType
-from ..database.dialects import ColumnDefinition, ForeignKey, bareName, quoteFolded, quoteFoldedTable, splitTableName, tooLongName
+from ..database.dialects import ColumnDefinition, ForeignKey, bareName, quoteFolded, quoteFoldedTable, quoteIdentifier, splitTableName, tooLongName
 
 
 class SchemaError(Exception):
@@ -35,6 +35,10 @@ class PortableType(NamedTuple):
     precision: Optional[int] = None
     scale: Optional[int] = None
     note: Optional[str] = None
+    # The source's own type, for a target of the same kind, where the
+    # portable kind is a stand-in: a PostgreSQL array, `integer[]`, is text
+    # anywhere else. `note` then says what other targets get.
+    native: Optional[str] = None
 
 
 class TableDefinition(NamedTuple):
@@ -83,6 +87,8 @@ def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> Portable
     """Maps one source column to the portable vocabulary."""
 
     name = column.dataType.lower().strip()
+    if sourceType == DatabaseType.POSTGRESQL and name.endswith('[]'):
+        return PortableType('text', native=column.dataType, note='PostgreSQL array {}; mapped to text'.format(column.dataType))
     base = re.sub(r'\(.*?\)', '', name).strip()
     # MySQL and MariaDB report `int unsigned` as one type name; every other
     # attribute (`zerofill`, character sets) is dropped the same way.
@@ -528,14 +534,24 @@ def _createTable(sourceType: DatabaseType, targetType: DatabaseType, table: Tabl
     lines = []
     notes = []
 
+    # Across databases, a column is folded as the target folds a bare name, so
+    # it answers to the same name unquoted there. Between two of the same,
+    # it keeps the catalog's spelling: "Order" became order, PostgreSQL to
+    # PostgreSQL, and the copy no longer matched production's columns.
+    def columnName(name: str) -> str:
+        return quoteIdentifier(targetType, name) if sourceType == targetType else quoteFolded(targetType, name)
+
     def quoted(names: Iterable[str]) -> str:
-        return ', '.join(quoteFolded(targetType, name) for name in names)
+        return ', '.join(columnName(name) for name in names)
 
     for column in table.columns:
         portable = portableType(sourceType, column)
         rendered, renderNote = renderType(targetType, portable, column.name.upper() in keyColumns)
+        if portable.native is not None and sourceType == targetType:
+            rendered, renderNote = portable.native, None
+            portable = portable._replace(note=None)
         nullable = column.nullable and column.name.upper() not in {key.upper() for key in table.primaryKey}
-        lines.append('{} {}{}'.format(quoteFolded(targetType, column.name), rendered, '' if nullable else ' NOT NULL'))
+        lines.append('{} {}{}'.format(columnName(column.name), rendered, '' if nullable else ' NOT NULL'))
         for note in (portable.note, renderNote):
             if note:
                 notes.append('{}: {}'.format(column.name, note))

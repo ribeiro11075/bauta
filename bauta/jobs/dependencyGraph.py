@@ -29,6 +29,9 @@ class JobOutcome(NamedTuple):
     # For a masked job that completed: the policy applied to each column, as
     # plain dicts so it pickles. See masking.buildMaskingManifest.
     masking: Optional[Dict[str, Any]] = None
+    # For a job that completed: seconds busy reading, masking, writing and
+    # waiting on a read limit. See throttle.StageTimes.
+    stages: Optional[Dict[str, float]] = None
 
     @property
     def durationSeconds(self) -> float:

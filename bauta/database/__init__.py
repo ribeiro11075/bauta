@@ -4,8 +4,10 @@ driver, `values` what each Python type is sent to each database as, and
 `dialects` holds everything else that differs between the seven.
 """
 from .connection import DIALECTS, Database
+from .values import UnloadableValueError
 
 __all__ = [
     'Database',
     'DIALECTS',
+    'UnloadableValueError',
     ]

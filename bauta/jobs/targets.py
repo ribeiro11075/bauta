@@ -55,6 +55,13 @@ class LoadTarget:
 
         raise NotImplementedError
 
+    def holdJson(self, indexes: Sequence[int]) -> None:
+        """Says which of the columns begin() was given hold JSON text --
+        a PostgreSQL, MySQL or DuckDB JSON column's, kept as it came or
+        masked and encoded as JSON (see pipeline._encodeJson) -- for a target
+        that writes JSON differently from text. Nothing, for a database.
+        """
+
     def write(self, rows: List[Any]) -> None:
 
         raise NotImplementedError

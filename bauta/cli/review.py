@@ -1,5 +1,5 @@
-"""The commands that report without moving data: audit, coverage and
-verify-references.
+"""The commands that report without moving data: audit, coverage,
+verify-references and bench.
 """
 from __future__ import annotations
 
@@ -270,3 +270,38 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
         return EXIT_JOBS_DID_NOT_SUCCEED
 
     return EXIT_SUCCESS
+
+
+def _commandBench(arguments: argparse.Namespace, log: Log) -> int:
+    """Reads up to --rows of each job's query from its real source,
+    transforming and masking as `run` would and writing nothing, and reports
+    how fast each stage went. Exits 1 if any job couldn't be measured.
+    """
+
+    from ..configuration import ConfigurationError
+    from ..masking import effectiveMaskingThreads, maskingThreadsFor, setMaskingThreads
+    from ..review.bench import benchJob, benchReport, masker, renderBench
+
+    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
+    jobs = {name: job for name, job in _selectJobs(jobsFile.jobs, arguments.job, log).items() if arguments.job or job.active}
+    if not jobs:
+        raise UsageError('no active jobs to measure; name one with --job')
+
+    try:
+        effectiveMaskingThreads(jobsFile.maskingThreads)
+    except ValueError as error:
+        raise ConfigurationError(str(error)) from None
+    # As many as `run` would give a job running alone.
+    threads = maskingThreadsFor(jobsFile.maskingThreads, 1)
+    setMaskingThreads(threads)
+
+    results = []
+    for name, job in jobs.items():
+        log.logging.info('{}: reading up to {:,} row(s) from {}'.format(name, arguments.rows, job.sourceConnection))
+        results.append(benchJob(name, job, connectionConfiguration, arguments.rows))
+
+    maskerLine = masker(threads)
+    text = json.dumps(benchReport(results, maskerLine), indent=2) + '\n' if arguments.format == 'json' else renderBench(results, maskerLine)
+    _writeOutput(text, arguments.output)
+
+    return EXIT_JOBS_DID_NOT_SUCCEED if any(result.error is not None for result in results) else EXIT_SUCCESS

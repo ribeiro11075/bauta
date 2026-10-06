@@ -67,8 +67,10 @@ class FileTarget(ColumnarTarget):
     def _newParts(self) -> Parts:
 
         jsonColumns = {column.name for column in self.columns if column.documents}
+        rawColumns = {column.name for column in self.columns if column.jsonText}
 
-        return Parts(self.store, self.stagingPath, self.runId, self._settleSchema(), self.partSettings, jsonColumns, self.jobConfig.singleFile)
+        return Parts(self.store, self.stagingPath, self.runId, self._settleSchema(), self.partSettings, jsonColumns, self.jobConfig.singleFile,
+                     rawColumns)
 
 
     def _writeTable(self, table: Any) -> None:

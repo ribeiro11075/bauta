@@ -1685,3 +1685,36 @@ def test_json_refuses_what_is_not_a_document_without_echoing_it():
         with pytest.raises(MaskingError, match=message) as error:
             _json({'fields': {'a': 'null'}}, [value])
         assert 'ann' not in str(error.value)
+
+
+def test_a_json_document_masks_the_same_as_text_as_it_did_parsed():
+    """PostgreSQL's json and jsonb now arrive as their text, as MySQL's do,
+    where psycopg handed over dicts. The json strategy must mask a document
+    the same either way, or every masked jsonb column's masks would change.
+    """
+    import json
+
+    from bauta.masking import MaskingPlan
+
+    document = {'email': 'ana@corp.example', 'phone': 5550109999, 'score': 0.1, 'tiny': 1e-07, 'tags': ['call 555-010-9999'], 'ok': True}
+    plan = MaskingPlan(key='a-json-masking-test-key-0123456789', columns={'doc': {'strategy': 'json', 'fields': {'email': {'strategy': 'email'}}}})
+
+    parsed = plan.bind(['doc']).apply([(document,)])[0][0]
+    asText = plan.bind(['doc']).apply([(json.dumps(document),)])[0][0]
+
+    assert json.loads(asText) == parsed
+
+
+def test_a_json_number_left_unmasked_is_written_as_it_came():
+    """Through a float, 12345678901234567890.123 came back as
+    12345678901234567000, and 1.10 as 1.1.
+    """
+    from bauta.masking import MaskingPlan
+
+    plan = MaskingPlan(key='a-json-masking-test-key-0123456789', columns={'doc': {'strategy': 'json', 'fields': {'email': {'strategy': 'email'}}}})
+    text = '{"n": 12345678901234567890.123, "p": 1.10, "e": 1.5E+3, "email": "ana@corp.example", "list": [2.50, {"x": -0.0}]}'
+
+    masked = plan.bind(['doc']).apply([(text,)])[0][0]
+
+    assert masked.startswith('{"n": 12345678901234567890.123, "p": 1.10, "e": 1.5E+3, "email": "u')
+    assert masked.endswith('"list": [2.50, {"x": -0.0}]}')

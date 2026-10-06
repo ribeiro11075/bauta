@@ -15,6 +15,8 @@ chunkSize  >  2 x latency / per-row masking cost
 
 — a few thousand rows at 5 ms, about six thousand at 25 ms. Cheap policies need *larger* chunks, having less work to hide the wait behind. With the native masker, reading, masking and writing also overlap; a job then holds four chunks.
 
+To see which of these sets a job's pace, [`bauta history`](watch-what-ran.md#where-the-time-went) shows the seconds each run spent reading, masking and writing, and [`bauta bench`](#measure-a-job) measures reading and masking against your own source before anything is copied.
+
 If a job is still slow, look at the database: the target's indexes and constraints during a bulk load, and a stage table (`targetTableStage`) so the final table is written once. And for one very large table, where one connection is the limit, read it as several [partitions](#partitions) at once.
 
 
@@ -46,7 +48,9 @@ Wheels are published for Linux (x86-64 and ARM, glibc 2.17 or newer) and macOS (
 
 **Only the matching version is used.** `bauta-rs` is released with every version of `bauta`, and the extra pins the one that matches. Any other version is ignored with a warning and masking runs in Python, since two versions aren't certain to mask identically, and a difference would reach a deployment as joins that quietly stop matching. `maskingImplementation`, recorded with each job's key fingerprint and in the manifest, says which one masked.
 
-**Upgrading `bauta` alone leaves the extension behind**, and every masked job about ten times slower, with only a warning in the log to say so. Where a run has a window to keep, set [`requireNative: true`](../reference/jobs.md#file-level) in `jobs.yaml` (or `BAUTA_REQUIRE_NATIVE=1`): a run with masked jobs then stops before it starts, saying why the extension isn't in use, and `bauta validate` fails the same way.
+**Upgrading `bauta` alone leaves the extension behind**, which would make every masked job about ten times slower. So a run with masked jobs stops before it starts where the extension is installed but another version, naming the version to install, and `bauta validate` fails the same way. [`requireNative: false`](../reference/jobs.md#file-level) in `jobs.yaml`, or `BAUTA_REQUIRE_NATIVE=0`, masks in Python instead.
+
+Where the extension was never installed, or `BAUTA_NATIVE=0` turns it off, a run masks in Python and says so as it starts, and `validate` and `bauta --version` say why. Where a run has a window to keep, `requireNative: true` (or `BAUTA_REQUIRE_NATIVE=1`) stops it in those cases too.
 
 From a clone, `pip install ./mask-rs/py` builds the extension at the checkout's version.
 
@@ -175,3 +179,52 @@ A job holds the places its connections had free, up to its share, from the momen
 partitions: reading events as 4 slices of id at once, set by its share of the cores (4)
 partitions: reading customers as one stream: its target has no primary key to slice by
 ```
+
+
+## Measure a job
+
+`bauta bench` reads each job's query from its real source, transforms and masks it as `run` would, and writes nothing. It says how fast each stage went, and which one would set a run's pace:
+
+```
+bauta bench --job maskCustomers --rows 200000
+```
+
+```
+masker: bauta-rs 0.2.4, 1 thread(s)
+Reading and masking were measured in turn, and nothing was written. A run overlaps them, so whichever is slower sets its pace,
+unless writing to the target is slower still.
+
+JOB                                ROWS  CONNECT  READ ROWS/S  MASK ROWS/S  WAITED  SETS THE PACE
+maskCustomers                  200,000+     0.04      412,000      134,000     0.0  masking
+
++ the query returns more rows than were read; --rows reads more.
+```
+
+- **`--rows`** (default 100,000) is how many rows of each query to read, to the next whole chunk. A query that returns fewer is read whole, and its row count has no `+`.
+- **`--job`** names a job to measure, and repeats; without it, every active job is.
+- **`READ ROWS/S`** covers running the query and fetching its rows over the network, and nothing else. **`MASK ROWS/S`** covers transforms and masking, on the threads `maskingThreads` would give a job running alone. **`CONNECT`** is seconds to open the connection.
+- **What it doesn't measure** is the write: nothing touches the target. Where `bench` says reading or masking is fast enough but a run is slow, the target is the limit; `bauta history` shows its `WRITE` seconds after a run.
+- **An incremental job** is read from its `watermarkInitial`, as its first run or a full refresh would read it. **A job with partitions** is read as one stream.
+- **It reads production**, as a run does, and the source's [read limit](#limiting-what-a-job-reads) applies: `WAITED` is seconds it held `bench` back. `--format json` gives the same as JSON, with the seconds of each stage.
+
+It exits 1 if a job couldn't be measured, naming why, and measures the others.
+
+
+## Limiting what a job reads
+
+`maxRowsReadPerSecond` on a connection caps how many rows a second jobs read from it, all of them together:
+
+```yaml
+production:
+  type: postgresql
+  ...
+  maxRowsReadPerSecond: 50000
+```
+
+- **One budget for the connection.** Every job reading from it, and every [partition](#partitions) of each, shares it, across the run's processes. Two jobs reading at once each get about half; one alone gets all of it.
+- **A chunk at a time.** A job reads a chunk, then waits for as long as its rows owe before reading the next, so the rate holds on average over a few chunks. A pause earns at most a second's worth of rows to read at once.
+- **What it holds back is reading.** With the native masker, masking and writing go on during the wait, and the time spent waiting is recorded as `WAITED` in [history](watch-what-ran.md#where-the-time-went), apart from the reading itself.
+- **What it doesn't count.** Rows read by `discover`, `audit --connect`, `coverage` and the other commands that sample a source aren't limited, and neither are writes. `bauta bench` honours the limit.
+
+Choose it from what the source can spare, not what a run would like: a limit below what a job could otherwise read makes the job take longer, by exactly as much as `WAITED` says. With `--forever`, the cycles of a run share the limit too.
+

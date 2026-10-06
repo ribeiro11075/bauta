@@ -48,11 +48,24 @@ class PostgreSQLDialect(_OnConflictDialect):
     def openConnection(self, settings: DatabaseConfig) -> Any:
 
         import psycopg
+        from psycopg.types.string import TextLoader
 
         # ClientCursor writes parameters into the statement, as the other
         # drivers do, rather than binding them server-side: a server-side
         # parameter takes one fixed type, which a value can't always fit.
-        return psycopg.connect(**self.connectArguments(settings), cursor_factory=psycopg.ClientCursor)
+        connection = psycopg.connect(**self.connectArguments(settings), cursor_factory=psycopg.ClientCursor)
+
+        # json and jsonb as their text, as MySQL, SQLite and DuckDB return
+        # them, rather than parsed into Python. Parsed, a document lost what
+        # it was: the string "123" was loaded back as the number 123, a
+        # number went to a jsonb column as an integer and failed the job,
+        # and every number with a fraction passed through a float, so
+        # 12345678901234567890.123 arrived as 12345678901234567000. Arrays of
+        # either hold their elements as text the same way.
+        for name in ('json', 'jsonb'):
+            connection.adapters.register_loader(name, TextLoader)
+
+        return connection
 
 
     def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
@@ -203,7 +216,11 @@ class PostgreSQLDialect(_OnConflictDialect):
 
     def columnsQuery(self) -> str:
 
-        return ("SELECT column_name, data_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable "
+        # An array as its element type and size, `character varying(20)[]`,
+        # which information_schema reports only as ARRAY.
+        return ("SELECT column_name, CASE WHEN data_type = 'ARRAY' THEN (SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a "
+                "WHERE a.attrelid = (quote_ident(table_schema) || '.' || quote_ident(table_name))::regclass AND a.attname = column_name) "
+                "ELSE data_type END, character_maximum_length, numeric_precision, numeric_scale, is_nullable "
                 "FROM information_schema.columns WHERE table_schema = COALESCE({}::text, current_schema()) "
                 "AND table_name = {}::text ORDER BY ordinal_position")
 

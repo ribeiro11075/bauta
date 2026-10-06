@@ -13,7 +13,7 @@
 - **Fast:** a million rows of six masked columns, two of them one-to-one keys, in under 8 seconds on one core with the optional native masker, and 74 without; more cores for wide tables. Either way the masks are the same.
 - **Incremental loads:** extract only what changed since the last successful run.
 - **A dependency graph:** jobs run in order, concurrently where they can, each in its own process with an optional timeout.
-- **Operable:** webhook alerts; run state, history and manifests each in a file or a table; and passwords from a command for cloud IAM tokens.
+- **Operable:** webhook alerts; run state, history and manifests each in a file or a table, with the seconds each job spent reading, masking and writing; a read limit per source, so a copy takes no more of production than it was given; and passwords from a command for cloud IAM tokens.
 - **No infrastructure:** a `pip install`, some YAML, and a command you run from cron.
 
 
@@ -91,6 +91,7 @@ bauta audit              report what each job does with data, and what to questi
 bauta coverage           list a source database's tables and what the jobs do with each
 bauta verify-manifest    check a masking manifest is unaltered, and who signed it
 bauta verify-references  count rows in the copy whose foreign key points at nothing
+bauta bench              measure how fast each job reads and masks from its real source, writing nothing
 
 bauta --version          print the version, and which masker it would use
 ```
@@ -102,7 +103,7 @@ bauta --version          print the version, and which masker it would use
 | `2` | Invalid configuration or usage. |
 | `130` | Interrupted by a signal: running jobs finished, the rest were skipped. |
 
-`run` makes one pass and exits, so it fits under cron or a Kubernetes CronJob. A second `run` sharing the same run state refuses to start while the first is still going. `bauta <command> --help` lists every flag.
+`run` makes one pass and exits, so it fits under cron or a Kubernetes CronJob. A second `run` sharing the same run state refuses to start while the first is still going, except that runs of different jobs with `--job`, as an orchestrator starts one task per job, go side by side; the same job never runs twice at once (see [overlapping runs](docs/guides/run-on-a-schedule.md#run-state)). `bauta <command> --help` lists every flag.
 
 
 Every command and flag is on its own page under [commands](docs/reference/commands/index.md).

@@ -108,6 +108,7 @@ Validation raises `ConfigurationError`. `runDataJobs` also raises it before star
 | `attempts` | How many tries it took. |
 | `durationSeconds` | Wall-clock time. |
 | `masking` | For a masked job that completed, the policy applied to each column, as plain dicts. |
+| `stages` | For a job that completed, the seconds it was busy at each stage, as a dict of `read`, `mask`, `write` and `throttled`. See [where the time went](../guides/watch-what-ran.md#where-the-time-went). |
 
 `RunResult.maskingManifest(jobsFile.jobs)` builds the [masking manifest](../guides/keep-a-manifest.md#what-it-records) for the run.
 

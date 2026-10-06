@@ -13,6 +13,8 @@ class MySQLDialect(DatabaseDialect):
 
     databaseType = DatabaseType.MYSQL
 
+    REFUSED_FLOATS = frozenset({'nan', 'inf'})
+
     _NUMBER_TYPES = {'INT', 'BIGINT'}
     _DATE_TYPES = {'DATETIME', 'TIMESTAMP', 'DATE'}
     _TEXT_TYPES = {'TEXT', 'VARCHAR', 'CHAR'}

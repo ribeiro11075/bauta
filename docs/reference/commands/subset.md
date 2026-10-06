@@ -20,7 +20,7 @@ See [Copy a subset](../../guides/copy-a-subset.md) for how to use it.
 | `--where WHERE` | required | SQL filter on the root table, e.g. "created_at >= '2026-01-01'". |
 | `--no-children` | off | Copy only the root rows and what they reference, not rows referencing them. |
 | `--ignore-foreign-key TABLE.COLUMN` |  | Do not follow this foreign key (repeatable); needed to break a cycle. |
-| `--mask` | off | Also propose a masking policy for every table, as discover does. |
+| `--mask` | off | Also propose a masking policy for every table, as discover does; on by default where --target has requireMasking. |
 | `--sample SAMPLE` | `1000` | Rows sampled per table to classify columns. |
 | `--key-variable KEY_VARIABLE` | `MASKING_KEY` | Environment variable the generated jobs read the masking key from. |
 | `--chunk-size CHUNK_SIZE` | `5000` | chunkSize for the generated jobs. |

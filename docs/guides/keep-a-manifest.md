@@ -3,6 +3,13 @@
 
 With `manifest` set in `jobs.yaml`, each run writes a sealed record of what was masked, how, and under which key fingerprint: a file, replaced by each run, or a table, which keeps every run's. It's what an auditor asks for.
 
+**With `run --job`**, as an orchestrator's [task per job](run-from-an-orchestrator.md) runs, a file isn't replaced: each run adds its jobs to it, replacing only their own earlier entries, under a lock, so runs side by side don't drop each other's jobs. Each job's entry then carries its own `generatedAt` and `maskedBy`. The file is re-sealed each time, so what it held must verify first, its signature too when it has one. A file that doesn't is never overwritten, being what an auditor would want to examine, and the run logs an error saying what it did:
+
+- **Altered, or unreadable:** it is moved aside as `manifest.json.rejected-<time>`, and the file started afresh with that run's jobs.
+- **Signed with a key the run can't check** -- another key, or `BAUTA_MANIFEST_KEY` unset: that is a task set up wrong, not a file tampered with, so the file is left as it is, keeping every other job's entry, and the run's manifest is written beside it as `manifest.json.unmerged-<time>`.
+
+A file is always replaced in one step, so it is never read half-written.
+
 ```yaml
 manifest: ../transaction/manifest.json   # a file, relative to jobs.yaml
 manifest:

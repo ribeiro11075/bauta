@@ -11,6 +11,7 @@ import datetime
 import decimal
 import itertools
 import json
+import math
 import uuid
 from operator import itemgetter
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
@@ -18,9 +19,43 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from ..configuration import DatabaseType
 
 # A conversion takes the value and the type code of the column it is going
-# to -- known on PostgreSQL only, see WANTS_COLUMN_TYPES -- and returns what
+# to -- known on PostgreSQL and Oracle only, see WANTS_COLUMN_TYPES -- and returns what
 # the driver is sent.
 Conversion = Callable[[Any, Any], Any]
+
+
+class UnloadableValueError(ValueError):
+    """A value the target column can't hold, found before it is sent. Never
+    retried: the same rows would fail the same way. Names the column and the
+    kind of value, never the value.
+    """
+
+
+_NON_FINITE_NAMES = {'nan': 'NaN', 'inf': 'an infinity'}
+
+
+def refuseNonFinite(refused: frozenset, rows: Sequence[Sequence[Any]], columns: Sequence[str], table: str, databaseName: str,
+                    holds: Callable[[int], bool]) -> None:
+    """Raises UnloadableValueError for a NaN or infinity in a column of `rows`
+    that `refused` says this database can't hold, unless `holds(index)` says
+    that column can. Only columns holding a float have their values read.
+    """
+
+    if not refused or not rows:
+        return
+
+    for index, column in enumerate(zip(*rows)):
+        if float not in set(map(type, column)) or holds(index):
+            continue
+        for value in column:
+            if type(value) is float and not math.isfinite(value):
+                kind = 'nan' if math.isnan(value) else 'inf'
+                if kind in refused:
+                    raise UnloadableValueError(
+                        '{} column {} was sent {}, which {} cannot hold in it{}. Turn it into NULL with the nullIfNotFinite '
+                        'transform (bauta.transform.builtinTransforms:nullIfNotFinite), or in sourceQuery'.format(
+                            table, columns[index] if index < len(columns) else index + 1, _NON_FINITE_NAMES[kind], databaseName,
+                            ' (it would store it as NULL)' if databaseName == 'SQLite' else ''))
 
 
 def durationText(value: datetime.timedelta) -> str:
@@ -53,8 +88,59 @@ def jsonText(value: Any) -> str:
 # The integers a driver binds as integers: 64 bits, signed.
 _BOUND_INTEGERS = range(-2 ** 63, 2 ** 63)
 
-# The json and jsonb type codes: the PostgreSQL columns a list goes to as JSON.
-_POSTGRESQL_JSON = {114, 3802}
+# The json and jsonb type codes: the PostgreSQL columns a list goes to as JSON,
+# and whose values, read as their text, are JSON documents.
+POSTGRESQL_JSON_TYPES = frozenset({114, 3802})
+_POSTGRESQL_JSON = POSTGRESQL_JSON_TYPES
+
+
+# MySQL's type code for JSON. MariaDB's JSON is LONGTEXT, reported as text,
+# so nothing tells it from a text column.
+MYSQL_JSON_TYPE = 245
+
+
+def jsonColumnIndexes(databaseType: Optional[DatabaseType], description: Optional[Sequence[Sequence[Any]]]) -> List[int]:
+    """The positions of the columns that hold JSON as its text, by what the
+    source's driver reports of each: PostgreSQL's json and jsonb, MySQL's
+    JSON and DuckDB's.
+    """
+
+    def isJson(code: Any) -> bool:
+        if databaseType == DatabaseType.POSTGRESQL:
+            return code in POSTGRESQL_JSON_TYPES
+        if databaseType == DatabaseType.MYSQL:
+            return code == MYSQL_JSON_TYPE
+        if databaseType == DatabaseType.DUCKDB:
+            return str(code).upper() == 'JSON'
+        return False
+
+    return [index for index, column in enumerate(description or ()) if len(column) > 1 and isJson(column[1])]
+
+
+def decodedJson(rows: Sequence[Sequence[Any]], description: Optional[Sequence[Sequence[Any]]],
+                databaseType: Optional[DatabaseType] = DatabaseType.POSTGRESQL) -> List[Tuple[Any, ...]]:
+    """`rows` with each value of a JSON column, which arrives as its text,
+    parsed: an object or array as one, a JSON string as the string, and JSON
+    null as None -- what to classify, for `discover` and `audit`, which read
+    samples and never load them. See jsonColumnIndexes.
+    """
+
+    indexes = jsonColumnIndexes(databaseType, description)
+    if not indexes:
+        return [tuple(row) for row in rows]
+
+    decoded = []
+    for row in rows:
+        values = list(row)
+        for index in indexes:
+            if isinstance(values[index], str):
+                try:
+                    values[index] = json.loads(values[index])
+                except ValueError:
+                    pass
+        decoded.append(tuple(values))
+
+    return decoded
 
 
 def _duration(value: Any, columnType: Any) -> Any:
@@ -136,9 +222,10 @@ CONVERSIONS: Dict[DatabaseType, Dict[type, Optional[Conversion]]] = {
     DatabaseType.DUCKDB: {datetime.timedelta: _duration, int: _wideInteger, bool: None},
     }
 
-# The databases whose conversions depend on the column a value goes to, whose
-# type codes cost a statement per table to read.
-WANTS_COLUMN_TYPES = frozenset({DatabaseType.POSTGRESQL})
+# The databases whose conversions, or binds (DatabaseDialect.bindTypes),
+# depend on the column a value goes to, whose type codes cost a statement per
+# table to read.
+WANTS_COLUMN_TYPES = frozenset({DatabaseType.POSTGRESQL, DatabaseType.ORACLE})
 
 _found: Dict[Tuple[DatabaseType, type], Optional[Conversion]] = {}
 

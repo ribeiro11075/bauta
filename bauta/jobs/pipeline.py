@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import json
 import logging
 import os
 import re
@@ -16,7 +17,8 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Deque, Dict, Generator, Iterable, List, Optional, Sequence, Tuple
 
 from ..configuration import ConfigurationError, ConnectionConfig, DatabaseType, DataJobConfig, FilesConnection, IcebergConnection, targetProblems
-from ..database import Database
+from ..database import Database, UnloadableValueError
+from ..database.values import jsonColumnIndexes
 from ..log import ATTEMPT_FAILED, LOGGER_NAME
 from .fullRefresh import isFullRefresh
 from ..log.scrubbing import describeError
@@ -28,6 +30,7 @@ from .memory import MemoryBackend
 from .partitions import (CoreBudget, automaticCount, boundsQuery, integerBound, maskingThreadsWith, resolveColumn, slicePredicates, splitPoints,
                          wrappedQuery)
 from .targets import LoadTarget, PostLoadError, TableTarget
+from .throttle import StageTimes, readLimitFor, timedChunks
 
 logger = logging.getLogger(LOGGER_NAME)
 
@@ -115,6 +118,7 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
     columnTransforms: Dict[str, List[Transformer]] = {
         column: [resolveTransformer(reference) for reference in references] for column, references in jobConfig.sourceQueryColumnTransforms.items()
         }
+    times = StageTimes()
 
     with Database(connectionSettings=connectionConfiguration[jobConfig.sourceConnection]) as sourceConnection, \
          _openTarget(job, jobConfig, connectionConfiguration[jobConfig.targetConnection]) as target:
@@ -138,7 +142,9 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
         chunks: Optional[Iterable[List[Tuple[Any, ...]]]] = None
         if not explicit:
             logger.debug('Streaming sourceQuery against {} in chunks of {}'.format(jobConfig.sourceConnection, jobConfig.chunkSize))
-            sourceQueryColumns, chunks = sourceConnection.stream(query=sourceQuery, chunkSize=jobConfig.chunkSize, parameters=parameters)
+            with _timed(times, 'read'):
+                # The query runs, and its first chunk is fetched, here.
+                sourceQueryColumns, chunks = sourceConnection.stream(query=sourceQuery, chunkSize=jobConfig.chunkSize, parameters=parameters)
             description = getattr(chunks, 'description', None)
         else:
             # Described without reading a row: the partitions read them.
@@ -162,6 +168,8 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
             logger.debug('Applying transforms to column(s): {}'.format(', '.join(columnTransforms)))
 
         masking = _bindMasking(job, jobConfig, sourceQueryColumns)
+        jsonColumns = _decodedJsonColumns(masking, description, getattr(connectionConfiguration[jobConfig.sourceConnection], 'type', None),
+                                          sourceQueryColumns)
 
         if masking is not None and watermarkIndex is not None and not masking.strategies[watermarkIndex].PASSTHROUGH:
             # Validation refuses this too; asked again here, before a row is
@@ -188,16 +196,21 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
                 maskingModule.setMaskingThreads(threads)
                 logger.debug('Masking each of the {} partitions on its own thread'.format(len(predicates)), extra={'job': job})
 
-        target.begin(sourceQueryColumns, description)
+        with _timed(times, 'write'):
+            target.begin(sourceQueryColumns, description)
+        target.holdJson(jsonColumnIndexes(getattr(connectionConfiguration[jobConfig.sourceConnection], 'type', None), description))
 
         logger.info('Loading into {} a chunk at a time'.format(target.loadName))
 
         try:
             if chunks is not None:
-                rowCount, highWatermark = _loadChunks(chunks, _preparer(transform, masking), target.write, watermarkIndex, target.loadName)
+                limit = readLimitFor(jobConfig.sourceConnection, connectionConfiguration[jobConfig.sourceConnection])
+                rowCount, highWatermark = _loadChunks(timedChunks(chunks, times, limit), _preparer(transform, masking, times=times,
+                                                                                                    jsonColumns=jsonColumns),
+                                                      target.write, watermarkIndex, target.loadName, times=times)
             else:
                 rowCount, highWatermark = _loadPartitions(job, jobConfig, connectionConfiguration, target, sourceQuery, parameters,
-                                                          sourceQueryColumns, predicates, columnTransforms, watermarkIndex)
+                                                          sourceQueryColumns, predicates, columnTransforms, watermarkIndex, times, jsonColumns)
         except Exception as error:
             if masking is not None:
                 _noteIfMaskedValueDoesNotFit(error, job, target.loadName)
@@ -205,30 +218,124 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
 
         logger.info('Streamed {} row(s) from {} into {}'.format(rowCount, jobConfig.sourceConnection, target.loadName))
 
-        target.finish(rowCount)
+        with _timed(times, 'write'):
+            target.finish(rowCount)
 
     maskingApplied = None
     if masking is not None:
         maskingApplied = {'columns': [entry._asdict() for entry in masking.manifest]}
 
-    return JobOutcome(job=job, status=JobStatus.COMPLETED, rowCount=rowCount, watermark=highWatermark, masking=maskingApplied)
+    stages = times.asDict()
+    logger.info('{}: busy reading {read:.1f}s, masking {mask:.1f}s, writing {write:.1f}s, waiting on the read limit {throttled:.1f}s'.format(
+        job, **stages), extra={'job': job, 'stages': stages})
+
+    return JobOutcome(job=job, status=JobStatus.COMPLETED, rowCount=rowCount, watermark=highWatermark, masking=maskingApplied, stages=stages)
+
+
+@contextlib.contextmanager
+def _timed(times: Optional[StageTimes], stage: str) -> Generator[None, None, None]:
+    """Adds the time the block takes to `stage`, whether or not it raises."""
+
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        if times is not None:
+            times.add(stage, time.perf_counter() - started)
+
+
+# The policies that take a JSON column's text as it is: `json`, which reads
+# JSON text, `null`, and `keep` with anything else that passes values
+# through (Strategy.PASSTHROUGH).
+_TAKES_JSON_TEXT = frozenset({'json', 'null'})
+
+
+def _decodedJsonColumns(masking: Optional[BoundMasking], description: Any, databaseType: Any, columns: Sequence[str]) -> List[Tuple[int, str]]:
+    """The JSON columns -- PostgreSQL's json and jsonb, MySQL's and DuckDB's
+    JSON, which arrive as their text -- whose policy needs the value the
+    JSON holds rather than its text: every policy but those above.
+
+    Given the text, `email` keyed on "ana@corp.example", quotes and all,
+    rather than the address, so it masked differently from the same address
+    in a text column, or before the text arrived; and what it returned,
+    u3050fb9483cd@example.test, was no longer JSON, which a jsonb column
+    refused and JSON Lines wrote as an invalid line. See _decodeJson.
+    """
+
+    if masking is None:
+        return []
+
+    return [(index, columns[index]) for index in jsonColumnIndexes(databaseType, description)
+            if not (masking.strategies[index].PASSTHROUGH or masking.manifest[index].strategy in _TAKES_JSON_TEXT)]
+
+
+def _decodeJson(rows: Sequence[Sequence[Any]], jsonColumns: Sequence[Tuple[int, str]]) -> List[Tuple[Any, ...]]:
+    """Each of `jsonColumns`' JSON text as the value it holds -- a string, a
+    number, true or false, an object or an array, or None for JSON null --
+    which is what transforms and strategies were given for it before JSON
+    arrived as text, so they mask as they did.
+    """
+
+    decoded = []
+    for row in rows:
+        values = list(row)
+        for index, column in jsonColumns:
+            if isinstance(values[index], str):
+                try:
+                    values[index] = json.loads(values[index])
+                except ValueError:
+                    raise MaskingError('{} is a JSON column, but holds text that is not JSON'.format(column)) from None
+        decoded.append(tuple(values))
+
+    return decoded
+
+
+def _encodeJson(rows: Sequence[Sequence[Any]], jsonColumns: Sequence[Tuple[int, str]], masking: BoundMasking) -> List[Tuple[Any, ...]]:
+    """Each of `jsonColumns`' masked values back as JSON text, so a JSON
+    column, or a JSON Lines file, gets JSON: the string a strategy returns as
+    a JSON string, a number as a number. NULL stays NULL. A value JSON can't
+    hold -- NaN, an infinity -- fails the job, naming the column, never the
+    value.
+    """
+
+    encoded = []
+    for row in rows:
+        values = list(row)
+        for index, column in jsonColumns:
+            if values[index] is not None:
+                try:
+                    values[index] = json.dumps(values[index], ensure_ascii=False, allow_nan=False, default=str)
+                except ValueError:
+                    raise MaskingError('{} is a JSON column, and {} masked a value in it to a number JSON cannot hold'.format(
+                        column, masking.manifest[index].strategy)) from None
+        encoded.append(tuple(values))
+
+    return encoded
 
 
 def _preparer(transform: Transform, masking: Optional[BoundMasking], partition: int = 0,
-              partitions: int = 1) -> Callable[[int, List[Tuple[Any, ...]]], List[Any]]:
+              partitions: int = 1, times: Optional[StageTimes] = None,
+              jsonColumns: Sequence[Tuple[int, str]] = ()) -> Callable[[int, List[Tuple[Any, ...]]], List[Any]]:
     """Transforms and masks one chunk, given its position in what is read.
 
     `shuffle` keys on that position, so a job's partitions number their
     chunks apart: the n-th chunk of partition p is chunk n * partitions + p,
     which no other chunk of the job is. Without partitions, it is n.
+
+    `jsonColumns`, from _decodedJsonColumns, are decoded before transforms
+    and masking and encoded as JSON after.
     """
 
     def prepare(chunkIndex: int, chunk: List[Tuple[Any, ...]]) -> List[Any]:
-        rows = transform.apply(chunk)
+        with _timed(times, 'mask'):
+            rows = _decodeJson(chunk, jsonColumns) if jsonColumns else chunk
+            rows = transform.apply(rows)
 
-        if masking is not None:
-            # By read order, not masking order: `shuffle` keys on it.
-            rows = masking.apply(rows, chunkIndex=chunkIndex * partitions + partition)
+            if masking is not None:
+                # By read order, not masking order: `shuffle` keys on it.
+                rows = masking.apply(rows, chunkIndex=chunkIndex * partitions + partition)
+                if jsonColumns:
+                    rows = _encodeJson(rows, jsonColumns, masking)
 
         return rows
 
@@ -237,10 +344,11 @@ def _preparer(transform: Transform, masking: Optional[BoundMasking], partition: 
 
 def _loadChunks(chunks: Iterable[List[Tuple[Any, ...]]], prepare: Callable[[int, List[Tuple[Any, ...]]], List[Any]],
                 write: Callable[[List[Any]], None], watermarkIndex: Optional[int], loadName: str,
-                stopped: Optional[threading.Event] = None) -> Tuple[int, Any]:
+                stopped: Optional[threading.Event] = None, times: Optional[StageTimes] = None) -> Tuple[int, Any]:
     """Prepares and writes every chunk, returning the rows written and the
     highest watermark among them. `stopped`, once set, ends the load before
-    its next write: another of the job's partitions has failed.
+    its next write: another of the job's partitions has failed. Writing is
+    timed into `times`; reading and preparing time themselves.
     """
 
     rowCount = 0
@@ -252,7 +360,8 @@ def _loadChunks(chunks: Iterable[List[Tuple[Any, ...]]], prepare: Callable[[int,
         if stopped is not None and stopped.is_set():
             raise _PartitionStopped()
 
-        write(rows)
+        with _timed(times, 'write'):
+            write(rows)
 
         rowCount += len(rows)
         # Only once the rows have landed, or a failed job's next run would
@@ -402,7 +511,8 @@ def _automaticPredicates(job: str, jobConfig: DataJobConfig, connectionConfigura
 
 def _loadPartitions(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], target: LoadTarget,
                     sourceQuery: str, parameters: Optional[Sequence[Any]], columns: List[str], predicates: List[Optional[str]],
-                    columnTransforms: Dict[str, List[Transformer]], watermarkIndex: Optional[int]) -> Tuple[int, Any]:
+                    columnTransforms: Dict[str, List[Transformer]], watermarkIndex: Optional[int],
+                    times: Optional[StageTimes] = None, jsonColumns: Sequence[Tuple[int, str]] = ()) -> Tuple[int, Any]:
     """Reads, masks and writes the job's rows as slices, one per predicate, all
     at once, each on threads and connections of its own; see "Partitions" in
     docs/concepts/how-it-works.md. Returns the rows written and the highest
@@ -415,17 +525,20 @@ def _loadPartitions(job: str, jobConfig: DataJobConfig, connectionConfiguration:
 
     count = len(predicates)
     sourceSettings = connectionConfiguration[jobConfig.sourceConnection]
+    # One for all the slices: the connection's limit is on all its reading.
+    limit = readLimitFor(jobConfig.sourceConnection, sourceSettings)
     stopped = threading.Event()
 
     def loadSlice(index: int, predicate: Optional[str]) -> Tuple[int, Any]:
         # Everything a slice uses is its own: its connections, since one
         # connection serves one thread, and its transform and masking.
         with Database(connectionSettings=sourceSettings) as source, target.openWriter() as writer:
-            _, chunks = source.stream(query=wrappedQuery(sourceQuery, predicate), chunkSize=jobConfig.chunkSize, parameters=parameters)
+            with _timed(times, 'read'):
+                _, chunks = source.stream(query=wrappedQuery(sourceQuery, predicate), chunkSize=jobConfig.chunkSize, parameters=parameters)
             prepare = _preparer(Transform(columns=columns, columnTransforms=columnTransforms), _bindMasking(job, jobConfig, columns, log=False),
-                                index, count)
-            loaded = _loadChunks(chunks, prepare, writer.write, watermarkIndex,
-                                 '{} (partition {} of {})'.format(target.loadName, index + 1, count), stopped)
+                                index, count, times, jsonColumns)
+            loaded = _loadChunks(timedChunks(chunks, times, limit), prepare, writer.write, watermarkIndex,
+                                 '{} (partition {} of {})'.format(target.loadName, index + 1, count), stopped, times)
 
         logger.info('Partition {} of {} loaded {} row(s)'.format(index + 1, count, loaded[0]), extra={'job': job, 'partition': index + 1})
 
@@ -545,7 +658,7 @@ def _noteIfMaskedValueDoesNotFit(error: Exception, job: str, table: str) -> None
 
 # Deterministic errors, raised by this package, that a retry can't fix.
 # Everything else is retried; see "Retries" in docs/concepts/how-it-works.md.
-PERMANENT_ERRORS = (ConfigurationError, TransformError, TransformResolutionError, MaskingError)
+PERMANENT_ERRORS = (ConfigurationError, TransformError, TransformResolutionError, MaskingError, UnloadableValueError)
 
 
 def _executeWithRetries(jobConfig: DataJobConfig, job: str, attempt: Callable[[], JobOutcome]) -> JobOutcome:

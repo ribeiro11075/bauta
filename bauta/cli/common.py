@@ -13,9 +13,10 @@ from typing import Any, Dict, Generator, List, Mapping, Optional, Sequence, Tupl
 
 import yaml
 
-from ..configuration import (Configuration, ConfigurationError, ConnectionConfig, DatabaseConfig, DataJobConfig, DataJobsFile, FilesConnection, IcebergConnection, isLake,
+from ..configuration import (Configuration, ConfigurationError, parseYaml, ConnectionConfig, DatabaseConfig, DataJobConfig, DataJobsFile, FilesConnection, IcebergConnection, isLake,
                              JobsDocument, StorageLocation, TableLocation, expandEnvironmentVariables, readJobsFile)
 from ..database import Database
+from ..database.values import decodedJson
 from ..log import Log
 from ..masking import MaskingError
 from ..jobs.memory import DatabaseMemory, FileMemory, MemoryBackend
@@ -51,7 +52,7 @@ def _loadYaml(path: Path) -> Any:
 
     try:
         with open(path) as file:
-            return expandEnvironmentVariables(yaml.safe_load(file))
+            return expandEnvironmentVariables(parseYaml(file))
     except FileNotFoundError as error:
         raise UsageError('no such file: {}'.format(path)) from error
     except yaml.YAMLError as error:
@@ -316,7 +317,8 @@ def _sourceQuerySample(job: DataJobConfig, connections: _Connections, rows: int)
         with chunks:
             sampled = next(chunks, []) if rows else []
 
-    return columns, list(sampled)
+    # JSON parsed, since it is classified rather than loaded; see decodedJson.
+    return columns, decodedJson(sampled, getattr(chunks, 'description', None), database.type)
 
 
 def _targetColumns(job: DataJobConfig, connections: _Connections) -> List[str]:

@@ -637,6 +637,25 @@ def test_subset_generates_jobs_that_run(schemaWorkspace, monkeypatch):
         copy.close()
 
 
+def test_subset_proposes_masking_without_being_asked_where_the_target_requires_it(schemaWorkspace, capsys):
+    """Generated without policies, every job would fail validation against a
+    target that requires masking: a second pass nobody needed to make.
+    """
+    (schemaWorkspace / 'configuration' / 'connections.yaml').write_text(
+        'demo:\n  type: sqlite\n  path: ../demo.db\ncopy:\n  type: sqlite\n  path: ../copy.db\n  requireMasking: true\n')
+
+    assert main(['subset', '--quiet', '--connection', 'demo', '--target', 'copy', '--root', 'customers', '--where', "tier = 'gold'"]) == EXIT_SUCCESS
+
+    assert 'email: {strategy: email}' in capsys.readouterr().out
+
+
+def test_subset_without_masking_says_the_jobs_copy_every_column_as_it_is(schemaWorkspace, capsys, caplog):
+    assert main(['subset', '--connection', 'demo', '--target', 'copy', '--root', 'customers', '--where', "tier = 'gold'"]) == EXIT_SUCCESS
+
+    assert 'masking:' not in capsys.readouterr().out
+    assert 'These jobs copy every column as it is in demo. --mask proposes a masking policy' in caplog.text
+
+
 def test_subset_refuses_to_load_over_its_own_source(schemaWorkspace):
     assert main(['subset', '--quiet', '--connection', 'demo', '--target', 'demo', '--root', 'customers', '--where', '1 = 1']) == EXIT_BAD_CONFIGURATION
 
@@ -1119,7 +1138,8 @@ def test_run_records_history_and_history_shows_it(workspace, capsys):
 
     assert main(['history', '--quiet', '--history', 'state/history.jsonl']) == EXIT_SUCCESS
     rows = capsys.readouterr().out.splitlines()
-    assert rows[0].split() == ['FINISHED', '(UTC)', 'JOB', 'STATUS', 'ROWS', 'SECONDS', 'ERROR']
+    assert rows[0].split() == ['FINISHED', '(UTC)', 'JOB', 'STATUS', 'ROWS', 'SECONDS', 'READ', 'MASK', 'WRITE', 'WAITED', 'ERROR']
+    assert all(cell != '-' for row in rows[1:] for cell in row.split()[6:10])
     assert [row.split()[2] for row in rows[1:]] == ['loadRows', 'dependent', 'loadRows']
 
     assert main(['history', '--quiet', '--history', 'state/history.jsonl', '--job', 'dependent', '--format', 'json']) == EXIT_SUCCESS
@@ -1433,10 +1453,77 @@ def test_version_says_which_masker_it_would_use(capsys):
     if nativeVersion():
         expected = 'masking: bauta-rs {}'.format(nativeVersion())
     elif os.environ.get('BAUTA_NATIVE') == '0':
-        expected = 'masking: python (BAUTA_NATIVE=0 turns the native masker off)'
+        expected = 'masking: python (BAUTA_NATIVE=0 turns it off)'
     else:
-        expected = 'masking: python (pip install "bauta[native]" for the native masker)'
+        expected = 'masking: python (bauta-rs is not installed; pip install "bauta[native]" installs it)'
     assert lines[1] == expected
+
+
+def test_version_says_when_the_extension_is_installed_but_the_wrong_version(capsys, monkeypatch):
+    """It used to say "pip install bauta[native]" here too, which would
+    install nothing: the extension is there, just not the matching one.
+    """
+    import sys
+    import types
+
+    import bauta.masking.core as masking
+
+    extension = types.ModuleType('bauta_rs')
+    extension.__version__ = '0.0.1'
+    monkeypatch.setitem(sys.modules, 'bauta_rs', extension)
+    monkeypatch.delenv('BAUTA_NATIVE', raising=False)
+    masking._nativeModule.cache_clear()
+    try:
+        with pytest.raises(SystemExit):
+            main(['--version'])
+    finally:
+        masking._nativeModule.cache_clear()
+
+    assert 'masking: python (bauta-rs 0.0.1 is installed, which does not match bauta' in capsys.readouterr().out
+
+
+def test_bench_measures_each_job_and_writes_nothing(maskedWorkspace, capsys):
+    assert main(['bench', '--quiet']) == EXIT_SUCCESS
+
+    out = capsys.readouterr().out
+    assert out.startswith('masker: ')
+    header, row = [line for line in out.splitlines() if line.startswith(('JOB', 'maskRows'))]
+    assert header.split() == ['JOB', 'ROWS', 'CONNECT', 'READ', 'ROWS/S', 'MASK', 'ROWS/S', 'WAITED', 'SETS', 'THE', 'PACE']
+    assert row.split()[1] == '5' and row.split()[-1] in ('reading', 'masking')
+    assert _targetRowCount(maskedWorkspace) == 0
+
+
+def test_bench_stops_after_the_rows_it_was_asked_for(maskedWorkspace, capsys):
+    import json
+
+    assert main(['bench', '--quiet', '--rows', '3', '--format', 'json']) == EXIT_SUCCESS
+
+    [job] = json.loads(capsys.readouterr().out)['jobs']
+    # Chunks of 2, so the second chunk reaches 3 and reading stops at 4.
+    assert (job['job'], job['rows'], job['complete'], job['error']) == ('maskRows', 4, False, None)
+    assert set(job) >= {'readSeconds', 'maskSeconds', 'throttledSeconds', 'readRowsPerSecond', 'maskRowsPerSecond', 'pace'}
+
+
+def test_bench_reports_a_job_it_could_not_measure_and_exits_1(workspace, capsys):
+    _writeJobs(workspace, loadRows={'sourceQuery': 'SELECT id, name FROM nowhere'})
+
+    assert main(['bench', '--quiet', '--job', 'loadRows', '--job', 'dependent']) == EXIT_JOBS_DID_NOT_SUCCEED
+
+    out = capsys.readouterr().out
+    assert 'loadRows                     failed: OperationalError: no such table: nowhere' in out
+    assert any(line.startswith('dependent') and 'failed' not in line for line in out.splitlines())
+
+
+def test_bench_honours_the_sources_read_limit(workspace, capsys):
+    import json
+
+    (workspace / 'configuration' / 'connections.yaml').write_text('demo:\n  type: sqlite\n  path: ../demo.db\n  maxRowsReadPerSecond: 2\n')
+
+    assert main(['bench', '--quiet', '--job', 'loadRows', '--format', 'json']) == EXIT_SUCCESS
+
+    # 5 rows at 2 a second, 2 of them within the burst: 1.5 seconds owed.
+    [job] = json.loads(capsys.readouterr().out)['jobs']
+    assert job['throttledSeconds'] == pytest.approx(1.5, abs=0.3)
 
 
 @pytest.mark.parametrize('command,offers', [('run', True), ('validate', True), ('jobs', True), ('clear', True), ('audit', False)])
@@ -1722,3 +1809,101 @@ def test_audit_warns_of_an_incremental_job_a_full_refresh_cannot_replace(increme
     output = capsys.readouterr().out
     assert 'loadOrders: rows deleted from the source stay in its copy, and `run --full-refresh` cannot remove them: it has no targetTableStage' in output
     assert main(['audit', '--quiet']) == EXIT_SUCCESS
+
+
+TWO_MASKED_JOBS_YAML = MASKED_JOBS_YAML + """  maskAgain:
+    active: true
+    sourceConnection: demo
+    sourceQuery: SELECT id, name FROM src
+    targetConnection: demo
+    targetTableFinal: tgt
+    insertStrategy: upsert
+    chunkSize: 2
+    masking:
+      key: ${MASKING_KEY}
+      columns:
+        id: keep
+        name: hash
+"""
+
+
+def test_runs_of_single_jobs_add_their_jobs_to_a_manifest_file_rather_than_replacing_it(maskedWorkspace, monkeypatch):
+    """Runs of different jobs go side by side under `run --job`. Each used to
+    replace the manifest with only its own job, so it recorded whichever
+    finished last.
+    """
+    import json
+
+    monkeypatch.setenv('BAUTA_MANIFEST_KEY', 'a-manifest-signing-key-for-tests-only')
+    (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(TWO_MASKED_JOBS_YAML)
+
+    assert main(['run', '--quiet', '--job', 'maskRows', '--manifest', 'manifest.json']) == EXIT_SUCCESS
+    assert main(['run', '--quiet', '--job', 'maskAgain', '--manifest', 'manifest.json']) == EXIT_SUCCESS
+    assert main(['run', '--quiet', '--job', 'maskRows', '--manifest', 'manifest.json']) == EXIT_SUCCESS
+
+    manifest = json.loads((maskedWorkspace / 'manifest.json').read_text())
+    assert [entry['job'] for entry in manifest['jobs']] == ['maskAgain', 'maskRows']
+    assert all(entry['generatedAt'] and entry['maskedBy'] for entry in manifest['jobs'])
+    assert main(['verify-manifest', 'manifest.json', '--quiet']) == EXIT_SUCCESS
+
+
+def test_an_altered_manifest_file_is_kept_aside_and_not_carried_into_the_next_single_job_run(maskedWorkspace, caplog):
+    """Carried entries are re-sealed: carrying an edited file over would give
+    the edit a fresh, valid digest. Nor is the edited file overwritten: it is
+    what an auditor would want to examine.
+    """
+    import json
+
+    (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(TWO_MASKED_JOBS_YAML)
+    assert main(['run', '--quiet', '--job', 'maskRows', '--manifest', 'manifest.json']) == EXIT_SUCCESS
+
+    path = maskedWorkspace / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    manifest['jobs'][0]['columns'][1]['strategy'] = 'keep'
+    altered = json.dumps(manifest)
+    path.write_text(altered)
+
+    assert main(['run', '--quiet', '--job', 'maskAgain', '--manifest', 'manifest.json']) == EXIT_SUCCESS
+
+    assert [entry['job'] for entry in json.loads(path.read_text())['jobs']] == ['maskAgain']
+    [rejected] = maskedWorkspace.glob('manifest.json.rejected-*')
+    assert rejected.read_text() == altered
+    assert 'does not verify (it was altered); kept as {}'.format(rejected.name) in caplog.text
+
+
+def test_a_manifest_signed_with_another_key_is_left_alone_and_the_run_writes_beside_it(maskedWorkspace, monkeypatch, caplog):
+    """One orchestrator task with the wrong BAUTA_MANIFEST_KEY started the
+    shared file afresh, erasing every other job's entry.
+    """
+    import json
+
+    (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(TWO_MASKED_JOBS_YAML)
+    monkeypatch.setenv('BAUTA_MANIFEST_KEY', 'the-right-manifest-signing-key-for-tests')
+    assert main(['run', '--quiet', '--job', 'maskRows', '--manifest', 'manifest.json']) == EXIT_SUCCESS
+    shared = (maskedWorkspace / 'manifest.json').read_text()
+
+    for key in ('the-wrong-manifest-signing-key-for-tests', None):
+        if key is None:
+            monkeypatch.delenv('BAUTA_MANIFEST_KEY')
+        else:
+            monkeypatch.setenv('BAUTA_MANIFEST_KEY', key)
+        assert main(['run', '--quiet', '--job', 'maskAgain', '--manifest', 'manifest.json']) == EXIT_SUCCESS
+
+    assert (maskedWorkspace / 'manifest.json').read_text() == shared
+    written = sorted(maskedWorkspace.glob('manifest.json.unmerged-*'))
+    assert len(written) == 2 and all([entry['job'] for entry in json.loads(path.read_text())['jobs']] == ['maskAgain'] for path in written)
+    assert 'which is not this run\'s' in caplog.text and '$BAUTA_MANIFEST_KEY is not set to check' in caplog.text
+
+
+def test_a_run_of_every_job_still_replaces_the_manifest_file(maskedWorkspace):
+    import json
+
+    (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(TWO_MASKED_JOBS_YAML)
+    assert main(['run', '--quiet', '--job', 'maskAgain', '--manifest', 'manifest.json']) == EXIT_SUCCESS
+    (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(MASKED_JOBS_YAML)
+
+    assert main(['run', '--quiet', '--force', '--manifest', 'manifest.json']) == EXIT_SUCCESS
+
+    manifest = json.loads((maskedWorkspace / 'manifest.json').read_text())
+    assert [entry['job'] for entry in manifest['jobs']] == ['maskRows'] and 'generatedAt' not in manifest['jobs'][0]
+    assert not list(maskedWorkspace.glob('.manifest.json.*.tmp'))

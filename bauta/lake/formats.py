@@ -60,11 +60,15 @@ class PartWriter:
     finishes the file and closes `stream`.
     """
 
-    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
+                 rawColumns: AbstractSet[str] = frozenset()) -> None:
         self.stream = stream
         self.schema = schema
         self.settings = settings
         self.jsonColumns = jsonColumns
+        # Columns whose every value is JSON text, a PostgreSQL json or jsonb
+        # column's, written as it is: "123" a string, 123 a number.
+        self.rawColumns = rawColumns
 
     def write(self, table: Any) -> None:
 
@@ -75,18 +79,20 @@ class PartWriter:
         raise NotImplementedError
 
 
-def partWriter(stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> PartWriter:
+def partWriter(stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
+               rawColumns: AbstractSet[str] = frozenset()) -> PartWriter:
 
     writer = {FileFormat.PARQUET: _Parquet, FileFormat.CSV: _Csv, FileFormat.NDJSON: _JsonLines}[settings.format]
 
-    return writer(stream, schema, settings, jsonColumns)
+    return writer(stream, schema, settings, jsonColumns, rawColumns)
 
 
 class _Parquet(PartWriter):
     """Each table written is one row group."""
 
-    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
-        super().__init__(stream, schema, settings, jsonColumns)
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
+                 rawColumns: AbstractSet[str] = frozenset()) -> None:
+        super().__init__(stream, schema, settings, jsonColumns, rawColumns)
         import pyarrow.parquet
 
         compression = settings.compression
@@ -107,8 +113,9 @@ class _Text(PartWriter):
     measured as the part's size by the stream beneath it.
     """
 
-    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
-        super().__init__(stream, schema, settings, jsonColumns)
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
+                 rawColumns: AbstractSet[str] = frozenset()) -> None:
+        super().__init__(stream, schema, settings, jsonColumns, rawColumns)
         import pyarrow
 
         self.output = pyarrow.CompressedOutputStream(stream, 'gzip') if settings.compression == FileCompression.GZIP else stream
@@ -129,8 +136,9 @@ def _base64(values: List[Optional[bytes]]) -> List[Optional[str]]:
 class _Csv(_Text):
     """With a header in every part, so each file reads on its own."""
 
-    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
-        super().__init__(stream, schema, settings, jsonColumns)
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
+                 rawColumns: AbstractSet[str] = frozenset()) -> None:
+        super().__init__(stream, schema, settings, jsonColumns, rawColumns)
         import pyarrow
         import pyarrow.csv
 
@@ -160,6 +168,26 @@ class _Csv(_Text):
 def _jsonText(value: Any) -> str:
 
     return json.dumps(value, ensure_ascii=False)
+
+
+def _rawJson(column: str) -> Callable[[str], str]:
+    """How a column of JSON text is written: as it is, once it parses. One
+    that doesn't would make the line, and the file, invalid while the job
+    reported success -- as a masked value never turned back into JSON did --
+    so it fails the job instead, naming the column, never the value.
+    """
+
+    def encode(value: str) -> str:
+        try:
+            json.loads(value)
+        except ValueError:
+            from .columns import FileTypeError
+
+            raise FileTypeError('{} is a JSON column, but a value in it is not JSON, so it cannot be written to JSON Lines as one'.format(column)) \
+                from None
+        return value
+
+    return encode
 
 
 def _document(value: str) -> str:
@@ -216,11 +244,15 @@ class _JsonLines(_Text):
     # times its size in memory.
     BATCH_ROWS = 4096
 
-    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str]) -> None:
-        super().__init__(stream, schema, settings, jsonColumns)
+    def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
+                 rawColumns: AbstractSet[str] = frozenset()) -> None:
+        super().__init__(stream, schema, settings, jsonColumns, rawColumns)
 
         self._keys = [_jsonText(field.name) + ':' for field in schema]
-        self._encoders = [_encoder(field, field.name in jsonColumns) for field in schema]
+        import pyarrow
+
+        self._encoders = [_rawJson(field.name) if field.name in rawColumns and pyarrow.types.is_string(field.type)
+                          else _encoder(field, field.name in jsonColumns) for field in schema]
 
     def write(self, table: Any) -> None:
 
@@ -250,13 +282,14 @@ class Parts:
     """
 
     def __init__(self, output: PartOutput, directory: str, runId: str, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str] = frozenset(),
-                 singleFile: bool = False) -> None:
+                 singleFile: bool = False, rawColumns: AbstractSet[str] = frozenset()) -> None:
         self.output = output
         self.directory = directory
         self.runId = runId
         self.schema = schema
         self.settings = settings
         self.jsonColumns = jsonColumns
+        self.rawColumns = rawColumns
         self.singleFile = singleFile
         self.written: List[Tuple[str, int]] = []
         self._path: Optional[str] = None
@@ -270,7 +303,7 @@ class Parts:
         name = 'part-{}-{:05d}{}'.format(self.runId, len(self.written) + 1, extension(self.settings))
         self._path = posixpath.join(self.directory, name)
         self._stream = self.output.openOutput(self._path)
-        self._writer = partWriter(self._stream, self.schema, self.settings, self.jsonColumns)
+        self._writer = partWriter(self._stream, self.schema, self.settings, self.jsonColumns, self.rawColumns)
         self._rows = 0
 
 

@@ -61,7 +61,7 @@ acknowledged:
 
 An included file holds `jobs` and `acknowledged` and nothing else. Everything else, such as `workers`, `defaults` and where run state goes, is said once, in `jobs.yaml`, and `defaults` reaches every included job as if it were written there. The files are merged before anything is checked, so predecessors, `validate`, `audit` and `coverage` see one set of jobs, and a job may name a predecessor in another file.
 
-What would otherwise be ambiguous is an error that names both files: a job defined in two files, a table acknowledged in two, a pattern that matches no file (a misspelled directory would otherwise drop every job in it), and an `include` inside an included file. `validate` prints how many jobs came from each file, and the [manifest](../guides/keep-a-manifest.md) records each included file's digest beside the jobs file's.
+A key given twice in one mapping of any of these files is an error naming both lines, rather than YAML's silent last-one-wins: a masking policy naming a column twice would otherwise apply whichever came second. What would otherwise be ambiguous across files is an error that names both files: a job defined in two files, a table acknowledged in two, a pattern that matches no file (a misspelled directory would otherwise drop every job in it), and an `include` inside an included file. `validate` prints how many jobs came from each file, and the [manifest](../guides/keep-a-manifest.md) records each included file's digest beside the jobs file's.
 
 One file per team or domain lets a code-owners rule give each its reviewers, and keeps unrelated changes out of each other's merges.
 

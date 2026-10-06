@@ -32,12 +32,45 @@ class JobsDocument(NamedTuple):
     origins: Dict[str, Path]
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that refuses a mapping naming one key twice.
+
+    PyYAML keeps the last value without a word, so a policy reading
+    `email: email` and, further down, `email: keep` copied every address
+    unmasked while the file read as masked. A key given again over a merge
+    (`<<: *defaults`) is an override, not a repeat, and stays allowed.
+    """
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> Any:
+
+        seen: Dict[Any, Any] = {}
+        for keyNode, _ in node.value:
+            if keyNode.tag == 'tag:yaml.org,2002:merge' or not isinstance(keyNode, yaml.ScalarNode):
+                continue
+            key = keyNode.value
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, '"{}" is given twice in one mapping, first on line {}; YAML would keep only the second, silently '
+                                'dropping the first'.format(key, seen[key].start_mark.line + 1), keyNode.start_mark)
+            seen[key] = keyNode
+
+        return super().construct_mapping(node, deep=deep)
+
+
+def parseYaml(stream: Any) -> Any:
+    """YAML from a file or text, as yaml.safe_load reads it, except that a key
+    given twice in one mapping is a yaml.YAMLError; see _UniqueKeyLoader.
+    """
+
+    return yaml.load(stream, Loader=_UniqueKeyLoader)
+
+
 def loadYamlFile(path: Path) -> Any:
     """A YAML file, with ${NAME} expanded from the environment."""
 
     try:
         with open(path) as file:
-            return expandEnvironmentVariables(yaml.safe_load(file))
+            return expandEnvironmentVariables(parseYaml(file))
     except FileNotFoundError as error:
         raise ConfigurationError('no such file: {}'.format(path)) from error
     except yaml.YAMLError as error:

@@ -139,6 +139,8 @@ Both of those exist so that a deliberate exception is written down rather than i
 
 **A misspelled key is not an exception.** An unknown field in `jobs.yaml` or `connections.yaml` is an error: `maskng:` instead of `masking:` used to be dropped in silence, leaving a job that read as masked in the file and copied every column as it stood.
 
+**Nor is a repeated one.** A key given twice in one mapping, in any configuration file, is an error naming both lines. YAML keeps the last value without a word, so a policy reading `actor_email: email` and, further down, `actor_email: keep` validated, read as masked, and copied every address as it stood. A key given again over a merge (`<<: *defaults`) overrides it, as YAML intends.
+
 What none of this checks: whether the *strategy* chosen for a column is strong enough for the data in it. That is what [what masking does not hide](#what-masking-does-not-hide) is about, and it is a review, not a check.
 
 

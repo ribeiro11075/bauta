@@ -35,6 +35,16 @@ def _timestamp(seconds: float) -> Optional[str]:
     return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat(timespec='seconds')
 
 
+# Each stage a job's time is split into, as history names it: see
+# throttle.StageTimes. Only a completed job has them.
+STAGE_FIELDS = {'read': 'readSeconds', 'mask': 'maskSeconds', 'write': 'writeSeconds', 'throttled': 'throttledSeconds'}
+
+
+def _stageFields(stages: Optional[Mapping[str, float]]) -> Dict[str, Optional[float]]:
+
+    return {field: (stages or {}).get(stage) for stage, field in STAGE_FIELDS.items()}
+
+
 def historyRecords(result: RunResult, runId: str) -> List[Dict[str, Any]]:
     """One record per job in the cycle."""
 
@@ -48,6 +58,7 @@ def historyRecords(result: RunResult, runId: str) -> List[Dict[str, Any]]:
         'finishedAt': _timestamp(outcome.finishedAt),
         'durationSeconds': round(outcome.durationSeconds, 3),
         'error': (outcome.error or None) and outcome.error[:ERROR_TEXT_LIMIT],
+        **_stageFields(outcome.stages),
         } for outcome in result.outcomes]
 
 
@@ -149,10 +160,18 @@ DATABASE_HISTORY_SCHEMA = """CREATE TABLE bauta_history (
     started_at DOUBLE PRECISION,
     finished_at DOUBLE PRECISION,
     error VARCHAR(2000),
+    read_seconds DOUBLE PRECISION,
+    mask_seconds DOUBLE PRECISION,
+    write_seconds DOUBLE PRECISION,
+    throttled_seconds DOUBLE PRECISION,
     PRIMARY KEY (run_id, job)
     )"""
 
 _HISTORY_COLUMNS = ['run_id', 'job', 'status', 'row_count', 'attempts', 'started_at', 'finished_at', 'error']
+
+# Not in a table made by 0.2.4 or earlier: written and read
+# only where the table has them.
+_STAGE_COLUMNS = ['read_seconds', 'mask_seconds', 'write_seconds', 'throttled_seconds']
 
 
 class DatabaseHistory(RunHistory):
@@ -166,25 +185,39 @@ class DatabaseHistory(RunHistory):
         self.table = table
 
 
+    def _columns(self, database: Database) -> List[str]:
+        """The columns to write and read: all of DATABASE_HISTORY_SCHEMA's
+        where the table has the stage timings, and the rest where it was
+        made before them.
+        """
+
+        present = {column.lower() for column in database.getAllColumnNames(table=self.table)}
+
+        return _HISTORY_COLUMNS + (_STAGE_COLUMNS if all(column in present for column in _STAGE_COLUMNS) else [])
+
+
     def append(self, result: RunResult, runId: str) -> None:
 
-        rows = [(runId, outcome.job, outcome.status.value, outcome.rowCount, outcome.attempts, outcome.startedAt or None,
-                 outcome.finishedAt or None, (outcome.error or None) and outcome.error[:ERROR_TEXT_LIMIT])
-                for outcome in result.outcomes]
-        if not rows:
+        if not result.outcomes:
             return
 
         with Database(connectionSettings=self.connectionSettings) as database:
-            database.insert(table=self.table, data=rows, columns=_HISTORY_COLUMNS)
+            columns = self._columns(database)
+            rows = [(runId, outcome.job, outcome.status.value, outcome.rowCount, outcome.attempts, outcome.startedAt or None,
+                     outcome.finishedAt or None, (outcome.error or None) and outcome.error[:ERROR_TEXT_LIMIT],
+                     *list(_stageFields(outcome.stages).values())[:len(columns) - len(_HISTORY_COLUMNS)])
+                    for outcome in result.outcomes]
+            database.insert(table=self.table, data=rows, columns=columns)
 
 
     def read(self, limit: int = 20, job: Optional[str] = None) -> List[Dict[str, Any]]:
 
         with Database(connectionSettings=self.connectionSettings) as database:
+            columns = self._columns(database)
             # The table quoted as a load already writes it; the columns bare,
             # since the catalog's own spelling of them is what a server folds
             # an unquoted name to.
-            query = 'SELECT {} FROM {}'.format(', '.join(_HISTORY_COLUMNS), database.statementName(self.table))
+            query = 'SELECT {} FROM {}'.format(', '.join(columns), database.statementName(self.table))
             parameters = None
             if job is not None:
                 query += ' WHERE job = {}'.format(database.dialect.placeholders(1)[0])
@@ -196,24 +229,40 @@ class DatabaseHistory(RunHistory):
                 rows = next(chunks, [])
 
         records = []
-        for runId, name, status, rowCount, attempts, startedAt, finishedAt, error in rows:
+        for row in rows:
+            runId, name, status, rowCount, attempts, startedAt, finishedAt, error = row[:len(_HISTORY_COLUMNS)]
+            stages = dict(zip(STAGE_FIELDS.values(), row[len(_HISTORY_COLUMNS):]))
             started, finished = float(startedAt or 0), float(finishedAt or 0)
             # NUMERIC comes back as Decimal on some drivers, which JSON can't write.
             records.append({'runId': runId, 'job': name, 'status': status, 'rowCount': int(rowCount or 0), 'attempts': int(attempts or 0),
                             'startedAt': _timestamp(started), 'finishedAt': _timestamp(finished),
-                            'durationSeconds': round(max(0.0, finished - started), 3) if started and finished else 0.0, 'error': error})
+                            'durationSeconds': round(max(0.0, finished - started), 3) if started and finished else 0.0, 'error': error,
+                            **{field: None if stages.get(field) is None else float(stages[field]) for field in STAGE_FIELDS.values()}})
 
         return records
 
 
+def _seconds(value: Optional[float]) -> str:
+    """A stage's seconds as a column shows them: `-` for a record without
+    them -- a job that didn't complete, or one recorded by 0.2.4 or earlier.
+    """
+
+    return '-' if value is None else '{:.1f}'.format(value)
+
+
 def renderHistory(records: Sequence[Mapping[str, Any]]) -> str:
+    """A table of records. READ, MASK and WRITE are the seconds each stage was
+    busy, which overlap, so the largest is what set the job's pace; WAITED
+    is time held back by a read limit.
+    """
 
     # UTC, as recorded, and labelled so: the log lines beside it are local.
-    lines = ['{:<20} {:<28} {:<10} {:>10} {:>9}  {}'.format('FINISHED (UTC)', 'JOB', 'STATUS', 'ROWS', 'SECONDS', 'ERROR')]
+    lines = ['{:<20} {:<28} {:<10} {:>10} {:>9} {:>7} {:>7} {:>7} {:>7}  {}'.format(
+        'FINISHED (UTC)', 'JOB', 'STATUS', 'ROWS', 'SECONDS', 'READ', 'MASK', 'WRITE', 'WAITED', 'ERROR')]
     for record in records:
-        lines.append('{:<20} {:<28} {:<10} {:>10} {:>9.1f}  {}'.format(
+        lines.append('{:<20} {:<28} {:<10} {:>10} {:>9.1f} {:>7} {:>7} {:>7} {:>7}  {}'.format(
             (record['finishedAt'] or '-')[:19].replace('T', ' '), record['job'], record['status'], record['rowCount'] or 0,
-            record['durationSeconds'] or 0.0, (record['error'] or '')[:80]))
+            record['durationSeconds'] or 0.0, *(_seconds(record.get(field)) for field in STAGE_FIELDS.values()), (record['error'] or '')[:80]))
 
     return '\n'.join(lines) + '\n'
 
@@ -311,7 +360,8 @@ def notificationPayload(result: RunResult) -> Dict[str, Any]:
         'host': host,
         'summary': {'completed': len(result.completed), 'failed': len(result.failed), 'skipped': len(result.skipped), 'rows': result.rowCount},
         'jobs': [{'job': outcome.job, 'status': outcome.status.value, 'rowCount': outcome.rowCount,
-                  'durationSeconds': round(outcome.durationSeconds, 3), 'error': outcome.error} for outcome in result.outcomes],
+                  'durationSeconds': round(outcome.durationSeconds, 3), 'error': outcome.error, **_stageFields(outcome.stages)}
+                 for outcome in result.outcomes],
         }
 
 
