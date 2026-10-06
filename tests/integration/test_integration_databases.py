@@ -441,10 +441,10 @@ def test_automatic_partitions_slice_by_the_targets_primary_key(liveDatabase, peo
     liveDatabase.insert(table=peopleTable, data=rows, chunkSize=100)
     masking = {'key': 'an-automatic-partitions-masking-key', 'columns': {'id': 'keep', 'name': {'strategy': 'key'}, 'amount': 'keep'}}
 
-    def copy(suffix, partitions):
+    def copy(suffix, partitions, policy=masking):
         target, stage = _createLike(liveDatabase, peopleTable, suffix), _createLike(liveDatabase, peopleTable, suffix + '_stage')
         job = dataJob(sourceConnection='db', targetConnection='db', sourceQuery='SELECT id, name, amount FROM {}'.format(peopleTable),
-                      targetTableFinal=target, targetTableStage=stage, insertStrategy='swap', chunkSize=17, masking=masking, partitions=partitions)
+                      targetTableFinal=target, targetTableStage=stage, insertStrategy='swap', chunkSize=17, masking=policy, partitions=partitions)
         try:
             outcome = pipeline._executeDataJob('job1', job, {'db': connectionSettings})
             return outcome.rowCount, liveDatabase.query('SELECT id, name, amount FROM {} ORDER BY id'.format(target))
@@ -460,11 +460,19 @@ def test_automatic_partitions_slice_by_the_targets_primary_key(liveDatabase, peo
     try:
         sliced = copy('_auto', 'auto')
         whole = copy('_whole', None)
+        maskedMessages = list(messages)
+        plain = copy('_plain', 'auto', policy=None)
     finally:
         logging.getLogger('bauta').removeHandler(handler)
 
-    assert sliced == whole and sliced[0] == len(rows)
-    assert any('as 4 slices of' in message for message in messages), messages
+    from bauta.masking import nativeVersion
+
+    assert sliced == whole and sliced[0] == len(rows) and plain[1] == rows
+    # Masked, it slices only with the native masker: in Python its slices
+    # would take turns at the interpreter lock.
+    expected = 'as 4 slices of' if nativeVersion() is not None else 'as one stream: it masks in Python'
+    assert any(expected in message for message in maskedMessages), maskedMessages
+    assert sum('as 4 slices of' in message for message in messages) == (2 if nativeVersion() is not None else 1), messages
 
 
 # Keys across a swap --------------------------------------------------------

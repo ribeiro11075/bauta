@@ -63,8 +63,11 @@ mariadb = ["mysql-connector-python>=8.4"]
 sqlite = []
 # pyarrow is how a chunk reaches DuckDB in one statement: its executemany
 # runs once per row, and took 13 seconds for 50,000. pytz is what DuckDB
-# needs to return a TIMESTAMP WITH TIME ZONE, and doesn't install itself
-duckdb = ["duckdb>=1.4", "pyarrow>=21", "pytz>=2024.1"]
+# needs to return a TIMESTAMP WITH TIME ZONE, and doesn't install itself.
+# From 1.5.0: before it, a table emptied while another connection had a
+# transaction open -- a job's source, reading the same file -- refused its
+# own keys again, so a swap whose stage has keys failed every third run
+duckdb = ["duckdb>=1.5", "pyarrow>=21", "pytz>=2024.1"]
 # Parquet, CSV and JSON Lines for a files connection, written through pyarrow:
 # 21 is the first with every Azure credential (a SAS token, a service
 # principal) and a copy of any size there
