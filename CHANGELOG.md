@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.5 — 2026-10-06
 
 Know where a job's time goes, keep a copy from taking more of production than it was given, and move every value as it was. History records the seconds each job spent reading, masking and writing; `bauta bench` measures reading and masking against the real source before anything is copied; `maxRowsReadPerSecond` caps what jobs read from a connection, all of them together. An upgrade that leaves the native masker behind now stops the run rather than making every masked job ten times slower. A masking policy naming a column twice is refused, where YAML silently kept the second. PostgreSQL's JSON crosses exactly, and JSON columns masked by a plain strategy stay JSON; Oracle's binary doubles, SQL Server's empty binaries and DuckDB's mixed JSON load; a NaN a target can't hold fails by name rather than vanishing; and subsets of large tables no longer slow to a crawl on PostgreSQL. **Read Breaking before upgrading.** Masks change only for a MySQL or DuckDB JSON column masked with a plain strategy, which keyed on the quoted text.
 

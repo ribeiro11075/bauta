@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bauta"
-version = "0.2.4"
+version = "0.2.5"
 description = "Safe, realistic copies of production across databases: masking, subsets, synthetic data, and the ETL to move them"
 readme = "README.md"
 license = "MIT"
@@ -81,7 +81,7 @@ all = ["bauta[mysql,postgresql,oracle,mssql,mariadb,sqlite,duckdb,files,iceberg,
 # The native masker, pinned to this exact version rather than a range: the two
 # must compute identical masks, and masking.py ignores any other version. Left
 # out of `all`, which would otherwise need Rust wherever no wheel is published.
-native = ["bauta-rs==0.2.4"]
+native = ["bauta-rs==0.2.5"]
 # The documentation site (mkdocs.yml), pinned like dev so a build is the same
 # everywhere; website/ holds its theme and hooks
 docs = ["mkdocs==1.6.1", "mkdocs-material==9.7.7", "mike==2.2.0"]
