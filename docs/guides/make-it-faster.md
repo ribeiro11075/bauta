@@ -97,7 +97,7 @@ The native masker can spread each chunk over several cores. Every mask depends o
 **Seeing what it chose.** `bauta validate` prints the plan:
 
 ```
-masking: bauta-rs 0.2.3, 2 to 5 thread(s) per job (maskingThreads: auto; 10 core(s)): 2 with 2 jobs running, 5 for a job running alone
+masking: bauta-rs 0.2.4, 2 to 5 thread(s) per job (maskingThreads: auto; 10 core(s)): 2 with 2 jobs running, 5 for a job running alone
 ```
 
 and each masked job logs what it got as it starts:

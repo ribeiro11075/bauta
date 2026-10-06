@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.4 — 2026-10-06
 
 Masked copies that leak less and stay truer to production. Driver errors in formats no pattern knows now fail closed, DuckDB's are scrubbed, and so are the drivers' own loggers. `json` masks identifiers held as numbers and in keys. Weak keys are refused or warned about, and append jobs are guarded against a key change. `audit --connect` checks kept columns and shared domains by their sampled values. New: `normalize` for values a database compares as equal, `dateShift` by a column so a person's dates keep their order, a `coordinate` strategy that moves points by a distance, larger fake-name lists that agree across columns, and `requireNative`. A large table can be read as several partitions at once, a swap keeps the target's keys on every run, and `audit` and `coverage` write a page a reviewer can open. **Read Breaking before upgrading.** Masks change only where `json` used to copy a value unmasked; nothing masked before masks differently.
 
