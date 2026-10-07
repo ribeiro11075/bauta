@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.6 — 2026-10-07
 
 Close the ways a copy could leak, lose rows or lock its readers out without an error. MySQL and MariaDB no longer merge a row into another that shares one of its unique values; a JSON document's names, birth dates and addresses are masked by what their keys say; a coordinate stored in microdegrees is moved, not left where it was; an append that fails while publishing takes back what it published; an Oracle swap killed between renames is put right by the next run; and a swapped table keeps its grants and indexes on every run, not every other one. Two new connection settings make the rest a failure rather than a log line: `requireEncryption` and `readOnly`. `coverage` stops counting a table a query only mentions, and a run of small jobs is about eight times faster. **Read Breaking before upgrading**: masks change for some JSON fields, and some coordinates and upserts that loaded before are now refused.
 
