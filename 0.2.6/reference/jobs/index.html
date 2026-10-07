@@ -1,0 +1,2993 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Safe, realistic copies of production across databases">
+      
+      
+      
+        <link rel="canonical" href="https://ribeiro11075.github.io/bauta/0.2.6/reference/jobs/">
+      
+      
+        <link rel="prev" href="../connections/">
+      
+      
+        <link rel="next" href="../strategies/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>jobs.yaml - bauta</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Hanken+Grotesk:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Hanken Grotesk";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/bauta.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="bauta" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#jobsyaml" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're reading the documentation for an older release of bauta.
+  <a href="../../.."><strong>Go to the latest release.</strong></a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="bauta" class="md-header__button md-logo" aria-label="bauta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 30"><path fill="currentColor" fill-rule="evenodd" d="M13 1C6.4 1 2 5.6 2 12.2c0 4.6 1.2 8.4 3.2 11.2L4 28.4c3-.6 6-.9 9-.9s6 .3 9 .9l-1.2-5C22.8 20.6 24 16.8 24 12.2 24 5.6 19.6 1 13 1ZM8.6 10.7c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7S6 13.3 6 12.4s1.2-1.7 2.6-1.7Zm8.8 0c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7-2.6-.8-2.6-1.7 1.2-1.7 2.6-1.7Z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            bauta
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              jobs.yaml
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="bauta" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Dark"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Light"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ribeiro11075/bauta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ribeiro11075/bauta
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="bauta" class="md-nav__button md-logo" aria-label="bauta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 30"><path fill="currentColor" fill-rule="evenodd" d="M13 1C6.4 1 2 5.6 2 12.2c0 4.6 1.2 8.4 3.2 11.2L4 28.4c3-.6 6-.9 9-.9s6 .3 9 .9l-1.2-5C22.8 20.6 24 16.8 24 12.2 24 5.6 19.6 1 13 1ZM8.6 10.7c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7S6 13.3 6 12.4s1.2-1.7 2.6-1.7Zm8.8 0c1.4 0 2.6.8 2.6 1.7s-1.2 1.7-2.6 1.7-2.6-.8-2.6-1.7 1.2-1.7 2.6-1.7Z"/></svg>
+
+    </a>
+    bauta
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ribeiro11075/bauta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ribeiro11075/bauta
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Get started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get-started/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/mask-a-table/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mask a table
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/keep-joins-intact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keep joins intact
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cover-every-column/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cover every column
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/propose-a-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Propose a policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/copy-a-subset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Copy a subset
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/generate-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generate data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/prove-the-copy-is-safe/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prove the copy is safe
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/keep-a-manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keep a masking manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/run-on-a-schedule/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run on a schedule
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/run-from-an-orchestrator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run from Airflow or Dagster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/watch-what-ran/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Watch what ran
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/rotate-the-key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rotate the masking key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/make-it-faster/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Make it faster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    connections.yaml
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    jobs.yaml
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    jobs.yaml
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#file-level" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File level
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="File level">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#acknowledged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        acknowledged
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scheduling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transform
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mask" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mask
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mask">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#copying-without-masking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Copying without masking
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#load-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load details
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strategies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masking strategies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../commands/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commands
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Commands
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/validate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    validate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    jobs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/history/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    history
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/discover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    discover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/subset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    subset
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/synthesize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    synthesize
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/clear/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    clear
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/verify-manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    verify-manifest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/verify-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    verify-references
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/bench/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bench
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    State tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/how-it-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How it works, and why
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Project
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#file-level" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File level
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="File level">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#acknowledged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        acknowledged
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scheduling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transform
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mask" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mask
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mask">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#copying-without-masking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Copying without masking
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#load-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load details
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../configuration/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Reference
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+  
+  
+  
+  
+    <div class="bauta-kind">
+      <span class="bauta-kind__label bauta-kind__label--reference">Reference</span>
+      
+    </div>
+  
+  
+                  
+
+
+  
+    <a href="https://github.com/ribeiro11075/bauta/edit/master/docs/reference/jobs.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="jobsyaml"><code>jobs.yaml</code><a class="headerlink" href="#jobsyaml" title="Permanent link">#</a></h1>
+<div class="highlight"><pre><span></span><code><span class="nt">workers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+<span class="nt">jobs</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">loadOrders</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">active</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">    </span><span class="nt">sourceConnection</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">app</span>
+<span class="w">    </span><span class="nt">sourceQuery</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">select id, customerId, amount from orders</span>
+<span class="w">    </span><span class="nt">targetConnection</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">warehouse</span>
+<span class="w">    </span><span class="nt">targetTableFinal</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
+<span class="w">    </span><span class="nt">insertStrategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">upsert</span>
+<span class="w">    </span><span class="nt">chunkSize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5000</span>
+</code></pre></div>
+<h2 id="file-level">File level<a class="headerlink" href="#file-level" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required or default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>workers</code></td>
+<td>required</td>
+<td>Worker processes to run jobs concurrently, at least 1.</td>
+</tr>
+<tr>
+<td><code>cycleSleepSeconds</code></td>
+<td>optional, <code>0.5</code></td>
+<td>Pause between cycles under <code>--forever</code>.</td>
+</tr>
+<tr>
+<td><code>memory</code></td>
+<td>optional, <code>memory.yaml</code></td>
+<td>Where <code>run</code> keeps run state: last runs, watermarks and key fingerprints. A file, or a <a href="#tables">table</a>. <code>--memory FILE</code> or <code>--memory-connection ALIAS</code> overrides it. See <a href="../../guides/run-on-a-schedule/#run-state">run state</a>.</td>
+</tr>
+<tr>
+<td><code>history</code></td>
+<td>optional</td>
+<td>Where <code>run</code> records each job's outcome after every cycle, for <code>bauta history</code>. A JSON-lines file, or a <a href="#tables">table</a>. Not recorded when unset. <code>--history FILE</code> or <code>--history-connection ALIAS</code> overrides it. See <a href="../../guides/watch-what-ran/#run-history">run history</a>.</td>
+</tr>
+<tr>
+<td><code>manifest</code></td>
+<td>optional</td>
+<td>Where <code>run</code> writes its <a href="../../guides/keep-a-manifest/#what-it-records">masking manifest</a>, for <code>bauta verify-manifest</code>. A file, replaced each run, or a <a href="#tables">table</a>, which keeps every run's. Not written when unset. <code>--manifest FILE</code> or <code>--manifest-connection ALIAS</code> overrides it.</td>
+</tr>
+<tr>
+<td><code>requireNative</code></td>
+<td>optional</td>
+<td>Whether a run with masked jobs stops before it starts when the <a href="../../guides/make-it-faster/#the-native-masker">native masker</a> isn't in use, rather than masking in Python, about ten times slower. Unset, it stops where the extension is installed but another version than <code>bauta</code>'s, which an upgrade leaves behind, and goes on where it was never installed or <code>BAUTA_NATIVE=0</code> turns it off. <code>true</code> stops in every case, for a scheduled run with a window to keep; <code>false</code> never stops. <code>validate</code> checks it too. <code>BAUTA_REQUIRE_NATIVE=1</code> or <code>=0</code> overrides it.</td>
+</tr>
+<tr>
+<td><code>maskingThreads</code></td>
+<td>optional, <code>1</code></td>
+<td>Threads the <a href="../../guides/make-it-faster/#the-native-masker">native masker</a> masks each job with: <code>1</code>, a number up to the cores available, or <code>auto</code> to divide half the cores between the jobs running. Results are the same for any count. <code>BAUTA_MASKING_THREADS</code> overrides it. See <a href="../../guides/make-it-faster/#masking-threads">masking threads</a>.</td>
+</tr>
+<tr>
+<td><code>defaults</code></td>
+<td>optional</td>
+<td>Settings every job takes unless it names its own. See <a href="#defaults">defaults</a>.</td>
+</tr>
+<tr>
+<td><code>include</code></td>
+<td>optional</td>
+<td>More files of <code>jobs</code> and <code>acknowledged</code>, as paths or glob patterns relative to this one. See <a href="../configuration/#splitting-the-jobs-across-files">splitting the jobs across files</a>.</td>
+</tr>
+<tr>
+<td><code>acknowledged</code></td>
+<td>optional</td>
+<td>Tables no job copies, on purpose: connection alias, then table, then why. What <a href="../../guides/prove-the-copy-is-safe/#coverage-what-the-jobs-do-not-cover"><code>bauta coverage</code></a> reads.</td>
+</tr>
+<tr>
+<td><code>jobs</code></td>
+<td>required</td>
+<td>A map of job name to job definition.</td>
+</tr>
+</tbody>
+</table>
+<p><code>validate</code> prints where all three resolve, and how many masking threads a run would use.</p>
+<p>Any other field is an error, so a misspelled setting stops <code>validate</code> rather than being ignored. The one exception is a key beginning with <code>x-</code>, which is left alone for YAML anchors, as docker-compose uses them.</p>
+<h3 id="acknowledged"><code>acknowledged</code><a class="headerlink" href="#acknowledged" title="Permanent link">#</a></h3>
+<p>A table nobody wrote a job for is invisible to <code>audit</code>, which checks the jobs that exist. <code>bauta coverage</code> lists a source database's tables instead and fails on any that no job covers — so leaving one out has to be said out loud, with the reason:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">acknowledged</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">prod</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">audit_log</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">internal audit trail, never leaves production</span>
+<span class="w">    </span><span class="nt">employees</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">HR data, out of scope for this copy</span>
+</code></pre></div>
+<p>A reason is required, since the point is the recorded decision rather than the silence. <code>coverage</code> also reports a table declared here that the database no longer has, so a stale declaration doesn't quietly cover a table that was dropped and recreated under another name.</p>
+<h3 id="defaults"><code>defaults</code><a class="headerlink" href="#defaults" title="Permanent link">#</a></h3>
+<p>What every job would otherwise repeat. A job that names any of these itself keeps its own value.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>active</code>, <code>refresh</code></td>
+<td>As in <a href="#scheduling">scheduling</a>.</td>
+</tr>
+<tr>
+<td><code>sourceConnection</code>, <code>targetConnection</code></td>
+<td>As in <a href="#extract">extract</a> and <a href="#load">load</a>.</td>
+</tr>
+<tr>
+<td><code>insertStrategy</code>, <code>chunkSize</code></td>
+<td>As in <a href="#load">load</a> and <a href="#extract">extract</a>.</td>
+</tr>
+<tr>
+<td><code>retries</code>, <code>retryDelaySeconds</code>, <code>timeoutSeconds</code></td>
+<td>As in <a href="#scheduling">scheduling</a>.</td>
+</tr>
+<tr>
+<td><code>partitions</code></td>
+<td>As in <a href="#load">load</a>. <code>auto</code> is the one to set here: it decides per job, and reads as one stream any job it can't slice.</td>
+</tr>
+<tr>
+<td><code>masking.key</code></td>
+<td>The key a masked job uses when it gives none of its own.</td>
+</tr>
+</tbody>
+</table>
+<p><code>defaults</code> may set nothing else. A <strong>masking policy stays with its job</strong>: <code>columns</code> names what happens to each column, and a reviewer should be able to read that in one place without holding the whole file in their head. <code>masking.key</code> is a reference to a secret, not a policy, so it may be shared.</p>
+<p>A job with no <code>masking</code> block of its own does not grow one from <code>defaults</code>. An unmasked job stays visibly unmasked.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">defaults</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">active</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">  </span><span class="nt">sourceConnection</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sourceDb</span>
+<span class="w">  </span><span class="nt">targetConnection</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">targetDb</span>
+<span class="w">  </span><span class="nt">insertStrategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">upsert</span>
+<span class="w">  </span><span class="nt">chunkSize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5000</span>
+<span class="w">  </span><span class="nt">masking</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MASKING_KEY}</span>
+
+<span class="nt">jobs</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">maskCustomers</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">sourceQuery</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">select id, email from customers</span>
+<span class="w">    </span><span class="nt">targetTableFinal</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">customers</span>
+<span class="w">    </span><span class="nt">masking</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">columns</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">keep</span>
+<span class="w">        </span><span class="nt">email</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">email</span>
+</code></pre></div>
+<h3 id="tables">Tables<a class="headerlink" href="#tables" title="Permanent link">#</a></h3>
+<p>In place of a file path, <code>memory</code>, <code>history</code> and <code>manifest</code> take a table in one of <code>connections.yaml</code>'s aliases:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">memory</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">connection</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">warehouse</span>
+<span class="nt">history</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">connection</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">warehouse</span>
+<span class="w">  </span><span class="nt">table</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">etl.run_history</span>
+</code></pre></div>
+<p><code>table</code> defaults to <code>bauta_memory</code>, <code>bauta_history</code> or <code>bauta_manifest</code>, and <code>--memory-table</code>, <code>--history-table</code> or <code>--manifest-table</code> overrides it. The alias must be in <code>connections.yaml</code>, and the table must exist first: <a href="../tables/">operations.md</a> has their definitions.</p>
+<h2 id="scheduling">Scheduling<a class="headerlink" href="#scheduling" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required or default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>active</code></td>
+<td>required</td>
+<td>Whether the job runs at all.</td>
+</tr>
+<tr>
+<td><code>refresh</code></td>
+<td>optional</td>
+<td>Minimum minutes between runs. Applies across separate invocations too. A predecessor inside its own refresh window is <strong>not</strong> waited for — see <a href="../../concepts/how-it-works/#refresh-and-predecessors">refresh and predecessors</a>.</td>
+</tr>
+<tr>
+<td><code>predecessors</code></td>
+<td>optional</td>
+<td>Jobs that must complete first. A job whose predecessor fails is <strong>skipped</strong>. Predecessors that form a cycle are a validation error.</td>
+</tr>
+<tr>
+<td><code>retries</code></td>
+<td>optional, <code>0</code></td>
+<td>Extra attempts after a failure, with exponential backoff. See <a href="../../concepts/how-it-works/#retries">retries</a>.</td>
+</tr>
+<tr>
+<td><code>retryDelaySeconds</code></td>
+<td>optional, <code>5.0</code></td>
+<td>The first backoff delay; each subsequent one doubles, up to five minutes.</td>
+</tr>
+<tr>
+<td><code>timeoutSeconds</code></td>
+<td>optional</td>
+<td>The most the job may take, retries included. Past it, the job's process is stopped, the job fails, and its dependents are skipped. See <a href="../../concepts/how-it-works/#workers">workers</a>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="extract">Extract<a class="headerlink" href="#extract" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required or default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sourceConnection</code></td>
+<td>required</td>
+<td>An alias from <code>connections.yaml</code>.</td>
+</tr>
+<tr>
+<td><code>sourceQuery</code></td>
+<td>required</td>
+<td>The query to extract with.</td>
+</tr>
+<tr>
+<td><code>chunkSize</code></td>
+<td>required, at least 1</td>
+<td>Rows per batch. Extracts stream, so this is the <strong>memory dial</strong>: peak memory is about <code>chunkSize</code> × row width however large the source is — four times that where the <a href="../../guides/make-it-faster/#the-native-masker">native masker</a> overlaps reading, masking and writing.</td>
+</tr>
+<tr>
+<td><code>watermarkColumn</code></td>
+<td>optional</td>
+<td>Makes the job incremental. See <a href="../../concepts/how-it-works/#incremental-loads">incremental loads</a>. Refused by <code>validate</code> on a column the masking policy masks, by name or through <code>defaultStrategy</code>: the watermark is read before masking and kept in run state, logs and <code>bauta jobs</code>, so it would leak the unmasked value.</td>
+</tr>
+<tr>
+<td><code>watermarkInitial</code></td>
+<td>required with <code>watermarkColumn</code></td>
+<td>The value bound on the first run, before anything is stored. Bound as the type YAML read: write a timestamp unquoted, or PostgreSQL and Oracle refuse the <a href="../../concepts/how-it-works/#why-the-lookback-window">lookback</a> arithmetic around it.</td>
+</tr>
+</tbody>
+</table>
+<p>A job with <code>watermarkColumn</code> must also put a <code>{{ watermark }}</code> placeholder in <code>sourceQuery</code> and use <code>insertStrategy: upsert</code>, or <code>append</code> into a files connection. Validation enforces all three. The placeholder may appear more than once -- <code>created &gt; {{ watermark }} OR updated &gt; {{ watermark }}</code> -- and the watermark is bound at each; one inside a comment or a string literal is left as it is, and doesn't count. <code>watermarkColumn</code> matches the query's column ignoring case where only one does, since Oracle returns an unquoted name in capitals.</p>
+<h2 id="transform">Transform<a class="headerlink" href="#transform" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required or default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sourceQueryColumnTransforms</code></td>
+<td>optional</td>
+<td>A map of column name to a list of transformer references, applied in order.</td>
+</tr>
+</tbody>
+</table>
+<p>A reference is <code>module.path:function_name</code> — any importable function taking the column value and returning the new one. Further arguments go in parentheses after the name, as Python literals (numbers, quoted strings, <code>True</code>, <code>False</code>, <code>None</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="nt">sourceQueryColumnTransforms</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">amount</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bauta.transform.builtinTransforms:currency</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bauta.transform.builtinTransforms:collapseWhitespace</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bauta.transform.builtinTransforms:truncate(50)</span>
+<span class="w">  </span><span class="nt">signup_date</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"bauta.transform.builtinTransforms:parseDate('%d/%m/%Y')"</span>
+</code></pre></div>
+<p>Quote a reference whose arguments contain <code>:</code>, <code>#</code> or a leading quote, as YAML would otherwise read them. <code>validate</code> checks that each reference imports and that its arguments fit the function, so a missing or misspelled argument fails there rather than on the first row. Only literals are accepted, so a reference can't run code.</p>
+<p>These ship with the package, in <code>bauta.transform.builtinTransforms</code>. Every one passes NULL through unchanged, except <code>defaultIfNull</code>, and raises on a value it can't convert rather than guessing.</p>
+<table>
+<thead>
+<tr>
+<th>Transform</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>upper</code>, <code>lower</code>, <code>title</code></td>
+<td>Case changed: <code>title</code> gives <code>Ann-Marie O'Neil</code>.</td>
+</tr>
+<tr>
+<td><code>strip</code></td>
+<td>Leading and trailing whitespace removed.</td>
+</tr>
+<tr>
+<td><code>collapseWhitespace</code></td>
+<td>Stripped, with every run of whitespace inside turned into one space.</td>
+</tr>
+<tr>
+<td><code>removeAccents</code></td>
+<td><code>Zoë Müller</code> → <code>Zoe Muller</code>, so accented and plain spellings match. Letters like <code>ß</code> and <code>ø</code> are kept.</td>
+</tr>
+<tr>
+<td><code>truncate(maxLength=255)</code></td>
+<td>At most <code>maxLength</code> characters: <code>truncate(50)</code>.</td>
+</tr>
+<tr>
+<td><code>padLeft(width, fill='0')</code></td>
+<td>Filled on the left to <code>width</code> characters: <code>padLeft(5)</code> turns <code>42</code> into <code>00042</code>.</td>
+</tr>
+<tr>
+<td><code>replace(old, new='')</code></td>
+<td>Every <code>old</code> replaced: <code>replace('-')</code> removes hyphens.</td>
+</tr>
+<tr>
+<td><code>regexReplace(pattern, replacement='')</code></td>
+<td>A regular-expression replacement; <code>\1</code> refers to a group.</td>
+</tr>
+<tr>
+<td><code>digitsOnly</code></td>
+<td>Only the digits: <code>+1 (555) 010-9999</code> → <code>15550109999</code>.</td>
+</tr>
+<tr>
+<td><code>nullIfBlank</code></td>
+<td>NULL for empty or whitespace-only text.</td>
+</tr>
+<tr>
+<td><code>nullIfNotFinite</code></td>
+<td>NULL for a float that is NaN or infinite, which MySQL, MariaDB, SQL Server and an Oracle <code>NUMBER</code> can't hold. A load sending one there fails, naming the column.</td>
+</tr>
+<tr>
+<td><code>nullIf(*values)</code></td>
+<td>NULL for any of the listed values: <code>nullIf('N/A', -1)</code>.</td>
+</tr>
+<tr>
+<td><code>defaultIfNull(default)</code></td>
+<td><code>default</code> in place of NULL: <code>defaultIfNull('unknown')</code>.</td>
+</tr>
+<tr>
+<td><code>currency(symbol='$', decimals=2)</code></td>
+<td><code>1234.5</code> → <code>$1,234.50</code>, <code>-5</code> → <code>-$5.00</code>; <code>currency('€')</code>, <code>currency('¥', 0)</code>.</td>
+</tr>
+<tr>
+<td><code>roundNumber(digits=0)</code></td>
+<td>Rounded half away from zero, keeping the value's type; a negative <code>digits</code> rounds to tens, hundreds and so on.</td>
+</tr>
+<tr>
+<td><code>toInteger</code></td>
+<td>An integer from text or a whole number. Blank text is NULL; <code>1.5</code> raises rather than being cut short.</td>
+</tr>
+<tr>
+<td><code>toDecimal</code></td>
+<td>An exact decimal from text or a number; <code>0.1</code> stays exactly <code>0.1</code>. Blank text is NULL.</td>
+</tr>
+<tr>
+<td><code>toBoolean</code></td>
+<td>True or false from <code>Y</code>/<code>N</code>, <code>yes</code>/<code>no</code>, <code>true</code>/<code>false</code>, <code>t</code>/<code>f</code>, <code>on</code>/<code>off</code>, <code>1</code>/<code>0</code>. Blank text is NULL; anything else raises.</td>
+</tr>
+<tr>
+<td><code>booleanToYN</code></td>
+<td><code>Y</code> or <code>N</code>, for single-character flag columns.</td>
+</tr>
+<tr>
+<td><code>parseDate(format='%Y-%m-%d')</code></td>
+<td>A date from text, by a <a href="https://docs.python.org/3/library/datetime.html#format-codes">strptime format</a>. Dates pass through; datetimes lose their time.</td>
+</tr>
+<tr>
+<td><code>parseDateTime(format='%Y-%m-%d %H:%M:%S')</code></td>
+<td>A datetime from text; <code>%z</code> in the format keeps the UTC offset.</td>
+</tr>
+<tr>
+<td><code>formatDate(format='%Y-%m-%d')</code></td>
+<td>A date, datetime or time as text.</td>
+</tr>
+<tr>
+<td><code>epochSecondsToDate</code></td>
+<td>A date from Unix seconds, in UTC whatever the server's timezone.</td>
+</tr>
+<tr>
+<td><code>epochSecondsToDateTime</code>, <code>epochMillisecondsToDateTime</code></td>
+<td>A timezone-aware UTC datetime from Unix seconds or milliseconds.</td>
+</tr>
+<tr>
+<td><code>toString</code></td>
+<td>Text: dates as ISO 8601, bytes decoded as UTF-8.</td>
+</tr>
+<tr>
+<td><code>toJson</code></td>
+<td>A document or list as JSON text, with sorted keys; text passes through as it is.</td>
+</tr>
+</tbody>
+</table>
+<p>Transforms apply to <strong><code>sourceQuery</code>'s own result columns</strong>, not the target's. Naming a column the query doesn't return fails before anything is written. A transformer that raises fails the job; the error names the column and the value's type, never the value.</p>
+<h2 id="load">Load<a class="headerlink" href="#load" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required or default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>targetConnection</code></td>
+<td>required</td>
+<td>An alias from <code>connections.yaml</code>.</td>
+</tr>
+<tr>
+<td><code>targetTableFinal</code></td>
+<td>required</td>
+<td>The table to load: <code>table</code>, or <code>schema.table</code> for one outside the connection's current schema. For a files connection, the table's directory under <code>root</code>, such as <code>crm/customers</code>: no absolute path, no <code>..</code>, and no part beginning with <code>_</code> or <code>.</code>, which engines reading a directory tree skip, and bauta keeps for its staging.</td>
+</tr>
+<tr>
+<td><code>insertStrategy</code></td>
+<td>required</td>
+<td><code>swap</code> or <code>upsert</code> into a database; <code>append</code> or <code>overwrite</code> into a files connection; <code>append</code>, <code>overwrite</code> or <code>upsert</code> into Iceberg — below.</td>
+</tr>
+<tr>
+<td><code>targetTableStage</code></td>
+<td>required for <code>swap</code></td>
+<td>A staging table with the same shape, emptied before each load, so it must be a different table from <code>targetTableFinal</code> (compared ignoring case). For <code>swap</code>, it must be in the same schema as <code>targetTableFinal</code>.</td>
+</tr>
+<tr>
+<td><code>targetColumns</code></td>
+<td>optional</td>
+<td>Target column names matching <code>sourceQuery</code>'s SELECT list <strong>by position</strong>.</td>
+</tr>
+<tr>
+<td><code>preTargetAdhocQueries</code></td>
+<td>optional</td>
+<td>SQL run on the target before any write, the stage load included.</td>
+</tr>
+<tr>
+<td><code>postTargetAdhocQueries</code></td>
+<td>optional</td>
+<td>SQL run on the target after the load.</td>
+</tr>
+<tr>
+<td><code>targetColumnTypes</code></td>
+<td>optional; files and Iceberg only</td>
+<td>Column → type, for a column whose values don't settle its type, or settle it as something else: <code>string</code>, <code>binary</code>, <code>bool</code>, <code>int8</code> to <code>int64</code>, <code>uint8</code> to <code>uint64</code>, <code>float32</code>, <code>float64</code>, <code>decimal(precision,scale)</code> up to 38 digits, <code>date</code>, <code>time</code>, <code>timestamp</code> (without a time zone) or <code>timestamptz</code> (an instant, written in UTC). See <a href="../../concepts/how-it-works/#column-types">column types</a>.</td>
+</tr>
+<tr>
+<td><code>targetKey</code></td>
+<td>optional; Iceberg only</td>
+<td>The columns an <code>upsert</code> matches rows by, which a table bauta creates is given as its identifier fields. An existing table's own identifier fields serve without it; given both, they must agree.</td>
+</tr>
+<tr>
+<td><code>singleFile</code></td>
+<td>optional, <code>false</code>; files only</td>
+<td>Write an <code>overwrite</code> job's table as one file, <code>&lt;targetTableFinal&gt;.parquet</code>, replaced whole each run, rather than a directory of parts. For small tables and handoffs to something that wants one file.</td>
+</tr>
+<tr>
+<td><code>partitions</code></td>
+<td>optional; a database only, but <code>auto</code> anywhere</td>
+<td><code>{column: id, count: 8}</code>: read, mask and write the job as <code>count</code> slices at once, each a range of the <code>column</code> the query returns -- a number, or any other value the database orders, such as a UUID key -- each with connections of its own. At least 2, and no more than the <code>maxConcurrentJobs</code> of either connection; refused for DuckDB. The job succeeds only if every slice does. <strong><code>count: auto</code></strong> chooses the count as the job starts, and <strong><code>partitions: auto</code></strong> the column too: the target's primary key. Either reads as one stream a job it can't slice, and is never refused. See <a href="../../concepts/how-it-works/#partitions">partitions</a> and <a href="../../guides/make-it-faster/#partitions-auto">choosing automatically</a>.</td>
+</tr>
+</tbody>
+</table>
+<p><code>targetTableStage</code>, the adhoc queries and <code>partitions</code> are for a table in a database; <code>targetColumnTypes</code> for files and Iceberg; <code>singleFile</code> for files; <code>targetKey</code> for Iceberg. Each given to another kind of target is an error.</p>
+<ul>
+<li><strong><code>swap</code></strong> loads <code>targetTableStage</code>, then swaps it with <code>targetTableFinal</code> by renaming the two. The target is replaced wholesale. See <a href="../../concepts/how-it-works/#how-a-swap-works">how the swap works</a> for what renaming means for views and on Oracle.</li>
+<li><strong><code>append</code></strong> (files) adds the run's parts to the table's directory, beside those already there. With a watermark it is an incremental export, and like any append-only table it can hold a row twice: see <a href="../../concepts/how-it-works/#appends-and-duplicate-rows">duplicates</a>.</li>
+<li><strong><code>overwrite</code></strong> (files) publishes the whole table as a new snapshot, <code>snapshot=&lt;run&gt;/</code> in the table's directory, and keeps the newest <code>keepSnapshots</code>. Readers pick the newest complete one; see <a href="../../concepts/how-it-works/#reading-an-overwrite-jobs-table">reading a snapshot</a>.</li>
+<li><strong>Into Iceberg</strong>, <code>append</code> adds the run's rows and <code>overwrite</code> replaces the table's, each in one commit, and <code>upsert</code> merges them by <code>targetKey</code> or the table's identifier fields, a commit per row group. See <a href="../../concepts/how-it-works/#iceberg-tables">Iceberg tables</a>.</li>
+<li><strong><code>upsert</code></strong> inserts or updates by the target's declared primary key — from <code>targetTableStage</code> if set, otherwise straight from the extract. UNIQUE constraints aren't part of the match. A target without a primary key fails the job before anything is written; <code>bauta run --dry-run</code> checks for one too.</li>
+</ul>
+<h2 id="mask">Mask<a class="headerlink" href="#mask" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required or default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>masking</code></td>
+<td>optional</td>
+<td>Masks rows between the extract and the load. Its fields are <code>key</code>, <code>columns</code> and <code>defaultStrategy</code>, all documented in <a href="../../guides/mask-a-table/#a-masked-job">masking.md</a>.</td>
+</tr>
+<tr>
+<td><code>unmasked</code></td>
+<td>optional, <code>false</code></td>
+<td>Says this job copies its rows as they stand, and that somebody decided so. Cannot be set beside <code>masking</code>.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="nt">masking</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MASKING_KEY}</span>
+<span class="w">  </span><span class="nt">columns</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">keep</span>
+<span class="w">    </span><span class="nt">email</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">email</span>
+<span class="w">    </span><span class="nt">customerId</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> strategy</span><span class="p">:</span><span class="w"> </span><span class="nv">key</span><span class="p p-Indicator">,</span><span class="nt"> domain</span><span class="p">:</span><span class="w"> </span><span class="nv">customer</span><span class="w"> </span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p>Masking runs after transforms, on <code>sourceQuery</code>'s result columns. <strong>Every column the query returns must be listed</strong>, or the job fails before writing anything. See <a href="../../guides/mask-a-table/">masking.md</a> for the strategies, domains and the key.</p>
+<h3 id="copying-without-masking">Copying without masking<a class="headerlink" href="#copying-without-masking" title="Permanent link">#</a></h3>
+<p>A job with no <code>masking</code> block copies every column as it stands, which <code>bauta audit</code> reports, since it is a choice a reviewer has to see:</p>
+<ul>
+<li>a column whose name suggests personal data is an <strong>error</strong>, naming the columns and why;</li>
+<li>otherwise it is a <strong>warning</strong>.</li>
+</ul>
+<p><code>unmasked: true</code> says the job was reviewed and copies as it stands, the way <code>keep</code> says it of a single column. The warning then goes, the audit report shows the job as <code>not masked, declared with \</code>unmasked``, and a column that still looks like personal data is reported as a warning rather than an error.</p>
+<h2 id="load-details">Load details<a class="headerlink" href="#load-details" title="Permanent link">#</a></h2>
+<p><strong>Into a files connection, <code>targetColumns</code> names the columns</strong> the query's result is written as, in its order. Without it they are the query's own names. Two names differing only in case are refused, since several engines can't tell them apart.</p>
+<p><strong><code>targetColumns</code> is purely positional.</strong> Left unset, <code>sourceQuery</code> must select every column of <code>targetTableFinal</code> in that table's own order. Real column names in the wrong order load data into the wrong columns <em>without any error</em>, since both sides are valid; a wrong count fails at the database.</p>
+<p><strong>Column names are quoted</strong> in the statements a load writes, so a reserved word such as <code>rank</code> or <code>order</code> works as a column. Each name is first matched to the target's own spelling, ignoring case, so <code>targetColumns: [job]</code> still finds Oracle's <code>JOB</code>; a name the table doesn't have fails the job before anything is written, and so does one that matches two columns differing only in case, until it's spelled exactly.</p>
+<p><strong>Table names are quoted too</strong>, so <code>targetTableFinal: group</code> loads into a table named for a reserved word. A name written plainly means what it means without quotes, so <code>orders</code> finds Oracle's <code>ORDERS</code> and PostgreSQL's <code>orders</code>; to name a table those two would fold differently — Oracle's lower-case <code>"orders"</code>, PostgreSQL's <code>"Orders"</code> — write it in quotes, in that database's own style (<code>"..."</code>, or <code>`...`</code> on MySQL and MariaDB, <code>[...]</code> on SQL Server), and that spelling is kept as it is. A schema is quoted apart from the table, so <code>sales.group</code> stays two names. The same holds for <code>targetTableStage</code>, for the tables <code>clear</code> empties, and for the names <code>schema</code>, <code>subset</code> and <code>discover</code> write into what they generate. <code>sourceQuery</code> and the adhoc queries are yours, and are written into SQL as given.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../connections/" class="md-footer__link md-footer__link--prev" aria-label="Previous: connections.yaml">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                connections.yaml
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../strategies/" class="md-footer__link md-footer__link--next" aria-label="Next: Masking strategies">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Masking strategies
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      MIT licensed
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ribeiro11075/bauta" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://pypi.org/project/bauta/" target="_blank" rel="noopener" title="pypi.org" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.8 200.5c-7.7-30.9-22.3-54.2-53.4-54.2h-40.1v47.4c0 36.8-31.2 67.8-66.8 67.8H172.7c-29.2 0-53.4 25-53.4 54.3v101.8c0 29 25.2 46 53.4 54.3 33.8 9.9 66.3 11.7 106.8 0 26.9-7.8 53.4-23.5 53.4-54.3v-40.7H226.2v-13.6h160.2c31.1 0 42.6-21.7 53.4-54.2 11.2-33.5 10.7-65.7 0-108.6M286.2 444.7a20.4 20.4 0 1 1 0-40.7 20.4 20.4 0 1 1 0 40.7M167.8 248.1h106.8c29.7 0 53.4-24.5 53.4-54.3V91.9c0-29-24.4-50.7-53.4-55.6-35.8-5.9-74.7-5.6-106.8.1-45.2 8-53.4 24.7-53.4 55.6v40.7h106.9v13.6h-147c-31.1 0-58.3 18.7-66.8 54.2-9.8 40.7-10.2 66.1 0 108.6 7.6 31.6 25.7 54.2 56.8 54.2H101v-48.8c0-35.3 30.5-66.4 66.8-66.4m-6.6-183.4a20.4 20.4 0 1 1 0 40.8 20.4 20.4 0 1 1 0-40.8"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.indexes", "navigation.path", "navigation.footer", "navigation.top", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
