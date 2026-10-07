@@ -145,10 +145,22 @@ def test_a_completed_job_says_where_its_time_went(sqliteJob, monkeypatch):
 
     from bauta.masking.core import BoundMasking
 
-    # Masking 50 values takes too little time to tell from none; each chunk
-    # is made to take a known while, which must land in `mask` and nowhere else.
+    # On a clock that moves only while a chunk is masked, a second each, so
+    # what is asked is where the time is put, not how fast this machine is:
+    # with real time, a slow runner took 0.3s to write 50 rows to SQLite.
+    # A clock for each thread, since the next chunk is masked while the last
+    # is written, and each stage is timed on its own thread.
+    clocks = threading.local()
+    chunks = []
     apply = BoundMasking.apply
-    monkeypatch.setattr(BoundMasking, 'apply', lambda self, *args, **kwargs: (time.sleep(0.02), apply(self, *args, **kwargs))[1])
+
+    def maskingForASecond(self, *args, **kwargs):
+        clocks.now = getattr(clocks, 'now', 0.0) + 1.0
+        chunks.append(1)
+        return apply(self, *args, **kwargs)
+
+    monkeypatch.setattr(time, 'perf_counter', lambda: getattr(clocks, 'now', 0.0))
+    monkeypatch.setattr(BoundMasking, 'apply', maskingForASecond)
     job = dataJob(sourceConnection='db', targetConnection='db', sourceQuery='SELECT id, name FROM src', targetTableFinal='tgt', chunkSize=7,
                   masking={'key': 'a-throttle-test-masking-key', 'columns': {'id': 'keep', 'name': 'hash'}})
 
@@ -157,8 +169,9 @@ def test_a_completed_job_says_where_its_time_went(sqliteJob, monkeypatch):
     assert outcome.rowCount == 50
     assert set(outcome.stages) == {'read', 'mask', 'write', 'throttled'}
     # 50 rows in chunks of 7 is 8 chunks.
-    assert outcome.stages['mask'] >= 8 * 0.02
-    assert outcome.stages['read'] < 8 * 0.02 and outcome.stages['write'] < 8 * 0.02
+    assert len(chunks) >= 8
+    assert outcome.stages['mask'] == pytest.approx(len(chunks))
+    assert outcome.stages['read'] == 0.0 and outcome.stages['write'] == 0.0
     assert outcome.stages['throttled'] == 0.0
 
 
@@ -182,7 +195,11 @@ def test_a_job_with_partitions_adds_its_slices_times_together(sqliteJob, monkeyp
     assert outcome.rowCount == 50 and outcome.stages['mask'] >= 9 * 0.02
 
 
-def test_a_job_reading_from_a_limited_connection_waits_for_it(sqliteJob):
+def test_a_job_reading_from_a_limited_connection_waits_for_it(sqliteJob, monkeypatch):
+    # On the test's clock, which moves only while the limit sleeps: on a real
+    # one, the limit's budget refills while a slow runner writes, and the job
+    # waited 0.2s rather than 0.5s, as it should.
+    clock = _Clock(monkeypatch)
     throttle.setSharedReadLimits({})
     settings = {'db': sqliteJob['db'].model_copy(update={'maxRowsReadPerSecond': 100.0})}
     # 100 rows at 100 a second fit within the burst; the next 50 owe half a second.
@@ -193,7 +210,8 @@ def test_a_job_reading_from_a_limited_connection_waits_for_it(sqliteJob):
     outcome = _executeDataJob('copy', job, settings)
 
     assert outcome.rowCount == 150
-    assert outcome.stages['throttled'] == pytest.approx(0.5, abs=0.2)
+    assert sum(clock.slept) == pytest.approx(0.5)
+    assert outcome.stages['throttled'] == pytest.approx(0.5)
 
 
 def _readThrough(shared, start, rows, results):
