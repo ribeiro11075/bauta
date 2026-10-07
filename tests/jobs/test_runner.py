@@ -62,8 +62,8 @@ class _FakeDatabase:
     def __exit__(self, *args: Any) -> None:
         return None
 
-    def substituteWatermarkPlaceholder(self, query: str) -> str:
-        return query.replace('{{ watermark }}', '?')
+    def bindWatermark(self, query: str, watermark: Any) -> Tuple[str, Tuple[Any, ...]]:
+        return query.replace('{{ watermark }}', '?'), (watermark,) * query.count('{{ watermark }}')
 
     def stream(self, query: str, chunkSize: int, parameters: Any = None) -> Tuple[List[str], Any]:
         """Mirrors Database.stream: (columns, chunkIterator), sliced at chunkSize
@@ -99,9 +99,19 @@ class _FakeDatabase:
     def swap(self, targetTable: str, stageTable: str) -> None:
         self.calls.append(('swap', targetTable, stageTable))
 
+    def recoverInterruptedSwap(self, targetTable: str, stageTable: str) -> Optional[str]:
+        # Not recorded: only a database whose renames commit alone ever has
+        # anything to put right, and the tests compare the calls in order.
+        return None
+
     def copyKeys(self, fromTable: str, toTable: str) -> List[str]:
         self.calls.append(('copyKeys', fromTable, toTable))
         return []
+
+    def copyAccess(self, fromTable: str, toTable: str) -> Tuple[List[str], List[str]]:
+        # Not recorded, like recoverInterruptedSwap: a step beside copyKeys
+        # that the tests comparing calls in order don't concern.
+        return [], []
 
     def upsert(self, table: str, data: List[Tuple[Any, ...]], chunkSize: int = 100, columns: Any = None) -> None:
         self.calls.append(('upsert', table, data, chunkSize, columns))
@@ -1827,3 +1837,88 @@ def test_a_key_changed_under_many_jobs_is_described_once_with_the_names_cut_shor
     assert '({} job(s); was aaa, now bbb)'.format(LISTED_JOBS + 5) in described
     assert 'and 5 more' in described and 'job{:02d}'.format(LISTED_JOBS) not in described
     assert 'other (1 job(s); was ccc, now bbb)' in described
+
+
+def test_sigterm_during_a_swap_is_acted_on_once_the_swap_has_finished(monkeypatch):
+    """A job past its timeoutSeconds is sent SIGTERM, which arriving between
+    two of Oracle's renames left the target missing. It now waits for the
+    swap, then stops the job as it would have.
+    """
+    import os
+    import signal
+
+    from bauta.jobs.targets import _terminationDeferred
+
+    resent = []
+    monkeypatch.setattr(os, 'kill', lambda pid, number: resent.append(number))
+    before = signal.getsignal(signal.SIGTERM)
+
+    with _terminationDeferred():
+        signal.raise_signal(signal.SIGTERM)
+        assert resent == []
+
+    assert resent == [signal.SIGTERM]
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_each_job_sees_the_environment_as_the_run_that_started_it_has_it(tmp_path, sqliteDatabase, monkeypatch):
+    """Job processes are forked from a forkserver, which keeps the environment
+    it was started with: a program running bauta from Python that changed
+    BAUTA_NATIVE between runs would have had its jobs ignore it.
+    """
+    probe = {'probe': _sqliteJob(sqliteDatabase, sourceQueryColumnTransforms={'name': ['tests.jobs.crashingTransforms:fromEnvironment']})}
+
+    for value in ('first', 'second'):
+        monkeypatch.setenv('BAUTA_TEST_PROBE', value)
+        _runJobs(probe, sqliteDatabase, tmp_path)
+
+        with sqlite3.connect(sqliteDatabase['lite'].path) as connection:
+            assert connection.execute('select distinct name from target').fetchall() == [(value,)]
+        connection.close()
+
+
+def test_job_processes_are_forked_from_a_server_unless_spawn_is_asked_for(monkeypatch):
+    import multiprocessing
+
+    from bauta.jobs import workers
+
+    if 'forkserver' in multiprocessing.get_all_start_methods():
+        assert workers._processContext().get_start_method() == 'forkserver'
+    monkeypatch.setenv('BAUTA_START_METHOD', 'spawn')
+    assert workers._processContext().get_start_method() == 'spawn'
+
+
+@pytest.mark.parametrize('message', ['canceling statement due to statement timeout',
+                                     '3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded',
+                                     '1969 (70100): Query execution was interrupted (max_statement_time exceeded)',
+                                     'DPY-4024: call timeout of 1000 ms exceeded',
+                                     "(8649, b'The query has been canceled because the estimated cost of this query (24) exceeds the configured threshold of 1.')"])
+def test_a_statement_stopped_by_its_timeout_is_not_retried(message):
+    """statementTimeoutSeconds stops a query that runs away on the source;
+    retrying it would run it as long again, retries times over.
+    """
+    from bauta.jobs.pipeline import _executeWithRetries
+
+    attempts = []
+
+    def attempt():
+        attempts.append(1)
+        raise RuntimeError(message)
+
+    outcome = _executeWithRetries(dataJob(retries=3, retryDelaySeconds=0.0), 'job1', attempt)
+
+    assert outcome.status == JobStatus.FAILED and len(attempts) == 1
+
+
+def test_a_dropped_oracle_connection_is_still_retried():
+    from bauta.jobs.pipeline import _executeWithRetries
+
+    attempts = []
+
+    def attempt():
+        attempts.append(1)
+        raise RuntimeError('DPY-4011: the database or network closed the connection')
+
+    _executeWithRetries(dataJob(retries=2, retryDelaySeconds=0.0), 'job1', attempt)
+
+    assert len(attempts) == 3

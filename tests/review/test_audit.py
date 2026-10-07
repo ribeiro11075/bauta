@@ -2,7 +2,7 @@
 import functools
 from typing import Any
 
-from bauta.review.audit import auditJobs, renderAudit
+from bauta.review.audit import ConnectedFacts, auditJobs, renderAudit
 from bauta.configuration import DataJobConfig
 from tests.jobConfigs import dataJob
 
@@ -46,8 +46,7 @@ def test_a_default_strategy_of_keep_is_flagged():
 
 
 def test_resolved_columns_show_what_falls_to_the_default_strategy():
-    report = auditJobs({'maskCustomers': _masked({'email': 'email'}, defaultStrategy='null')},
-                       returnedColumns={'maskCustomers': ['EMAIL', 'notes', 'ssn']})
+    report = auditJobs({'maskCustomers': _masked({'email': 'email'}, defaultStrategy='null')}, ConnectedFacts(returnedColumns={'maskCustomers': ['EMAIL', 'notes', 'ssn']}))
 
     (job,) = report['jobs']
     assert job['columnsResolved']
@@ -57,7 +56,7 @@ def test_resolved_columns_show_what_falls_to_the_default_strategy():
 
 
 def test_a_policy_that_does_not_cover_the_query_is_an_error():
-    report = auditJobs({'maskCustomers': _masked({'email': 'email'})}, returnedColumns={'maskCustomers': ['email', 'ssn']})
+    report = auditJobs({'maskCustomers': _masked({'email': 'email'})}, ConnectedFacts(returnedColumns={'maskCustomers': ['email', 'ssn']}))
 
     assert report['summary']['error'] == 1
     assert 'not in the masking policy: ssn' in report['findings'][0]['message']
@@ -77,7 +76,7 @@ def test_an_unmasked_copy_from_a_source_other_jobs_mask_is_flagged():
 
 
 def test_an_unencrypted_source_connection_is_flagged_for_masked_jobs():
-    report = auditJobs({'maskCustomers': _masked({'email': 'email'})}, encryption={'prod': False, 'staging': True})
+    report = auditJobs({'maskCustomers': _masked({'email': 'email'})}, ConnectedFacts(encryption={'prod': False, 'staging': True}))
 
     assert _messages(report, 'warning') == [('maskCustomers', 'reads unmasked data from prod over a connection that is not encrypted')]
     assert report['connections'] == {'prod': {'encrypted': False}, 'staging': {'encrypted': True}}
@@ -93,8 +92,7 @@ def test_shuffle_on_an_incremental_job_is_flagged():
 
 
 def test_findings_are_ordered_errors_first():
-    report = auditJobs({'maskCustomers': _masked({'email': 'keep'}, defaultStrategy='null')},
-                       returnedColumns={'maskCustomers': ['email', 'notes']}, unreachable={'other': 'boom'})
+    report = auditJobs({'maskCustomers': _masked({'email': 'keep'}, defaultStrategy='null')}, ConnectedFacts(returnedColumns={'maskCustomers': ['email', 'notes']}, unreachable={'other': 'boom'}))
 
     assert [finding['severity'] for finding in report['findings']] == ['warning', 'info']
 
@@ -103,7 +101,7 @@ def test_the_text_report_names_every_column_and_finding():
     text = renderAudit(auditJobs({
         'maskCustomers': _masked({'email': 'keep'}, defaultStrategy='null'),
         'copyOrders': _job(active=False),
-        }, encryption={'prod': None}))
+        }, ConnectedFacts(encryption={'prod': None})))
 
     assert 'maskCustomers: prod -> staging.customers' in text
     assert 'email                        keep' in text
@@ -191,7 +189,8 @@ def _connected(jobs, **overrides):
         targetColumns={'maskCustomers': ['id', 'email'], 'maskOrders': ['id', 'customer_id']},
         foreignKeys={'staging': [_foreignKey()]})
     arguments.update(overrides)
-    return auditJobs(jobs, **arguments)
+    connections = arguments.pop('connections', None)
+    return auditJobs(jobs, ConnectedFacts(**arguments), connections=connections)
 
 
 def test_a_reference_masked_like_its_key_has_no_findings():
@@ -261,7 +260,7 @@ def _copies(customersQuery, ordersQuery='select * from orders', **customers: Any
 
 
 def _coverage(jobs):
-    report = auditJobs(jobs, foreignKeys={'staging': [_foreignKey()]})
+    report = auditJobs(jobs, ConnectedFacts(foreignKeys={'staging': [_foreignKey()]}))
     return [(job, message) for job, message in _messages(report, 'warning') if 'copies only in part' in message]
 
 
@@ -311,7 +310,7 @@ def test_a_table_referencing_itself_is_left_to_subset():
     from bauta.database.dialects import ForeignKey
 
     jobs = {'loadEmployees': _job(sourceQuery="select * from employees where site = 'x'", targetTableFinal='employees', unmasked=True)}
-    report = auditJobs(jobs, foreignKeys={'staging': [ForeignKey('employees', ('manager_id',), 'employees', ('id',), 'fk_manager')]})
+    report = auditJobs(jobs, ConnectedFacts(foreignKeys={'staging': [ForeignKey('employees', ('manager_id',), 'employees', ('id',), 'fk_manager')]}))
 
     assert report['findings'] == []
 
@@ -330,7 +329,7 @@ def _ordered(orders: Any = None, **customers: Any):
 
 
 def _ordering(jobs):
-    report = auditJobs(jobs, foreignKeys={'staging': [_foreignKey()]})
+    report = auditJobs(jobs, ConnectedFacts(foreignKeys={'staging': [_foreignKey()]}))
     return [(job, message) for job, message in _messages(report, 'warning') if 'loaded yet' in message or 'inactive' in message]
 
 
@@ -406,7 +405,7 @@ def _swapped(**customers: Any):
 
 
 def _swaps(jobs, foreignKey=None):
-    report = auditJobs(jobs, declaredForeignKeys={'staging': [foreignKey or _foreignKey()]})
+    report = auditJobs(jobs, ConnectedFacts(declaredForeignKeys={'staging': [foreignKey or _foreignKey()]}))
     return _messages(report, 'error')
 
 
@@ -447,7 +446,7 @@ def test_a_swapped_table_referencing_itself_is_not_flagged():
 
 
 def test_keys_only_the_source_declares_do_not_count_for_a_swap():
-    report = auditJobs(_swapped(), foreignKeys={'staging': [_foreignKey()]})
+    report = auditJobs(_swapped(), ConnectedFacts(foreignKeys={'staging': [_foreignKey()]}))
 
     assert _messages(report, 'error') == []
 
@@ -456,7 +455,7 @@ def test_a_swapped_table_that_declares_keys_is_warned_about():
 
     jobs = {'loadOrders': _job(sourceQuery='select * from orders', targetTableFinal='orders', insertStrategy='swap',
                                targetTableStage='orders_stage', unmasked=True)}
-    report = auditJobs(jobs, declaredForeignKeys={'staging': [_foreignKey()]})
+    report = auditJobs(jobs, ConnectedFacts(declaredForeignKeys={'staging': [_foreignKey()]}))
 
     assert _messages(report, 'warning') == [(
         'loadOrders',
@@ -471,7 +470,7 @@ def test_keys_recreated_after_a_swap_of_the_child_are_not_flagged():
                                targetTableStage='orders_stage', unmasked=True,
                                postTargetAdhocQueries=['alter table orders add constraint fk foreign key (customer_id) references customers (id)'])}
 
-    assert auditJobs(jobs, declaredForeignKeys={'staging': [_foreignKey()]})['findings'] == []
+    assert auditJobs(jobs, ConnectedFacts(declaredForeignKeys={'staging': [_foreignKey()]}))['findings'] == []
 
 
 def test_a_key_and_its_reference_both_shuffled_are_flagged():

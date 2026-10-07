@@ -122,11 +122,31 @@ def _describeLocation(location: Location) -> str:
     return str(location) if isinstance(location, Path) else 'table {} in {}'.format(location.table, location.connection)
 
 
-def _settingsFor(location: TableLocation, connectionConfiguration: Dict[str, ConnectionConfig]) -> ConnectionConfig:
+def _settingsFor(location: TableLocation, connectionConfiguration: Dict[str, ConnectionConfig], writing: bool = True) -> ConnectionConfig:
+    """The connection a table location is in. One that is `readOnly` is
+    refused for writing, naming what was to be kept there: run state on one
+    failed later, as `no such table: bauta_memory`.
+    """
 
     _requireAlias(connectionConfiguration, location.connection)
+    settings = connectionConfiguration[location.connection]
+    if writing and getattr(settings, 'readOnly', False):
+        raise UsageError('{} is in connection "{}", which is readOnly: keep it in a file, or in a table of another connection'.format(
+            _describeLocation(location), location.connection))
 
-    return connectionConfiguration[location.connection]
+    return settings
+
+
+def _refuseReadOnlyLocations(arguments: argparse.Namespace, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig]) -> None:
+    """Fails where run state, history or the manifest would be written to a
+    readOnly connection, before anything runs: what `validate` and `run` ask.
+    """
+
+    locations = [_memoryLocation(arguments, jobsFile)] + [_resolveLocation(arguments, setting, getattr(jobsFile, setting))
+                                                           for setting in ('history', 'manifest')]
+    for location in locations:
+        if isinstance(location, TableLocation):
+            _settingsFor(location, connectionConfiguration)
 
 
 def _memoryLocation(arguments: argparse.Namespace, jobsFile: DataJobsFile) -> Location:
@@ -158,14 +178,14 @@ def _memoryBackend(arguments: argparse.Namespace, jobsFile: DataJobsFile,
     return FileMemory(memoryFile=location), location.with_name(location.name + '.run.lock')
 
 
-def _history(location: Location, connectionConfiguration: Dict[str, ConnectionConfig]) -> Any:
+def _history(location: Location, connectionConfiguration: Dict[str, ConnectionConfig], writing: bool = True) -> Any:
 
     from ..jobs.reporting import DatabaseHistory, FileHistory
 
     if isinstance(location, Path):
         return FileHistory(location)
 
-    return DatabaseHistory(connectionSettings=_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['history'])
+    return DatabaseHistory(connectionSettings=_settingsFor(location, connectionConfiguration, writing), table=location.table or DEFAULT_TABLES['history'])
 
 
 def _configureLogging(arguments: argparse.Namespace) -> Log:
@@ -293,8 +313,7 @@ def _sourceQueryColumns(job: DataJobConfig, connections: _Connections) -> List[s
         query = job.sourceQuery
         parameters = None
         if job.watermarkColumn:
-            query = database.substituteWatermarkPlaceholder(query)
-            parameters = (job.watermarkInitial,)
+            query, parameters = database.bindWatermark(query, job.watermarkInitial)
         columns, chunks = database.stream(query=query, chunkSize=1, parameters=parameters)
         chunks.close()
 
@@ -311,8 +330,7 @@ def _sourceQuerySample(job: DataJobConfig, connections: _Connections, rows: int)
         query = job.sourceQuery
         parameters = None
         if job.watermarkColumn:
-            query = database.substituteWatermarkPlaceholder(query)
-            parameters = (job.watermarkInitial,)
+            query, parameters = database.bindWatermark(query, job.watermarkInitial)
         columns, chunks = database.stream(query=query, chunkSize=max(1, rows), parameters=parameters)
         with chunks:
             sampled = next(chunks, []) if rows else []

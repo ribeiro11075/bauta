@@ -120,6 +120,13 @@ COVERAGE_FILE=$PWD/.coverage pytest -m "integration or not integration" --cov
 - **`lowest.txt`** is the bottom of every range. CI installs it on Python 3.10 and runs everything, the integration suite included, so a lower bound that stops working fails there first.
 - **`image.txt`** pins every package `bauta[all]` installs, to one tested set of newer versions. CI's other integration run installs it.
 
+**Known vulnerabilities.** `.github/workflows/audit.yml` runs `pip-audit` over `image.txt` and `cargo audit` over `mask-rs/Cargo.lock` on every change and every Monday, since an advisory is published against code that hasn't changed. `lowest.txt` isn't audited: its versions are old on purpose. To run them locally:
+
+```
+pip install pip-audit && pip-audit --strict -r constraints/image.txt
+cargo install --locked cargo-audit && (cd mask-rs && cargo audit)
+```
+
 `tests/repository/test_packaging.py` checks that `lowest.txt` matches the lower bounds and that `image.txt` is within the ranges. To raise a lower bound, change both `pyproject.toml` and `lowest.txt`. To move the pinned set to newer versions, edit the direct pins in `image.txt` and regenerate the rest with the command at its top.
 
 

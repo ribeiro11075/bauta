@@ -5,9 +5,12 @@ question a reviewer asks instead: **what in production is not covered at all?**
 A table nobody wrote a job for is invisible to every other command -- it has no
 job to audit -- and that is exactly the table a new release adds.
 
-A table counts as covered when some job reading that database names it in its
-sourceQuery, which is as far as a check that doesn't parse SQL can see, the same
-approximation audit._mentions makes. A table deliberately left out is declared
+A table counts as covered when some job reading that database reads rows
+from it: names it after FROM or JOIN, directly or through a common table
+expression, a derived table or a set operation (see queryTables). A table
+named only in a comment, a string or a subquery that filters was counted as
+covered too, so one no job copied could pass. A query whose parentheses don't
+balance falls back to any mention of the name. A table deliberately left out is declared
 in `acknowledged`, so "we don't copy this" is a recorded decision rather than an
 omission.
 """
@@ -16,6 +19,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .audit import _mentions, _tableName
+from .queryTables import tablesRead
 from ..configuration import DataJobConfig
 from ..generate.discovery import BUILTIN_RULES, DiscoveryRules, personalDataHint
 
@@ -37,11 +41,19 @@ STATE_LABELS = {
     }
 
 
-def jobsReading(table: str, alias: str, jobs: Mapping[str, DataJobConfig]) -> List[str]:
-    """The jobs that read `table` from `alias`, by naming it in sourceQuery."""
+def _reads(query: str, table: str) -> bool:
 
-    return sorted(name for name, job in jobs.items()
-                  if job.sourceConnection == alias and _mentions(job.sourceQuery, table))
+    tables = tablesRead(query)
+    if tables is None:
+        return _mentions(query, table)
+
+    return _tableName(table).upper() in tables
+
+
+def jobsReading(table: str, alias: str, jobs: Mapping[str, DataJobConfig]) -> List[str]:
+    """The jobs that read rows of `table` from `alias`; see the module's docstring."""
+
+    return sorted(name for name, job in jobs.items() if job.sourceConnection == alias and _reads(job.sourceQuery, table))
 
 
 def coverageReport(alias: str, tables: Sequence[str], jobs: Mapping[str, DataJobConfig],

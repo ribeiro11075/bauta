@@ -188,6 +188,12 @@ class Store:
         self.filesystem.delete_file(path)
 
 
+    def readBytes(self, path: str) -> bytes:
+
+        with self.filesystem.open_input_stream(path) as stream:
+            return bytes(stream.read())
+
+
 def _s3(settings: FilesConnection) -> Any:
     """Without keys, the AWS SDK's default chain finds credentials as the
     AWS CLI would.

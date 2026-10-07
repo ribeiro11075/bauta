@@ -28,6 +28,9 @@ Each type takes only the settings that apply to it. A setting that belongs to an
 | `maxConcurrentJobs` | all | optional, no limit | The most jobs that may use this connection at once, however many `workers` there are. A job that would pass it waits for one on this connection to finish, while jobs on other connections start. For a server that can take only so many loads at a time. Always 1 for `duckdb`; a higher value is refused. |
 | `maxRowsReadPerSecond` | the seven databases | optional, no limit | The most rows a second jobs may read from this database, all of them together: every job, and every partition of each, shares it. For a production source a copy mustn't load more than so much. See [limiting what a job reads](../guides/make-it-faster.md#limiting-what-a-job-reads). |
 | `requireMasking` | all | optional, `false` | No job may read from or write to this connection without a masking policy. See [requiring masking](#requiring-masking). |
+| `readOnly` | databases | optional, `false` | Nothing is written here: a job loading into it, or run state, history or a manifest kept in it, is refused, as is every write a command would make. See [read-only connections](#read-only-connections). |
+| `statementTimeoutSeconds` | server databases | optional | The longest one statement may run before the server stops it, so a query that runs away on production can't run for hours. Measured differently by each database; see [statement timeout](#statement-timeout). |
+| `requireEncryption` | server databases | optional, `false` | Every session must be one the server reports as encrypted, or it is closed before a statement runs. See [requiring encryption](#requiring-encryption). |
 | `options` | the seven databases | optional | Extra keyword arguments for the driver's `connect()`, for anything the settings above don't cover; for `duckdb`, DuckDB's own settings, such as `memory_limit` and `threads`. See below. |
 
 Any other setting is an error, so a misspelled one stops `validate` rather than leaving the connection to behave in some way nobody configured.
@@ -193,3 +196,50 @@ warehouse:
 ```
 
 Settings describe what was asked for; the server decides what happened. `bauta run --dry-run` and `bauta audit --connect` report whether each connection is actually encrypted, as the server sees it.
+
+### Read-only connections
+
+```yaml
+production:
+  type: postgresql
+  # ...
+  readOnly: true
+```
+
+Mark production `readOnly`, so a job, a command or an alias pointed the wrong way can't write to it. `validate` and `run` refuse a job whose `targetConnection` is read-only. Every write bauta makes goes through one place that refuses on a read-only connection, whichever command makes it: a job's load, swap or `preTargetAdhocQueries`, `clear`, `schema --apply`, `synthesize`, and run state, history or a manifest kept in a table there. Reading -- jobs' queries, `discover`, `subset`, `audit --connect`, `coverage`, `bench` -- is unaffected.
+
+The server refuses writes too, where it can make a session read-only: PostgreSQL (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`), MySQL and MariaDB (`SET SESSION TRANSACTION READ ONLY`) and SQLite (`PRAGMA query_only`). Oracle, SQL Server and DuckDB can't, so there it rests on bauta's own refusal: give the login itself no write privileges as well.
+
+### Statement timeout
+
+`maxRowsReadPerSecond` paces the rows jobs fetch, not what their queries cost the server: a join gone wrong runs on production for as long as it takes. `statementTimeoutSeconds` has the server stop it:
+
+```yaml
+production:
+  type: postgresql
+  # ...
+  maxRowsReadPerSecond: 50000
+  statementTimeoutSeconds: 600
+```
+
+Every session on the connection gets it, jobs' and commands' alike. A job stopped by it fails without being retried, since the same query would run as long again. What is limited differs, so set it with your database's in mind:
+
+| Database | What runs past it is stopped |
+| --- | --- |
+| postgresql | Each statement, which for a streamed query is each fetch of a chunk: a long extract runs on, but a sort or join that takes too long to produce rows is stopped (`statement_timeout`). |
+| mysql | Each `SELECT`, for its whole run, rows sent included (`max_execution_time`). Set it above your longest extract. |
+| mariadb | Each statement, for its whole run (`max_statement_time`). Set it above your longest extract. |
+| oracle | Each round trip to the server, which for a streamed query is each fetch (oracledb's call timeout). Oracle has no session setting for it. |
+| mssql | **By estimate, not by the clock**: a query the optimizer estimates to cost more than this many seconds is refused before it starts, and one estimated below runs to its end (`QUERY_GOVERNOR_COST_LIMIT`). pymssql's own timeout left the session hung rather than ending the query. |
+
+### Requiring encryption
+
+```yaml
+production:
+  type: postgresql
+  # ...
+  requireEncryption: true
+  options: { sslmode: verify-full, sslrootcert: /etc/ssl/prod-ca.pem }
+```
+
+With `requireEncryption`, every session bauta opens on the connection -- a job's, `discover`'s, `audit --connect`'s, run state's -- asks the server whether it is encrypted as it connects, and a session the server says isn't is closed before anything is read or written, failing with a message naming the connection. A server that can't say is refused too: SQL Server answers only to a login with `VIEW SERVER STATE`. It checks what the server reports, not what `options` asked for, so it also catches a server that stopped offering TLS. Whether the certificate was checked is still up to `options`, as the table above says: `sslmode: require` encrypts, and passes, without checking it.

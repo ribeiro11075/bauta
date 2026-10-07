@@ -65,8 +65,7 @@ def findDrift(database: Any, name: str, job: DataJobConfig, rules: DiscoveryRule
     assert job.masking is not None
     query, parameters = job.sourceQuery, None
     if job.watermarkColumn:
-        query = database.substituteWatermarkPlaceholder(query)
-        parameters = (job.watermarkInitial,)
+        query, parameters = database.bindWatermark(query, job.watermarkInitial)
 
     columns, chunks = database.stream(query=query, chunkSize=sampleSize, parameters=parameters)
     with chunks:

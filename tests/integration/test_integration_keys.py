@@ -120,6 +120,28 @@ def test_a_unique_column_is_not_part_of_the_upsert_key(server):
     assert _rows(database, people) == [(1, 'b@example.test', 'Ann')]
 
 
+def test_a_row_matching_another_by_a_unique_key_is_refused_rather_than_merged_into_it(server):
+    """A new row (id 2) carrying an email row 1 already had: every database
+    refused it but MySQL and MariaDB, whose ON DUPLICATE KEY fires on any
+    unique key and so overwrote row 1 with row 2's values, dropping row 2
+    without an error. A masked email that collided did exactly this.
+    """
+    _, database, table = server
+    people = table('(id INT PRIMARY KEY, email VARCHAR(50) UNIQUE, name VARCHAR(50))')
+    stage = table('(id INT, email VARCHAR(50), name VARCHAR(50))')
+    database.upsert(table=people, data=[(1, 'a@example.test', 'Ann')])
+
+    with pytest.raises(Exception):
+        database.upsert(table=people, data=[(2, 'a@example.test', 'Bob')])
+    database.rollback()
+    database.insert(table=stage, data=[(2, 'a@example.test', 'Bob')])
+    with pytest.raises(Exception):
+        database.upsertFromStage(targetTable=people, stageTable=stage)
+    database.rollback()
+
+    assert _rows(database, people) == [(1, 'a@example.test', 'Ann')]
+
+
 def test_a_key_only_table_upserts_idempotently(server):
     _, database, table = server
     links = table('(a INT, b INT, PRIMARY KEY (a, b))')
@@ -169,7 +191,7 @@ def test_a_swap_leaves_other_tables_keys_on_the_old_table(server):
     """What audit's swap check rests on: a key referencing the target moves
     with the old table to the stage's name, and the next run can't empty it.
     """
-    from bauta.review.audit import auditJobs
+    from bauta.review.audit import ConnectedFacts, auditJobs
     from bauta.configuration import DataJobConfig
 
     _, database, table = server
@@ -185,7 +207,7 @@ def test_a_swap_leaves_other_tables_keys_on_the_old_table(server):
     def errors():
         jobs = {'loadParent': DataJobConfig(active=True, sourceConnection='prod', sourceQuery='select * from parent', targetConnection='copy',
                                             targetTableStage=stage, targetTableFinal=final, insertStrategy='swap', chunkSize=10)}
-        return [finding['message'] for finding in auditJobs(jobs, declaredForeignKeys={'copy': database.getForeignKeys()})['findings']
+        return [finding['message'] for finding in auditJobs(jobs, ConnectedFacts(declaredForeignKeys={'copy': database.getForeignKeys()}))['findings']
                 if finding['severity'] == 'error']
 
     assert referenced() == {final.lower()}
@@ -396,3 +418,70 @@ def test_a_mysql_json_column_masked_by_a_plain_strategy_masks_its_value_and_stay
         finally:
             for table in (source, target):
                 database.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
+# A role each server can grant to, made once and kept: creating and dropping
+# one per test races other runs, and it holds nothing.
+GRANTEES = {
+    'postgresql': ('bauta_reader', "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'bauta_reader') THEN CREATE ROLE bauta_reader; "
+                                   "END IF; END $$"),
+    'mysql': ("'bauta_reader'@'%'", "CREATE USER IF NOT EXISTS 'bauta_reader'@'%' IDENTIFIED BY 'Reader1!'"),
+    'mariadb': ("'bauta_reader'@'%'", "CREATE USER IF NOT EXISTS 'bauta_reader'@'%' IDENTIFIED BY 'Reader1!'"),
+    'oracle': ('BAUTA_READER', "BEGIN EXECUTE IMMEDIATE 'CREATE USER bauta_reader IDENTIFIED BY \"Reader1\"'; "
+                               "EXCEPTION WHEN OTHERS THEN IF SQLCODE <> -1920 THEN RAISE; END IF; END;"),
+    'mssql': ('bauta_reader', "IF USER_ID('bauta_reader') IS NULL CREATE USER bauta_reader WITHOUT LOGIN"),
+    }
+
+
+def test_a_swapped_table_keeps_its_grants_and_indexes_on_every_run(server):
+    """The stage was given the target's keys but not its grants or plain
+    indexes, and the two trade names every run: an application's role could
+    read the copy after one run and not after the next, and its queries had
+    their index every other run.
+    """
+    from bauta.configuration import DataJobConfig
+    from bauta.jobs.pipeline import _executeDataJob
+
+    serverName, database, table = server
+    grantee, create = GRANTEES[serverName]
+    database.alter(create)
+    source = table('(id INT PRIMARY KEY, v VARCHAR(20))')
+    target = table('(id INT PRIMARY KEY, v VARCHAR(20))')
+    stage = table('(id INT, v VARCHAR(20))')
+    database.insert(table=source, data=[(1, 'a'), (2, 'b')])
+    database.alter('CREATE INDEX {0}_v ON {0} (v)'.format(target))
+    database.alter('GRANT SELECT ON {} TO {}'.format(target, grantee))
+    job = DataJobConfig(sourceConnection='s', targetConnection='s', sourceQuery='SELECT id, v FROM {}'.format(source), targetTableStage=stage,
+                        targetTableFinal=target, insertStrategy='swap', unmasked=True)
+
+    for _ in range(3):
+        _executeDataJob('j', job, {'s': serverSettings(serverName)})
+
+        assert [columns for _, columns in database.dialect.plainIndexes(database.cursor, target)] in ([('v',)], [('V',)])
+        assert any(privilege.upper() == 'SELECT' for privilege, _, _ in database.dialect.tableGrants(database.cursor, target))
+        assert database.query('SELECT count(*) FROM {}'.format(target)) == [(2,)]
+        # Ended, or MySQL holds the table's metadata lock and the next
+        # run's rename waits on it for good.
+        database.rollback()
+
+
+@pytest.mark.parametrize('serverName, keyType', [('mariadb', 'UUID'), ('mysql', 'CHAR(36)'), ('mariadb', 'CHAR(36)')])
+def test_the_upsert_guard_works_whatever_type_the_key_is(serverName, keyType):
+    """The guard refusing a row matched by another unique key first answered
+    `SELECT 1`, an integer, beside the key: MariaDB refused to mix its UUID
+    type with that, so every upsert into a table keyed by one failed.
+    """
+    settings = serverSettings(serverName)
+    first, second = '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'
+    with Database(connectionSettings=settings) as database:
+        people = 't_{}'.format(uuid.uuid4().hex[:8])
+        database.alter('CREATE TABLE {} (id {} PRIMARY KEY, email VARCHAR(50) UNIQUE, name VARCHAR(50))'.format(people, keyType))
+        try:
+            database.upsert(table=people, data=[(first, 'a@example.test', 'Ann')])
+            database.upsert(table=people, data=[(first, 'a@example.test', 'Ann Lee'), (second, 'b@example.test', 'Bo')])
+            with pytest.raises(Exception, match='a different row already there'):
+                database.upsert(table=people, data=[('33333333-3333-3333-3333-333333333333', 'a@example.test', 'Cy')])
+
+            assert sorted(name for _, _, name in _rows(database, people)) == ['Ann Lee', 'Bo']
+        finally:
+            database.alter('DROP TABLE {}'.format(people))

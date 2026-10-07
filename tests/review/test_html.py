@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from bauta.review.audit import auditJobs
+from bauta.review.audit import ConnectedFacts, auditJobs
 from bauta.review.coverage import coverageReport
 from bauta.review.html import renderAuditHtml, renderCoverageHtml
 from tests.jobConfigs import dataJob
@@ -20,8 +20,7 @@ def _audit():
         'copy<script>alert(1)</script>': dataJob(sourceQuery='select * from orders', targetTableFinal='orders'),
         }
 
-    return auditJobs(jobs, returnedColumns={'maskCustomers': ['id', 'email', 'phone'], 'copy<script>alert(1)</script>': ['id', 'email']},
-                     encryption={'source': False, 'target': True})
+    return auditJobs(jobs, ConnectedFacts(returnedColumns={'maskCustomers': ['id', 'email', 'phone'], 'copy<script>alert(1)</script>': ['id', 'email']}, encryption={'source': False, 'target': True}))
 
 
 def _coverage():

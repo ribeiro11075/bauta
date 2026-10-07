@@ -27,8 +27,8 @@ from ..masking import core as maskingModule
 from ..transform import Transform, Transformer, TransformError, TransformResolutionError, resolveTransformer
 from .dependencyGraph import JobOutcome, JobStatus
 from .memory import MemoryBackend
-from .partitions import (CoreBudget, automaticCount, boundsQuery, integerBound, maskingThreadsWith, resolveColumn, slicePredicates, splitPoints,
-                         wrappedQuery)
+from .partitions import (CoreBudget, Slice, automaticCount, boundsQuery, integerBound, isNumberBound, maskingThreadsWith, quantileQuery,
+                         quantileSlices, resolveColumn, slicePredicates, splitPoints, wrappedQuery)
 from .targets import LoadTarget, PostLoadError, TableTarget
 from .throttle import StageTimes, readLimitFor, timedChunks
 
@@ -127,8 +127,7 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
         parameters = None
 
         if jobConfig.watermarkColumn:
-            sourceQuery = sourceConnection.substituteWatermarkPlaceholder(sourceQuery)
-            parameters = (watermark,)
+            sourceQuery, parameters = sourceConnection.bindWatermark(sourceQuery, watermark)
             if isFullRefresh(jobConfig):
                 logger.info('Extracting all of {} for a full refresh, from watermark {!r}, to replace {}'.format(
                     jobConfig.sourceConnection, watermark, jobConfig.targetTableFinal))
@@ -156,11 +155,17 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
         watermarkIndex = None
 
         if jobConfig.watermarkColumn:
-            if jobConfig.watermarkColumn not in sourceQueryColumns:
+            # Ignoring case where the match is unambiguous, as partitions.column
+            # is: Oracle returns an unquoted name in capitals, so `updated_at`
+            # was refused as missing from UPDATED_AT.
+            matches = [column for column in sourceQueryColumns if column == jobConfig.watermarkColumn] or \
+                [column for column in sourceQueryColumns if column.upper() == jobConfig.watermarkColumn.upper()]
+            if len(matches) != 1:
                 raise ConfigurationError(
-                    'watermarkColumn "{}" is not among the columns sourceQuery returns {} -- '
-                    'the job cannot tell how far it got'.format(jobConfig.watermarkColumn, sourceQueryColumns))
-            watermarkIndex = sourceQueryColumns.index(jobConfig.watermarkColumn)
+                    'watermarkColumn "{}" is {} the columns sourceQuery returns {} -- '
+                    'the job cannot tell how far it got'.format(jobConfig.watermarkColumn, 'more than one of' if matches else 'not among',
+                                                                sourceQueryColumns))
+            watermarkIndex = sourceQueryColumns.index(matches[0])
 
         transform = Transform(columns=sourceQueryColumns, columnTransforms=columnTransforms)
         transform.validate()
@@ -178,7 +183,7 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
                                'and logs, so it would leak the unmasked value'.format(
                                    jobConfig.watermarkColumn, masking.manifest[watermarkIndex].strategy))
 
-        predicates: List[Optional[str]] = []
+        predicates: List[Slice] = []
         if explicit:
             # Before begin(), so a column that can't be sliced fails the job
             # with its target as it was.
@@ -382,12 +387,26 @@ class _PartitionStopped(Exception):
     """
 
 
+def _quantileSlices(database: Database, sourceQuery: str, parameters: Optional[Sequence[Any]], quotedColumn: str, count: int) -> List[Slice]:
+    """Slices of a column that isn't a number -- a UUID key, say -- at the
+    values the database deals it into `count` even shares at; see
+    partitions.quantileSlices. Read in one ordered pass over the column.
+    """
+
+    _, rows = database.stream(query=quantileQuery(sourceQuery, quotedColumn, count), chunkSize=count + 1, parameters=parameters)
+    with rows:
+        maxima = [row[0] for chunk in rows for row in chunk]
+
+    return quantileSlices(quotedColumn, maxima, database.dialect.placeholders(1)[0])
+
+
 def _partitionPredicates(job: str, jobConfig: DataJobConfig, sourceConnection: Database, sourceQuery: str,
-                         parameters: Optional[Sequence[Any]], columns: List[str]) -> List[Optional[str]]:
+                         parameters: Optional[Sequence[Any]], columns: List[str]) -> List[Slice]:
     """The predicate each of the job's partitions reads its slice with: ranges
     of the partition column, between the smallest and largest value the
-    query returns in it. Fewer than `count` where the values are fewer, and
-    one, reading everything, where there are none.
+    query returns in it, or, for a column that isn't a number, between the
+    values it divides evenly at. Fewer than `count` where the values are
+    fewer, and one, reading everything, where there are none.
 
     The bounds are data, so they are never logged.
     """
@@ -396,13 +415,23 @@ def _partitionPredicates(job: str, jobConfig: DataJobConfig, sourceConnection: D
     column = resolveColumn(jobConfig.partitions.column, columns)
     quotedColumn = sourceConnection.quoted([column])[0]
 
-    _, rows = sourceConnection.stream(query=boundsQuery(sourceQuery, quotedColumn), chunkSize=1, parameters=parameters)
-    with rows:
-        first = next(rows, [])
-
-    lowest, highest = (integerBound(value, column) for value in (first[0] if first else (None, None)))
-    points = [] if lowest is None or highest is None else splitPoints(lowest, highest, int(jobConfig.partitions.count))
-    predicates = slicePredicates(quotedColumn, points)
+    try:
+        _, rows = sourceConnection.stream(query=boundsQuery(sourceQuery, quotedColumn), chunkSize=1, parameters=parameters)
+        with rows:
+            first = next(rows, [])
+        bounds = first[0] if first else (None, None)
+    except Exception:
+        # No MIN or MAX for the column's type -- PostgreSQL's uuid -- which
+        # the even shares don't need. Rolled back, as a failed statement
+        # leaves PostgreSQL's transaction refusing the next.
+        sourceConnection.rollback()
+        bounds = ('', '')
+    if all(isNumberBound(value) for value in bounds):
+        lowest, highest = (integerBound(value, column) for value in bounds)
+        points = [] if lowest is None or highest is None else splitPoints(lowest, highest, int(jobConfig.partitions.count))
+        predicates = [Slice(predicate) for predicate in slicePredicates(quotedColumn, points)]
+    else:
+        predicates = _quantileSlices(sourceConnection, sourceQuery, parameters, quotedColumn, int(jobConfig.partitions.count))
 
     logger.info('Reading {} as {} partition(s) of {}, at once'.format(jobConfig.sourceConnection, len(predicates), column),
                 extra={'job': job, 'partitions': len(predicates)})
@@ -430,7 +459,7 @@ def _coreBudget() -> CoreBudget:
 
 def _automaticPredicates(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], sourceConnection: Database,
                          target: LoadTarget, sourceQuery: str, parameters: Optional[Sequence[Any]], columns: List[str],
-                         masking: Optional[BoundMasking]) -> List[Optional[str]]:
+                         masking: Optional[BoundMasking]) -> List[Slice]:
     """The predicates for `partitions: auto`, or `count: auto`, or none to read
     the job as one stream, the query as it is. See automaticCount.
 
@@ -444,7 +473,7 @@ def _automaticPredicates(job: str, jobConfig: DataJobConfig, connectionConfigura
     assert jobConfig.partitions is not None
     named = jobConfig.partitions.column
 
-    def oneStream(why: str) -> List[Optional[str]]:
+    def oneStream(why: str) -> List[Slice]:
         logger.info('partitions: reading {} as one stream: {}'.format(jobConfig.targetTableFinal, why), extra={'job': job})
         return []
 
@@ -480,28 +509,44 @@ def _automaticPredicates(job: str, jobConfig: DataJobConfig, connectionConfigura
         # On a connection of its own: a query the database refuses leaves
         # the job's own, already reading, as it was.
         with Database(connectionSettings=connectionConfiguration[jobConfig.sourceConnection]) as probe:
-            _, rows = probe.stream(query=boundsQuery(sourceQuery, quotedColumn), chunkSize=1, parameters=parameters)
-            with rows:
-                first = next(rows, [])
+            try:
+                _, rows = probe.stream(query=boundsQuery(sourceQuery, quotedColumn), chunkSize=1, parameters=parameters)
+                with rows:
+                    first = next(rows, [])
+                bounds = first[0] if first else (None, None)
+            except Exception:
+                # No MIN or MAX for its type -- PostgreSQL's uuid -- so not a
+                # number; the shares are read without them.
+                probe.rollback()
+                bounds = ('', '')
+            numeric = all(isNumberBound(value) for value in bounds)
+            # A column that isn't a number is sliced where its values divide
+            # evenly, read now, as many as the cores allow.
+            quantiles = None if numeric or None in bounds else _quantileSlices(probe, sourceQuery, parameters, quotedColumn, upper)
     except Exception as error:
         return oneStream('its range could not be read -- {}'.format(describeError(error)))
 
-    try:
-        lowest, highest = (integerBound(value, column) for value in (first[0] if first else (None, None)))
-    except ConfigurationError as error:
-        if named is not None:
-            raise
-        return oneStream(str(error))
-    if lowest is None or highest is None:
-        return oneStream('sourceQuery returns no rows with a value in {}'.format(column))
+    if quantiles is not None:
+        predicates, why = quantiles, 'one per {} of the cores this job may use, at the values its rows divide evenly at'.format(len(quantiles))
+        if len(predicates) < 2:
+            return oneStream('{} holds too few values to slice'.format(column))
+    else:
+        try:
+            lowest, highest = (integerBound(value, column) for value in bounds)
+        except ConfigurationError as error:
+            if named is not None:
+                raise
+            return oneStream(str(error))
+        if lowest is None or highest is None:
+            return oneStream('sourceQuery returns no rows with a value in {}'.format(column))
 
-    count, why = automaticCount(highest - lowest + 1, budget, masksInPython)
-    if count < 2:
-        return oneStream(why)
+        count, why = automaticCount(highest - lowest + 1, budget, masksInPython)
+        if count < 2:
+            return oneStream(why)
 
-    predicates = slicePredicates(quotedColumn, splitPoints(lowest, highest, count))
-    if len(predicates) < 2:
-        return oneStream('{} holds too few values to slice'.format(column))
+        predicates = [Slice(predicate) for predicate in slicePredicates(quotedColumn, splitPoints(lowest, highest, count))]
+        if len(predicates) < 2:
+            return oneStream('{} holds too few values to slice'.format(column))
 
     logger.info('partitions: reading {} as {} slices of {} at once, {}'.format(jobConfig.targetTableFinal, len(predicates), column, why),
                 extra={'job': job, 'partitions': len(predicates)})
@@ -509,8 +554,23 @@ def _automaticPredicates(job: str, jobConfig: DataJobConfig, connectionConfigura
     return predicates
 
 
+def _sliceQuery(database: Database, sourceQuery: str, parameters: Optional[Sequence[Any]], piece: Slice) -> Tuple[str, Optional[Tuple[Any, ...]]]:
+    """The query one slice reads, and what it binds: the watermark's, then
+    the slice's own bounds. On the %s dialects, a query that bound nothing
+    before has its literal % doubled once it binds, as the driver then wants:
+    `LIKE 'a%'` would otherwise be read as a placeholder.
+    """
+
+    query = sourceQuery
+    if piece.parameters and not parameters and database.dialect.placeholders(1)[0] == '%s':
+        query = sourceQuery.replace('%', '%%')
+    bound = tuple(parameters or ()) + piece.parameters
+
+    return wrappedQuery(query, piece.predicate), (bound or None)
+
+
 def _loadPartitions(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig], target: LoadTarget,
-                    sourceQuery: str, parameters: Optional[Sequence[Any]], columns: List[str], predicates: List[Optional[str]],
+                    sourceQuery: str, parameters: Optional[Sequence[Any]], columns: List[str], predicates: List[Slice],
                     columnTransforms: Dict[str, List[Transformer]], watermarkIndex: Optional[int],
                     times: Optional[StageTimes] = None, jsonColumns: Sequence[Tuple[int, str]] = ()) -> Tuple[int, Any]:
     """Reads, masks and writes the job's rows as slices, one per predicate, all
@@ -529,12 +589,13 @@ def _loadPartitions(job: str, jobConfig: DataJobConfig, connectionConfiguration:
     limit = readLimitFor(jobConfig.sourceConnection, sourceSettings)
     stopped = threading.Event()
 
-    def loadSlice(index: int, predicate: Optional[str]) -> Tuple[int, Any]:
+    def loadSlice(index: int, piece: Slice) -> Tuple[int, Any]:
         # Everything a slice uses is its own: its connections, since one
         # connection serves one thread, and its transform and masking.
         with Database(connectionSettings=sourceSettings) as source, target.openWriter() as writer:
             with _timed(times, 'read'):
-                _, chunks = source.stream(query=wrappedQuery(sourceQuery, predicate), chunkSize=jobConfig.chunkSize, parameters=parameters)
+                query, bound = _sliceQuery(source, sourceQuery, parameters, piece)
+                _, chunks = source.stream(query=query, chunkSize=jobConfig.chunkSize, parameters=bound)
             prepare = _preparer(Transform(columns=columns, columnTransforms=columnTransforms), _bindMasking(job, jobConfig, columns, log=False),
                                 index, count, times, jsonColumns)
             loaded = _loadChunks(timedChunks(chunks, times, limit), prepare, writer.write, watermarkIndex,
@@ -548,7 +609,7 @@ def _loadPartitions(job: str, jobConfig: DataJobConfig, connectionConfiguration:
     failure: Optional[Exception] = None
 
     with ThreadPoolExecutor(max_workers=count, thread_name_prefix='bauta-partition') as executor:
-        futures = [executor.submit(loadSlice, index, predicate) for index, predicate in enumerate(predicates)]
+        futures = [executor.submit(loadSlice, index, piece) for index, piece in enumerate(predicates)]
         for future in as_completed(futures):
             try:
                 results.append(future.result())
@@ -656,6 +717,16 @@ def _noteIfMaskedValueDoesNotFit(error: Exception, job: str, table: str) -> None
                    'column'.format(job, table), extra={'job': job})
 
 
+# What each database says when statementTimeoutSeconds stops a statement:
+# PostgreSQL, MySQL, MariaDB, oracledb -- DPY-4024 for a query, and for a
+# PL/SQL call the line below, not DPY-4011 alone, which a dropped network
+# raises too -- and SQL Server's cost limit. Not retried: the same query
+# would run as long again, against the same source.
+_STATEMENT_TIMEOUT = re.compile(r'canceling statement due to statement timeout|maximum statement execution time exceeded|'
+                                r'max_statement_time exceeded|DPY-4024|socket timed out while recovering from previous socket timeout|'
+                                r'estimated cost of this query .* exceeds the configured threshold')
+
+
 # Deterministic errors, raised by this package, that a retry can't fix.
 # Everything else is retried; see "Retries" in docs/concepts/how-it-works.md.
 PERMANENT_ERRORS = (ConfigurationError, TransformError, TransformResolutionError, MaskingError, UnloadableValueError)
@@ -673,7 +744,7 @@ def _executeWithRetries(jobConfig: DataJobConfig, job: str, attempt: Callable[[]
 
         except Exception as error:
 
-            if isinstance(error, PERMANENT_ERRORS) or attemptNumber > jobConfig.retries:
+            if isinstance(error, PERMANENT_ERRORS) or _STATEMENT_TIMEOUT.search(str(error)) or attemptNumber > jobConfig.retries:
                 logger.error('Failed to complete {} due to error {}'.format(job, error), exc_info=error,
                              extra={'job': job, 'event': ATTEMPT_FAILED})
                 loaded = error.rowCount if isinstance(error, PostLoadError) else 0

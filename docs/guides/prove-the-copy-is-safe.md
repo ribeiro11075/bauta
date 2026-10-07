@@ -55,7 +55,7 @@ The check for a parent copied in part uses the same keys and the same matching b
 
 The check on `swap` jobs reads only the keys the target declares, since a key only the source has constrains nothing in the copy. A job whose `postTargetAdhocQueries` name the referencing table is taken to recreate its keys there. See [how a swap works](../concepts/how-it-works.md#how-a-swap-works).
 
-`audit` exits 1 on an error, and with `--strict` on a warning too, so it can gate a CI pipeline. `--format json` writes the same report for other tools, `--format html` [one page for a reviewer](#a-report-for-reviewers), and `--output FILE` writes it to a file. `--job` narrows it.
+`audit` exits 1 on an error, and with `--strict` on a warning too, so it can gate a CI pipeline. **Gate it with `--connect`.** Offline, a column is judged by the name its policy gives it, so a query renaming one -- `select email as contact` with `contact: keep` -- passes; with `--connect`, the values sampled from `contact` look like email addresses, and it is a warning. Offline audit says so as it starts. Give the CI job a login that can read the source, as `run` has. `--format json` writes the same report for other tools, `--format html` [one page for a reviewer](#a-report-for-reviewers), and `--output FILE` writes it to a file. `--job` narrows it.
 
 
 ## `coverage`: what the jobs do not cover
@@ -91,7 +91,7 @@ Add a job for each table above, or declare it in `acknowledged` with the reason 
 | not copied, declared | No job reads it, and [`acknowledged`](../reference/jobs.md#acknowledged) records why. |
 | NOT COVERED | No job reads it, and nothing says that was intended. |
 
-A table counts as covered when a job reading that database names it in its `sourceQuery`. That doesn't parse SQL — it is the same approximation [`audit`](#reviewing-policies-audit) makes for tables that reference each other — so a job whose query reaches a table only through a view covers it in fact but not in this report, and has to be declared.
+A table counts as covered when a job reading that database reads rows from it: names it after `FROM` or `JOIN` in its `sourceQuery`, directly or through a common table expression, a derived table or a `UNION`. A table named only in a comment, a string, or a subquery that filters — `where customer_id in (select id from accounts)` — is not covered by that job; until this release any mention counted, so a table nobody copied could pass. This reads SQL only as far as that: a job whose query reaches a table through a view covers it in fact but not in this report, and has to be declared. A query whose parentheses don't balance falls back to counting any mention.
 
 For a table nothing covers, `coverage` reads its column names and marks the ones that look like personal data, by the same rules as [`discover`](propose-a-policy.md), including your own from [`discovery.yaml`](propose-a-policy.md#your-own-rules-discoveryyaml). Columns of covered tables aren't read.
 

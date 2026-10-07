@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import contextlib
 import os
 from types import TracebackType
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type
 
 from .driver import Connection, Cursor
-from .values import WANTS_COLUMN_TYPES, ValuePreparer, decodedJson, prepareParameters, refuseNonFinite
+from .maintenance import TableMaintenance
+from .values import WANTS_COLUMN_TYPES, UniqueKeyClashError, ValuePreparer, decodedJson, prepareParameters, refuseNonFinite
+from ..configuration.sqltext import codeOnly
 from ..configuration import (WATERMARK_PLACEHOLDER, ConfigurationError, ConnectionConfig, DatabaseConfig, DatabaseType, DuckDBConnection, FilesConnection,
                              IcebergConnection, SQLiteConnection, isSchemePath)
 from .dialects import ColumnDefinition, DatabaseDialect, DuckDBDialect, ForeignKey, MariaDBDialect, MSSQLDialect, MySQLDialect, OracleDialect, PostgreSQLDialect, \
-    SQLiteDialect, catalogName, quoteFoldedTable, quoteIdentifier, splitTableName, suffixedName, tooLongName
+    SQLiteDialect, catalogName, quoteFoldedTable, quoteIdentifier, splitTableName, tooLongName
 
 DIALECTS: Dict[DatabaseType, DatabaseDialect] = {
     DatabaseType.MYSQL: MySQLDialect(),
@@ -98,7 +101,7 @@ class RowStream:
         self.close()
 
 
-class Database:
+class Database(TableMaintenance):
 
     def __init__(self, connectionSettings: ConnectionConfig, create: bool = False) -> None:
         """`create` lets a SQLite or DuckDB file that doesn't exist yet be
@@ -141,6 +144,54 @@ class Database:
         self.cursor: Cursor
         self.connection, self.cursor = self.dialect.connect(self.connectionSettings)
 
+        if getattr(settings, 'requireEncryption', False):
+            self._refuseUnencrypted()
+
+        timeout = getattr(settings, 'statementTimeoutSeconds', None)
+        if timeout:
+            self.dialect.limitStatements(self.connection, self.cursor, float(timeout))
+            self.connection.commit()
+
+        if getattr(settings, 'readOnly', False):
+            statement = self.dialect.readOnlySessionStatement()
+            if statement is not None:
+                self.cursor.execute(statement)
+                self.connection.commit()
+
+
+    def _refuseWrite(self, what: str) -> None:
+        """Raises ConfigurationError where the connection is readOnly, before
+        `what` -- a load, DDL, a delete -- reaches it. Every write bauta makes
+        comes through here, whichever command makes it, so the setting holds
+        on databases that can't make a session read-only themselves.
+        """
+
+        if getattr(self.connectionSettings, 'readOnly', False):
+            raise ConfigurationError('{} is readOnly, and this would {}; nothing was written. Point the job or command at another '
+                                     'connection'.format(self.connectionSettings.describeTarget(), what))
+
+
+    def _refuseUnencrypted(self) -> None:
+        """Closes the session and raises ConfigurationError unless the server
+        says it is encrypted: not encrypted, and can't say -- SQL Server to a
+        login without VIEW SERVER STATE -- alike, since requireEncryption
+        promises the one answer.
+        """
+
+        encrypted = self.isEncrypted()
+        if encrypted is True:
+            return
+
+        try:
+            self.close()
+        except Exception:
+            pass
+        why = 'says this session is not encrypted' if encrypted is False else 'could not say whether this session is encrypted'
+        raise ConfigurationError('{} has requireEncryption, and the server {}; nothing was read or written. Set TLS in its options -- see '
+                                 'docs/reference/connections.md#driver-options-and-tls{}'.format(
+                                     self.connectionSettings.describeTarget(), why,
+                                     '' if encrypted is False else ' -- or give the login VIEW SERVER STATE, which SQL Server asks for to say'))
+
 
     def close(self) -> None:
         """Closes any stream still open first, so its unread rows can't make
@@ -182,12 +233,29 @@ class Database:
         return self.cursor.fetchall()
 
 
-    def substituteWatermarkPlaceholder(self, query: str) -> str:
-        """Rewrite the {{ watermark }} token into this dialect's bind placeholder,
-        so the watermark is bound rather than interpolated.
+    def bindWatermark(self, query: str, watermark: Any) -> Tuple[str, Tuple[Any, ...]]:
+        """`query` with each {{ watermark }} as this dialect's bind placeholder,
+        and the parameters to bind: the watermark once for each, so it is
+        bound rather than interpolated. Once in all was bound before, so a
+        query naming it twice -- `created > {{ watermark }} OR updated >
+        {{ watermark }}` -- passed validation and failed every run on a
+        count of parameters.
         """
 
-        return WATERMARK_PLACEHOLDER.sub(self.dialect.placeholders(1)[0], query)
+        placeholder = self.dialect.placeholders(1)[0]
+        parts: List[str] = []
+        position = 0
+        # Only in the statement itself, found where codeOnly leaves them: one
+        # in a comment or a string literal is no placeholder to SQLite, DuckDB
+        # or Oracle, so binding it too gave them a value more than they had
+        # places for.
+        found = list(WATERMARK_PLACEHOLDER.finditer(codeOnly(query, identifiers=True)))
+        for match in found:
+            parts.extend((query[position:match.start()], placeholder))
+            position = match.end()
+        parts.append(query[position:])
+
+        return ''.join(parts), (watermark,) * len(found)
 
 
     def stream(self, query: str, chunkSize: int, parameters: Optional[Sequence[Any]] = None) -> Tuple[List[str], RowStream]:
@@ -228,6 +296,8 @@ class Database:
         one, with commit() and rollback().
         """
 
+        self._refuseWrite('change rows')
+
         self.cursor.execute(statement)
 
         return self.cursor.rowcount
@@ -249,12 +319,14 @@ class Database:
 
     def alter(self, query: str) -> None:
 
+        self._refuseWrite('run a statement that changes it')
         self.cursor.execute(query)
         self.connection.commit()
 
 
     def truncate(self, table: str) -> None:
 
+        self._refuseWrite('empty {}'.format(table))
         query = self.dialect.truncateQuery(table=self.statementName(table))
         self.cursor.execute(query)
         self.connection.commit()
@@ -459,6 +531,22 @@ class Database:
         return {schema: count for schema, count in sorted(counts.items()) if schema not in read and count}
 
 
+    def getCheckConstraints(self, table: str) -> List[str]:
+        """The definitions of the table's CHECK constraints, as its catalog
+        spells them; see generate.checks.
+        """
+
+        return self.dialect.checkConstraints(self.cursor, table)
+
+
+    def getIndexes(self, table: str) -> List[Tuple[str, Tuple[str, ...]]]:
+        """(name, columns) for each of the table's plain indexes over columns,
+        for `schema` to recreate; see DatabaseDialect.sourceIndexes.
+        """
+
+        return self.dialect.sourceIndexes(self.cursor, table)
+
+
     def getColumnDefinitions(self, table: str) -> List[ColumnDefinition]:
         """Each column's catalog type, size and nullability -- what DDL needs."""
 
@@ -558,6 +646,8 @@ class Database:
         commits on its own.
         """
 
+        self._refuseWrite('load rows into {}'.format(table))
+
         catalogColumns = self.catalogColumns(table=table, columns=columns)
         columnTypes = self._columnTypes(table, catalogColumns)
         resolvedColumns = self.quoted(catalogColumns)
@@ -580,6 +670,8 @@ class Database:
         last row per key, since one statement can't update a row twice.
         """
 
+        self._refuseWrite('load rows into {}'.format(table))
+
         allColumns, primaryKeyColumns, nonPrimaryKeyColumns = self._getColumnBuckets(table=table, columns=columns)
         columnTypes = self._columnTypes(table, allColumns)
 
@@ -599,90 +691,42 @@ class Database:
         for batch in self._batches(data, chunkSize):
             batch = preparer.prepare(batch, columnTypes)
             self._refuseUnloadable(table, batch, catalogColumns, columnTypes)
-            loaded = False
-            if canCollapse:
-                lastPerKey = list({tuple(row[index] for index in keyIndexes): row for row in batch}.values())
-                loaded = self.dialect.bulkUpsert(self.cursor, statementTable, allColumns, primaryKeyColumns, nonPrimaryKeyColumns, lastPerKey)
-            if not loaded:
-                self.dialect.bindTypes(self.cursor, columnTypes)
-                self.cursor.executemany(query, batch)
+            with self._uniqueKeyClashes(table):
+                loaded = False
+                if canCollapse:
+                    lastPerKey = list({tuple(row[index] for index in keyIndexes): row for row in batch}.values())
+                    loaded = self.dialect.bulkUpsert(self.cursor, statementTable, allColumns, primaryKeyColumns, nonPrimaryKeyColumns, lastPerKey)
+                if not loaded:
+                    self.dialect.bindTypes(self.cursor, columnTypes)
+                    self.cursor.executemany(query, batch)
             self.connection.commit()
+
+
+    @contextlib.contextmanager
+    def _uniqueKeyClashes(self, table: str) -> Iterator[None]:
+        """Turns the dialect's refusal of a row that matched a different row
+        by another unique key into an error that says so, rolled back and
+        never retried: the same rows would match the same way.
+        """
+
+        try:
+            yield
+        except Exception as error:
+            if not self.dialect.isUniqueKeyClash(error):
+                raise
+            self.connection.rollback()
+            raise UniqueKeyClashError('{}: a row matched a different row already there by a unique key other than the primary key, '
+                                      'and an upsert matches rows by primary key alone, so the load stopped rather than overwrite that '
+                                      'row with it. Two rows share a unique value -- a masked one that collided, say -- or the target\'s '
+                                      'unique keys differ from the source\'s'.format(table)) from None
 
 
     def upsertFromStage(self, targetTable: str, stageTable: str, columns: Optional[List[str]] = None) -> None:
 
+        self._refuseWrite('load rows into {}'.format(targetTable))
         allColumns, primaryKeyColumns, nonPrimaryKeyColumns = (self.quoted(bucket) for bucket in self._getColumnBuckets(table=targetTable, columns=columns))
         query = self.dialect.upsertFromStageQuery(targetTable=self.statementName(targetTable), stageTable=self.statementName(stageTable),
                                                     allColumns=allColumns,
                                                     primaryKeyColumns=primaryKeyColumns, nonPrimaryKeyColumns=nonPrimaryKeyColumns)
-        self.alter(query=query)
-
-
-    def copyKeys(self, fromTable: str, toTable: str) -> List[str]:
-        """Gives `toTable` the primary key and unique keys of `fromTable` that it
-        lacks, and says what it gave, as `primary key (id)` or `unique (email)`.
-        For a swap's stage table, which becomes the target, so the target keeps
-        its keys whichever table holds its name. See "How a swap works" in
-        docs/concepts/how-it-works.md.
-
-        Nothing is taken away, and a key `toTable` already has over the same
-        columns, in any order, is left as it is. Its columns are named as
-        `toTable` spells them, which must hold every one. Foreign keys are not
-        copied, for the reason `bauta schema` gives its stage tables none.
-        """
-
-        def folded(columns: Sequence[str]) -> frozenset:
-            return frozenset(column.upper() for column in columns)
-
-        primaryKey = self.dialect.primaryKey(self.cursor, fromTable)
-        uniqueKeys = self.dialect.uniqueKeys(self.cursor, fromTable)
-        ownPrimaryKey = self.dialect.primaryKey(self.cursor, toTable)
-        held = {folded(columns) for columns in self.dialect.uniqueKeys(self.cursor, toTable)}
-        if ownPrimaryKey:
-            held.add(folded(ownPrimaryKey))
-
-        addPrimaryKey = primaryKey if primaryKey and not ownPrimaryKey else []
-        if addPrimaryKey:
-            held.add(folded(addPrimaryKey))
-        addUnique = []
-        for columns in uniqueKeys:
-            if folded(columns) not in held:
-                held.add(folded(columns))
-                addUnique.append(columns)
-
-        if not addPrimaryKey and not addUnique:
-            return []
-
-        spelled = [self.catalogColumns(table=toTable, columns=list(columns)) for columns in [addPrimaryKey] + addUnique]
-        try:
-            self.dialect.addKeys(self.cursor, self.statementName(toTable), toTable, self.quoted(spelled[0]),
-                                 [self.quoted(columns) for columns in spelled[1:]])
-            self.connection.commit()
-        except BaseException:
-            self.connection.rollback()
-            raise
-        finally:
-            self.primaryKeyCache.pop(toTable, None)
-            self.columnNameCache.pop(toTable, None)
-
-        return ((['primary key ({})'.format(', '.join(spelled[0]))] if addPrimaryKey else [])
-                + ['unique ({})'.format(', '.join(columns)) for columns in spelled[1:]])
-
-
-    def swap(self, targetTable: str, stageTable: str) -> None:
-        """Exchanges the two tables by renaming, atomically everywhere but
-        Oracle, through a temporary name in the stage table's schema.
-        """
-
-        stageSchema, _ = splitTableName(stageTable)
-        _, targetName = splitTableName(targetTable)
-        # Suffixed as written and quoted afterwards, so the temporary name is
-        # spelled like the target it stands in for. The suffix goes inside the
-        # quotes of a quoted name: `[group]_tmp` is not a name SQL Server's
-        # sp_rename can parse.
-        tempName = suffixedName(self.type, targetName, '_tmp')
-        tempTable = '{}.{}'.format(stageSchema, tempName) if stageSchema else tempName
-
-        self.dialect.swap(self.cursor, targetTable=self.statementName(targetTable), stageTable=self.statementName(stageTable),
-                          tempTable=self.statementName(tempTable))
-        self.connection.commit()
+        with self._uniqueKeyClashes(targetTable):
+            self.alter(query=query)

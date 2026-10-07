@@ -13,6 +13,7 @@ come first.
 from __future__ import annotations
 
 import datetime
+import ipaddress
 import re
 from typing import Any, Callable, Dict, Tuple
 
@@ -22,7 +23,8 @@ EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$')
 PHONE = re.compile(r'^\+?[\d\s().-]{7,}$')
 NATIONAL_ID = re.compile(r'^\d{3}-\d{2}-\d{4}$')
 CARD = re.compile(r'^[\d -]{13,23}$')
-IPV4 = re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
+# Colon or hyphen separated (08:00:2b:01:02:03), or Cisco's dotted form (0800.2b01.0203).
+MAC = re.compile(r'^(?:[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})$')
 UUID_TEXT = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
 
 
@@ -37,6 +39,19 @@ def isIsoDate(text: str) -> bool:
 
     try:
         datetime.datetime.fromisoformat(text.strip())
+    except ValueError:
+        return False
+
+    return True
+
+
+def isIpAddress(text: str) -> bool:
+    """IPv4 or IPv6, as an address or an inet value with a /prefix. IPv6 was
+    not recognised, so a column of them was proposed `keep`.
+    """
+
+    try:
+        ipaddress.ip_interface(text.strip())
     except ValueError:
         return False
 
@@ -69,7 +84,13 @@ NAME_RULES: Tuple[Tuple[str, Tuple[str, ...], Dict[str, Any], str], ...] = (
      'name suggests a person\'s name'),
     ('userName', ('username', 'login', 'handle', 'screenname'), {'strategy': 'key'}, 'name suggests a user name; key keeps it unique'),
     ('company', ('company', 'companyname', 'employer', 'organization', 'organisation'), {'strategy': 'fakeCompany'}, 'name suggests a company'),
-    ('ip', ('ip', 'ipaddress', 'ipaddr'), {'strategy': 'hash'}, 'name suggests an IP address'),
+    # Two rules of one name: `ip` where the sampled values are addresses,
+    # since it keeps each one valid for an inet column, and `hash` where they
+    # are not, which `ip` would refuse.
+    ('ip', ('ip', 'ipaddress', 'ipaddr', 'ipv4', 'ipv6'), {'strategy': 'ip'}, 'name suggests an IP address; ip keeps each one an address of its family'),
+    ('ip', ('ip', 'ipaddress', 'ipaddr', 'ipv4', 'ipv6'), {'strategy': 'hash'}, 'name suggests an IP address, but sampled values are not all addresses'),
+    ('mac', ('mac', 'macaddress', 'macaddr', 'hwaddr', 'hwaddress', 'hardwareaddress', 'bssid'), {'strategy': 'key', 'charset': 'hex'},
+     'name suggests a MAC address, which identifies a device; key keeps it valid and one-to-one'),
     ('streetAddress', ('street', 'address', 'addressline', 'addr', 'line1', 'line2', 'streetaddress'), {'strategy': 'fakeStreetAddress'},
      'name suggests a street address'),
     ('city', ('city', 'town'), {'strategy': 'fakeCity'}, 'name suggests a city'),
@@ -96,7 +117,9 @@ VALUE_RULES: Tuple[Tuple[str, Callable[[str], bool], Dict[str, Any], str], ...] 
     ('nationalId', lambda text: bool(NATIONAL_ID.match(text)), {'strategy': 'key', 'charset': 'digits'},
      'sampled values look like national identifiers'),
     ('card', isCard, {'strategy': 'digits', 'keepTrailing': 4}, 'sampled values look like card numbers'),
-    ('ip', lambda text: bool(IPV4.match(text)), {'strategy': 'hash'}, 'sampled values look like IP addresses'),
+    ('ip', isIpAddress, {'strategy': 'ip'}, 'sampled values look like IP addresses; ip keeps each one an address of its family'),
+    ('mac', lambda text: bool(MAC.match(text)), {'strategy': 'key', 'charset': 'hex'},
+     'sampled values look like MAC addresses, which identify a device; key keeps them valid and one-to-one'),
     ('uuid', lambda text: bool(UUID_TEXT.match(text)), {'strategy': 'key', 'charset': 'hex'},
      'sampled values are UUIDs, which other systems -- logs, a CRM -- may hold too; key masks them one-to-one, so they stay unique'),
     # Before phone numbers, which ISO dates would otherwise pass for.

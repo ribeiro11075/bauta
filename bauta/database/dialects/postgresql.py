@@ -102,6 +102,20 @@ class PostgreSQLDialect(_OnConflictDialect):
         return cursor
 
 
+    def limitStatements(self, connection: Connection, cursor: Cursor, seconds: float) -> None:
+        """Each statement, which for a streamed query is each FETCH: a long
+        extract is not stopped for its length, but one fetch whose sort or
+        join runs away is.
+        """
+
+        cursor.execute('SET statement_timeout = {:d}'.format(max(1, round(seconds * 1000))))
+
+
+    def readOnlySessionStatement(self) -> Optional[str]:
+
+        return 'SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY'
+
+
     def placeholders(self, count: int) -> List[str]:
 
         return count * ['%s']
@@ -236,22 +250,59 @@ class PostgreSQLDialect(_OnConflictDialect):
                 "ORDER BY k.position")
 
 
+    def checkConstraintsQuery(self) -> Optional[str]:
+
+        return ("SELECT pg_get_constraintdef(con.oid) FROM pg_constraint con JOIN pg_class cl ON cl.oid = con.conrelid "
+                "JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
+                "WHERE con.contype = 'c' AND ns.nspname = COALESCE({}::text, current_schema()) AND cl.relname = {}::text ORDER BY con.conname")
+
+
+    def plainIndexesQuery(self) -> Optional[str]:
+        """B-tree indexes only, which a column list recreates: a GIN or GiST
+        index needs its operator class, which this doesn't read.
+        """
+
+        return self._indexesQuery(unique=False)
+
+
+    def tableGrantsQuery(self) -> Optional[str]:
+        """From the table's access list, which holds every grant on it, where
+        information_schema shows only those the current role is party to.
+        """
+
+        return ("SELECT acl.privilege_type, CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantee) END, acl.is_grantable "
+                "FROM pg_class cl JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
+                "CROSS JOIN LATERAL aclexplode(cl.relacl) AS acl "
+                "WHERE acl.grantee <> cl.relowner AND ns.nspname = COALESCE({}::text, current_schema()) AND cl.relname = {}::text "
+                "ORDER BY 2, 1")
+
+
     def uniqueKeysQuery(self) -> str:
         """From pg_index, which holds a unique constraint's index and a plain
         unique index alike. Only an index's key columns, not those it merely
         INCLUDEs; an index on an expression or with a WHERE is left out.
         """
 
+        return self._indexesQuery(unique=True)
+
+
+    @staticmethod
+    def _indexesQuery(unique: bool) -> str:
+        """One table's unique or plain indexes, the primary key's aside, as
+        rows of (name, column); see uniqueKeysQuery and plainIndexesQuery.
+        """
+
         return ("SELECT ic.relname, att.attname FROM pg_index idx "
                 "JOIN pg_class cl ON cl.oid = idx.indrelid "
                 "JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
                 "JOIN pg_class ic ON ic.oid = idx.indexrelid "
+                "JOIN pg_am am ON am.oid = ic.relam "
                 "CROSS JOIN LATERAL unnest(idx.indkey) WITH ORDINALITY AS k(attnum, position) "
-                "JOIN pg_attribute att ON att.attrelid = cl.oid AND att.attnum = k.attnum "
-                "WHERE idx.indisunique AND NOT idx.indisprimary AND idx.indexprs IS NULL AND idx.indpred IS NULL "
+                "LEFT JOIN pg_attribute att ON att.attrelid = cl.oid AND att.attnum = k.attnum AND k.attnum > 0 "
+                "WHERE {}idx.indisunique AND NOT idx.indisprimary AND idx.indexprs IS NULL AND idx.indpred IS NULL {}"
                 "AND k.position <= idx.indnkeyatts "
-                "AND ns.nspname = COALESCE({}::text, current_schema()) AND cl.relname = {}::text "
-                "ORDER BY ic.relname, k.position")
+                "AND ns.nspname = COALESCE({{}}::text, current_schema()) AND cl.relname = {{}}::text "
+                "ORDER BY ic.relname, k.position").format('' if unique else 'NOT ', '' if unique else "AND am.amname = 'btree' ")
 
 
     def tableExistsQuery(self) -> str:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import ipaddress
 import hashlib
 import json
 import os
@@ -164,6 +165,14 @@ REDACT_TEXTS = [
 
 COORDINATES = [51.50135, -0.14189, 0.0, 89.9999, -89.9999, 179.9999, -180.0, decimal.Decimal('38.722300'), decimal.Decimal('-9.1'), 7]
 
+# Addresses as each driver returns them, and what ip refuses.
+IP_ADDRESSES = ['192.168.1.1', '10.0.0.1', '0.0.0.0', '255.255.255.255', '2001:db8::1', 'fe80::1/64', '10.1.2.3/24', '10.20.0.0/16',
+                ipaddress.ip_address('172.16.254.3'), ipaddress.ip_interface('10.1.2.3/24'), b'\x0a\x00\x00\x01', 3232235777, 'not an address']
+
+# Degrees times a scale, as a column of microdegrees holds them; the last two
+# are past the poles even scaled, and refused.
+SCALED_COORDINATES = [51501350, -141890, 0, 89999900, decimal.Decimal('38722300.5'), 51501350.0, 90000001, 51501350000]
+
 NORMALIZED_TEXTS = ['AB12CD', 'ab12cd   ', ' Ab12Cd ', '1234567', '-1234567', '0012345', 1234567, '', None]
 
 JSON_DOCUMENTS = [
@@ -198,6 +207,7 @@ def pythonOnlyVectors() -> dict:
     out = {}
     for name, options, values in [
             ('dateShift', {}, DATES), ('dateShift', {'maxDays': 10}, DATES),
+            ('ip', {}, IP_ADDRESSES), ('ip', {'keepPrefix': 16}, IP_ADDRESSES),
             ('redact', {}, REDACT_TEXTS), ('redact', {'replacement': 'mask'}, REDACT_TEXTS),
             ('redact', {'replacement': 'mask', 'detect': ['email'], 'patterns': [r'ACC-\d{6}']}, REDACT_TEXTS),
             # normalize runs in Python before either implementation masks.
@@ -211,8 +221,12 @@ def pythonOnlyVectors() -> dict:
     # Strategies that mask with another column of the row, given as (value, that column's value).
     def contextEntry(strategy, value, context):
         result = entry(strategy, value)
-        masked = strategy.maskColumnWith([value], [context], 0)[0]
-        result.update(context=str(context), contextType=type(context).__name__, masked=str(masked), maskedType=type(masked).__name__)
+        result.update(context=str(context), contextType=type(context).__name__)
+        try:
+            masked = strategy.maskColumnWith([value], [context], 0)[0]
+            result.update(masked=str(masked), maskedType=type(masked).__name__)
+        except Exception as error:
+            result.update(error=type(error).__name__, message=str(error))
         return result
 
     for name, options, pairs in [
@@ -220,6 +234,9 @@ def pythonOnlyVectors() -> dict:
             ('coordinate', {'axis': 'latitude'}, [(value, None) for value in COORDINATES]),
             ('coordinate', {'axis': 'longitude', 'meters': 5000, 'latitudeColumn': 'lat'},
              [(value, latitude) for value in COORDINATES for latitude in (0, 51.5, -89.99, None)]),
+            ('coordinate', {'axis': 'latitude', 'scale': 1000000}, [(value, None) for value in SCALED_COORDINATES]),
+            ('coordinate', {'axis': 'longitude', 'latitudeColumn': 'lat', 'scale': 10000000},
+             [(value, latitude) for value in (-1418900, decimal.Decimal('-1418900.5'), -1800000000) for latitude in (515013500, None)]),
             ]:
         strategy = build(name, options)
         out['{} {}'.format(name, json.dumps(options, sort_keys=True))] = [contextEntry(strategy, value, context) for value, context in pairs]

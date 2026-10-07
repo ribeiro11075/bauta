@@ -41,7 +41,9 @@ KEY_MINIMUM_DISTINCT_CHARACTERS = 8
 
 # What a key should hold, in bits, as keyStrengthBits estimates it. Weaker keys
 # are warned about, not refused. 32 random bytes, as the docs recommend,
-# estimate at over 200; 16 random bytes in hex, just under this.
+# estimate at about 215, and never near this: the lowest of 200,000 was 189,
+# when repeated characters happened to count against it. 16 random bytes in
+# hex, just under this.
 KEY_RECOMMENDED_BITS = 128
 
 # Masks remembered per column, for the repeated values of foreign keys and

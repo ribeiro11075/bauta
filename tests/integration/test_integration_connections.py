@@ -128,3 +128,104 @@ def test_current_schema_decides_where_unqualified_names_resolve(name):
             assert not admin.tableExists('people')
         finally:
             admin.alter(drop.format(schema))
+
+
+@pytest.mark.parametrize('name', sorted(SERVERS))
+def test_require_encryption_connects_only_where_the_server_says_the_session_is_encrypted(name):
+    """The containers here encrypt MySQL and MariaDB by default and the rest
+    not at all: requireEncryption has to tell them apart by asking each
+    server, not by reading the settings.
+    """
+    _requireServer(name)
+    from bauta.configuration import ConfigurationError
+
+    settings = SERVERS[name][1]
+    with Database(connectionSettings=settings) as database:
+        encrypted = database.isEncrypted()
+
+    required = settings.model_copy(update={'requireEncryption': True})
+    if encrypted is True:
+        with Database(connectionSettings=required) as database:
+            assert database.query('SELECT 1' + (' FROM dual' if name == 'oracle' else '')) == [(1,)]
+    else:
+        with pytest.raises(ConfigurationError, match='requireEncryption'):
+            Database(connectionSettings=required)
+
+
+@pytest.mark.parametrize('name', sorted(SERVERS))
+def test_a_read_only_connection_reads_and_refuses_writes_on_every_server(name):
+    """bauta refuses its own writes on a readOnly connection everywhere; where
+    the server can make a session read-only (PostgreSQL, MySQL, MariaDB) a
+    write made around bauta is refused by the server too.
+    """
+    _requireServer(name)
+    from bauta.configuration import ConfigurationError
+
+    table = 'ro_{}'.format(uuid.uuid4().hex[:8])
+    settings = SERVERS[name][1]
+    with Database(connectionSettings=settings) as database:
+        database.alter('CREATE TABLE {} (id INT PRIMARY KEY)'.format(table))
+        database.insert(table, [(1,)])
+    try:
+        with Database(connectionSettings=settings.model_copy(update={'readOnly': True})) as readOnly:
+            assert readOnly.query('SELECT id FROM {}'.format(table)) == [(1,)]
+            readOnly.rollback()
+            with pytest.raises(ConfigurationError, match='is readOnly'):
+                readOnly.insert(table, [(2,)])
+            if readOnly.dialect.readOnlySessionStatement() is not None:
+                with pytest.raises(Exception):
+                    readOnly.cursor.execute('INSERT INTO {} VALUES (3)'.format(table))
+                readOnly.rollback()
+    finally:
+        with Database(connectionSettings=settings) as database:
+            assert database.query('SELECT id FROM {}'.format(table)) == [(1,)]
+            database.alter('DROP TABLE {}'.format(table))
+
+
+@pytest.mark.parametrize('name', sorted(SERVERS))
+def test_a_watermark_named_twice_is_bound_on_every_server(name):
+    """Oracle names its placeholders, :1 for each, and still takes one value
+    per placeholder, as the rest do.
+    """
+    _requireServer(name)
+
+    with Database(connectionSettings=SERVERS[name][1]) as database:
+        query, parameters = database.bindWatermark('SELECT 1 AS a{} WHERE 3 > {{{{ watermark }}}} OR 4 > {{{{ watermark }}}}'.format(
+            ' FROM dual' if name == 'oracle' else ''), 2)
+        _, chunks = database.stream(query, 10, parameters)
+
+        assert [[int(value) for value, in chunk] for chunk in chunks] == [[1]]
+
+
+# A query each server takes well over a second on, and finishes in a bounded
+# time if the limit fails, rather than hanging the suite.
+SLOW_QUERIES = {
+    'postgresql': 'SELECT pg_sleep(3)',
+    'mysql': 'SELECT count(*) FROM information_schema.columns a, information_schema.columns b, (SELECT 1 FROM information_schema.columns LIMIT 60) c',
+    'mariadb': 'SELECT count(*) FROM information_schema.columns a, information_schema.columns b, (SELECT 1 FROM information_schema.columns LIMIT 60) c',
+    'oracle': 'BEGIN DBMS_SESSION.SLEEP(3); END;',
+    'mssql': 'SELECT count_big(*) FROM sys.all_columns a CROSS JOIN sys.all_columns b CROSS JOIN sys.all_columns c',
+    }
+
+
+@pytest.mark.parametrize('name', sorted(SERVERS))
+def test_a_statement_past_the_timeout_is_stopped_by_the_server_and_not_retried(name):
+    """maxRowsReadPerSecond paces the rows a job fetches, not what its query
+    costs the server: a join gone wrong ran on production for as long as it
+    took, and was retried.
+    """
+    _requireServer(name)
+    import time
+
+    from bauta.jobs.pipeline import _STATEMENT_TIMEOUT
+
+    settings = SERVERS[name][1].model_copy(update={'statementTimeoutSeconds': 1})
+    with Database(connectionSettings=settings) as database:
+        assert database.query('SELECT 1' + (' FROM dual' if name == 'oracle' else '')) == [(1,)]
+        started = time.monotonic()
+        with pytest.raises(Exception) as raised:
+            database.cursor.execute(SLOW_QUERIES[name])
+            database.cursor.fetchall()
+
+    assert time.monotonic() - started < 2.5
+    assert _STATEMENT_TIMEOUT.search(str(raised.value)), str(raised.value)

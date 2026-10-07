@@ -292,6 +292,10 @@ def _buildParser() -> argparse.ArgumentParser:
     synthesizeParser.add_argument('--table', action='append', required=True, metavar='TABLE[:ROWS]',
                                   help='a table to fill, and how many rows (repeatable); parents are filled first')
     synthesizeParser.add_argument('--rows', type=_positiveInteger, default=100, help='rows for a --table without a count (default: 100)')
+    synthesizeParser.add_argument('--profile', metavar='ALIAS',
+                                  help='shape the rows like the same tables in this connection: each column\'s share of NULLs, the range of '
+                                       'a number or a date, and the labels of a column of few values, as often as there. Never a column '
+                                       'named like personal data, a key, or a label fewer than 5 rows share')
     synthesizeParser.add_argument('--seed', type=int, default=0, help='the same seed makes the same rows (default: 0)')
     synthesizeParser.add_argument('--dry-run', action='store_true', help='show what each column gets, and sample rows, without writing')
     synthesizeParser.add_argument('--yes', action='store_true', help='actually insert the rows')

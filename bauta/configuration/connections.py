@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import re
 from enum import Enum
+from urllib.parse import urlsplit, urlunsplit
 from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, Type, Union, cast
 
 from pydantic import BaseModel, BeforeValidator, ByteSize, ConfigDict, Field, SecretStr, TypeAdapter, field_validator, model_validator
@@ -148,6 +149,12 @@ class _Connection(_BaseConnection):
 
     type: DatabaseType
     options: CleanedMapping = Field(default_factory=dict, repr=False)
+    # Nothing writes here: validation refuses a job loading into it and run
+    # state, history or a manifest kept in it; every write bauta would make
+    # through it -- clear, schema --apply, synthesize -- is refused; and where
+    # the database can say so, each session is read-only on the server too.
+    # For production, so an alias pointed the wrong way can't write to it.
+    readOnly: bool = False
     # The most rows a second jobs may read from this database, all of them
     # together, partitions and all, so a copy can't take more of production
     # than it was given. None is no limit. See jobs.throttle.ReadLimit.
@@ -183,6 +190,17 @@ class _ServerConnection(_Connection):
     user: str
     password: Optional[SecretStr] = None
     passwordCommand: Optional[Union[str, List[str]]] = None
+    # Every session is asked, as it connects, whether the server encrypts it,
+    # and one the server says isn't, or can't say of, is closed before a
+    # statement runs. TLS itself is set in `options`; this is what makes
+    # forgetting it -- or a server that stopped offering it -- fail rather
+    # than copy production in the clear with a line in the log.
+    requireEncryption: bool = False
+    # The longest one statement may run on this connection before the
+    # database stops it, so a query nobody expected to be expensive -- a join
+    # gone wrong, on production -- can't run for hours. How each database
+    # measures it differs; see docs/reference/connections.md#statement-timeout.
+    statementTimeoutSeconds: Optional[float] = Field(default=None, gt=0)
 
     @model_validator(mode='after')
     def _requireOnePassword(self) -> '_ServerConnection':
@@ -658,7 +676,9 @@ class IcebergConnection(_Lake):
 
     type: Literal[StoreType.ICEBERG] = StoreType.ICEBERG
     catalog: IcebergCatalog
-    uri: Optional[str] = None
+    # Left out of the repr: a SQL catalog's is a database URL, which usually
+    # carries its password. describeTarget shows it without one.
+    uri: Optional[str] = Field(default=None, repr=False)
     warehouse: Optional[str] = None
     namespace: Optional[str] = None
     # A REST catalog's: `clientId:clientSecret` for its OAuth2, or a token.
@@ -759,9 +779,32 @@ class IcebergConnection(_Lake):
 
     def describeTarget(self) -> str:
 
-        where = self.uri if self.catalog != IcebergCatalog.GLUE else 'region {}'.format(self.region or 'from the environment')
+        where = withoutPassword(self.uri) if self.catalog != IcebergCatalog.GLUE else 'region {}'.format(self.region or 'from the environment')
 
         return 'Iceberg tables in the {} catalog at {}'.format(self.catalog.value, where)
+
+
+def withoutPassword(url: Optional[str]) -> Optional[str]:
+    """`url` with the password in its user part replaced by ***, as a log
+    line or an error may show it: a SQL catalog's `postgresql://cat:secret@host/db`
+    printed whole by `run --dry-run` put the password in the log.
+    """
+
+    if not url or '@' not in url:
+        return url
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        # Not a URL that can be taken apart, so not one whose password can be found.
+        return '***'
+    if parts.password is None:
+        return url
+
+    user, _, host = parts.netloc.rpartition('@')
+    name = user.partition(':')[0]
+
+    return urlunsplit(parts._replace(netloc='{}:***@{}'.format(name, host)))
 
 
 # The connections that are tables of files rather than databases.

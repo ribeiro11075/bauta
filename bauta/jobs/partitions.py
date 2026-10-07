@@ -14,6 +14,14 @@ The bounds go into the statement as integer literals rather than bound
 parameters: they are integers this module computed, so there is nothing to
 escape, and binding them would oblige a query without a watermark to double
 every literal % on the %s dialects.
+
+A column that isn't a number -- a UUID key, text, a date -- is sliced by the
+values themselves: the database deals the column's values out in order with
+NTILE, and the largest of each share is where a slice ends. One ordered pass
+over the column, which an index on it serves, and every slice a range in the
+database's own order, which for SQL Server's uniqueidentifier is not the
+text's. Those bounds are data, so they are bound as parameters, never written
+into the statement.
 """
 from __future__ import annotations
 
@@ -22,6 +30,15 @@ import math
 from typing import Any, List, NamedTuple, Optional, Sequence, Tuple
 
 from ..configuration import ConfigurationError
+
+class Slice(NamedTuple):
+    """What one partition reads: the predicate on the derived table, or None
+    for the query as it is, and the values the predicate binds, in order.
+    """
+
+    predicate: Optional[str]
+    parameters: Tuple[Any, ...] = ()
+
 
 # The fewest rows a slice is worth, as `count: auto` judges it from the span of
 # the column: below it, opening another pair of connections, and the slices'
@@ -120,6 +137,42 @@ def boundsQuery(sourceQuery: str, column: str) -> str:
     return 'SELECT MIN({0}), MAX({0}) FROM ({1}) {2}'.format(column, _inner(sourceQuery), PARTITION_ALIAS)
 
 
+def quantileQuery(sourceQuery: str, column: str, count: int) -> str:
+    """The largest value of `column`, already quoted, in each of `count`
+    shares of the non-null values `sourceQuery` returns, dealt out in the
+    database's order: rows of one value, in that order. The last of each
+    share by ROW_NUMBER rather than MAX, which PostgreSQL has no version of
+    for uuid. NTILE and ROW_NUMBER run on all seven databases.
+    """
+
+    return ('SELECT {0} FROM (SELECT {0}, bauta_share, ROW_NUMBER() OVER (PARTITION BY bauta_share ORDER BY {0} DESC) AS bauta_rank '
+            'FROM (SELECT {0}, NTILE({1}) OVER (ORDER BY {0}) AS bauta_share FROM ({2}) {3} WHERE {0} IS NOT NULL) bauta_shares) bauta_ranked '
+            'WHERE bauta_rank = 1 ORDER BY bauta_share'.format(column, int(count), _inner(sourceQuery), PARTITION_ALIAS))
+
+
+def quantileSlices(column: str, maxima: Sequence[Any], placeholder: str) -> List[Slice]:
+    """One slice per share quantileQuery found, on `column`, already quoted,
+    so that every row is in exactly one: the first takes the nulls, and the
+    last has no upper bound, so a row added since is read once. Equal maxima
+    -- a value filling more than one share -- make one slice. The bounds are
+    compared in the database, in the order they came, never in Python's.
+    """
+
+    bounds: List[Any] = []
+    for value in list(maxima)[:-1]:
+        if not bounds or value != bounds[-1]:
+            bounds.append(value)
+
+    if not bounds:
+        return [Slice(None)]
+
+    slices = [Slice('({0} <= {1} OR {0} IS NULL)'.format(column, placeholder), (bounds[0],))]
+    slices.extend(Slice('{0} > {1} AND {0} <= {1}'.format(column, placeholder), (low, high)) for low, high in zip(bounds, bounds[1:]))
+    slices.append(Slice('{} > {}'.format(column, placeholder), (bounds[-1],)))
+
+    return slices
+
+
 def resolveColumn(column: str, columns: Sequence[str]) -> str:
     """`column` as the query spells it -- an exact match, else the one match
     ignoring case, since Oracle returns an unquoted name in capitals -- or a
@@ -171,6 +224,13 @@ def splitPoints(lowest: int, highest: int, count: int) -> List[int]:
     points = sorted({lowest + span * index // count for index in range(1, count)})
 
     return [point for point in points if lowest < point <= highest]
+
+
+def isNumberBound(value: Any) -> bool:
+    """Whether MIN or MAX gave a number, which integer ranges slice, rather
+    than a value quantileSlices has to."""
+
+    return value is None or (not isinstance(value, bool) and isinstance(value, (int, float, decimal.Decimal)))
 
 
 def slicePredicates(column: str, points: Sequence[int]) -> List[Optional[str]]:

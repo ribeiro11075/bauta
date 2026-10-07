@@ -112,6 +112,29 @@ def splitPasswordCommand(command: Union[str, List[str]]) -> List[str]:
     return arguments
 
 
+# A run of characters a token is written in -- base64, base64url, hex, a JWT's
+# dots -- long enough to be one rather than a word of a message.
+_TOKEN_LIKE = re.compile(r'[A-Za-z0-9+/=_.%~-]{24,}')
+
+
+def _withoutSecrets(stderr: str, stdout: str) -> str:
+    """What a failed passwordCommand wrote to stderr, for its error, without
+    the secrets it may hold: a tool that printed a token before failing put
+    it, through the error, into the log, history and any webhook. What it
+    printed to stdout, the password channel, is removed wherever it appears,
+    and so is anything shaped like a token, which leaves a message such as
+    "ExpiredToken: the security token included in the request is expired".
+    """
+
+    text = stderr.strip()[-500:]
+    for line in stdout.split():
+        # A word of its own wherever it is short, so a two-letter secret
+        # doesn't take every `to` and `in` with it.
+        text = text.replace(line, '<redacted>') if len(line) >= 8 else re.sub(r'(?<!\w){}(?!\w)'.format(re.escape(line)), '<redacted>', text)
+
+    return _TOKEN_LIKE.sub('<redacted>', text)
+
+
 def runPasswordCommand(command: Union[str, List[str]]) -> str:
     """Runs a passwordCommand and returns what it printed, stripped. The
     output, being the secret, never appears in an error.
@@ -129,7 +152,7 @@ def runPasswordCommand(command: Union[str, List[str]]) -> str:
 
     if completed.returncode != 0:
         raise PasswordCommandError('passwordCommand {} exited with status {}: {}'.format(
-            arguments[0], completed.returncode, completed.stderr.strip()[-500:]))
+            arguments[0], completed.returncode, _withoutSecrets(completed.stderr, completed.stdout)))
 
     password = completed.stdout.strip()
     if not password:

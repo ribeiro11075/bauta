@@ -171,6 +171,75 @@ def test_a_failed_job_leaves_nothing_a_reader_sees(tmp_path, source):
     assert not list((tmp_path / 'lake' / '_bauta_staging').iterdir())
 
 
+def _failingOnMove(monkeypatch, failure, at=3):
+    """Store.move failing with `failure` on its `at`th call: a cloud copy
+    going wrong, or the process being killed, part-way through publishing.
+    """
+    from bauta.lake import stores
+
+    move, calls = stores.Store.move, []
+
+    def failing(self, source, destination):
+        calls.append(destination)
+        if len(calls) == at:
+            raise failure
+        return move(self, source, destination)
+
+    monkeypatch.setattr(stores.Store, 'move', failing)
+    return calls
+
+
+def test_an_append_failing_part_way_through_publishing_takes_back_what_it_moved(tmp_path, source, monkeypatch):
+    """Parts are moved into the table one at a time, so an append that failed
+    on its third move had published two: 12,000 of 20,000 rows were visible,
+    and the next run, from the same watermark, appended them again.
+    """
+    calls = _failingOnMove(monkeypatch, OSError('the copy failed'))
+
+    with pytest.raises(OSError):
+        _run(tmp_path, source, insertStrategy='append', lake={'fileSize': '4KB', 'rowGroupSize': '2KB'})
+
+    assert len(calls) == 3
+    assert _visibleFiles(tmp_path) == []
+    assert not list((tmp_path / 'lake' / '_bauta_staging').iterdir())
+
+
+def test_the_next_run_takes_back_what_a_killed_append_had_published(tmp_path, source, monkeypatch, caplog):
+    """A process killed among the moves runs no abort(): its intent file,
+    left in staging, tells the next run of the table which files to remove
+    before appending the same rows again.
+    """
+    class Killed(BaseException):
+        pass
+
+    _failingOnMove(monkeypatch, Killed())
+    monkeypatch.setattr(FileTarget, 'abort', lambda self: None)
+    with pytest.raises(Killed):
+        _run(tmp_path, source, insertStrategy='append', lake={'fileSize': '4KB', 'rowGroupSize': '2KB'})
+    assert _visibleFiles(tmp_path)
+    monkeypatch.undo()
+
+    # Another table's run leaves the killed run's files alone.
+    _run(tmp_path, source, insertStrategy='append', targetTableFinal='crm/other')
+    assert _read(tmp_path / 'lake' / 'crm' / 'customers').num_rows > 0
+
+    with caplog.at_level(logging.WARNING, logger='bauta'):
+        _run(tmp_path, source, insertStrategy='append')
+
+    table = _read(tmp_path / 'lake' / 'crm' / 'customers')
+    assert table.num_rows == len(set(table.column('id').to_pylist())) == ROWS
+    assert 'removed the 2 part(s) it had published' in caplog.text
+    assert not list((tmp_path / 'lake' / '_bauta_staging').iterdir())
+
+
+def test_an_overwrite_writes_no_intent_so_a_complete_snapshot_is_never_taken_back(tmp_path, source):
+    _run(tmp_path, source)
+    _run(tmp_path, source, insertStrategy='append', targetTableFinal='crm/other')
+
+    snapshot, = _snapshots(tmp_path)
+    assert _read(snapshot).num_rows == ROWS
+
+
 def test_a_float_is_never_written_into_an_integer_column_as_its_truncation(tmp_path, source):
     """pyarrow writes 1.5 into an int64 column as 1 without a word."""
     with pytest.raises(FileTypeError, match='column balance is written as int64, and a row holds float'):
@@ -249,3 +318,26 @@ def test_target_column_types_must_name_columns_the_table_has(tmp_path, source):
 def test_a_files_connection_is_not_a_database(tmp_path):
     with pytest.raises(ConfigurationError, match='is a files connection, not a database'):
         Database(connectionSettings=connectionConfig(type='files', root=str(tmp_path)))
+
+
+def test_another_job_appending_to_the_same_table_leaves_a_killed_jobs_parts_alone(tmp_path, source, monkeypatch):
+    """Two jobs may append to one table, and run at once: the second taking
+    back the first's intent while the first was still publishing deleted the
+    parts it had just moved in. Only the job that left an intent takes it back.
+    """
+    class Killed(BaseException):
+        pass
+
+    _failingOnMove(monkeypatch, Killed())
+    monkeypatch.setattr(FileTarget, 'abort', lambda self: None)
+    with pytest.raises(Killed):
+        _run(tmp_path, source, job='east', insertStrategy='append', lake={'fileSize': '4KB', 'rowGroupSize': '2KB'})
+    left = _visibleFiles(tmp_path)
+    monkeypatch.undo()
+
+    _run(tmp_path, source, job='west', insertStrategy='append', sourceQuery='select id, email, balance, notes from customers where id <= 10')
+    assert set(left) <= set(_visibleFiles(tmp_path))
+
+    _run(tmp_path, source, job='east', insertStrategy='append')
+    assert not set(left) & set(_visibleFiles(tmp_path))
+    assert _read(tmp_path / 'lake' / 'crm' / 'customers').num_rows == ROWS + 10

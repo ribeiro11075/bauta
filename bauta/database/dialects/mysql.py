@@ -9,6 +9,14 @@ from .base import ColumnCategory, DatabaseDialect
 
 
 
+
+# What the upsert guard evaluates to refuse a row: a scalar subquery of two
+# rows, which MySQL and MariaDB reject in every sql_mode. Of the key column
+# itself, so both of IF's branches are its type: `SELECT 1` beside MariaDB's
+# UUID type was refused as mixing types, failing every upsert into a table
+# keyed by one. See MySQLDialect._onDuplicateKey.
+UNIQUE_KEY_CLASH = '(SELECT {0} UNION ALL SELECT {0})'
+
 class MySQLDialect(DatabaseDialect):
 
     databaseType = DatabaseType.MYSQL
@@ -55,6 +63,19 @@ class MySQLDialect(DatabaseDialect):
         """
 
         native(connection).consume_results()
+
+
+    def limitStatements(self, connection: Connection, cursor: Cursor, seconds: float) -> None:
+        """SELECTs only, for their whole run, the rows a streamed one sends
+        included.
+        """
+
+        cursor.execute('SET SESSION max_execution_time = {:d}'.format(max(1, round(seconds * 1000))))
+
+
+    def readOnlySessionStatement(self) -> Optional[str]:
+
+        return 'SET SESSION TRANSACTION READ ONLY'
 
 
     def placeholders(self, count: int) -> List[str]:
@@ -120,15 +141,53 @@ class MySQLDialect(DatabaseDialect):
                 "WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {} AND constraint_name = 'PRIMARY' ORDER BY ordinal_position")
 
 
+    def checkConstraintsQuery(self) -> Optional[str]:
+        """MySQL 8.0.16 and MariaDB both; older servers never enforced a CHECK."""
+
+        return ("SELECT cc.check_clause FROM information_schema.check_constraints cc "
+                "JOIN information_schema.table_constraints tc ON tc.constraint_schema = cc.constraint_schema "
+                "AND tc.constraint_name = cc.constraint_name "
+                "WHERE tc.constraint_type = 'CHECK' AND tc.table_schema = COALESCE({}, DATABASE()) AND tc.table_name = {} "
+                "ORDER BY cc.constraint_name")
+
+
+    def plainIndexesQuery(self) -> Optional[str]:
+
+        return self._indexesQuery(unique=False)
+
+
+    def tableGrantsQuery(self) -> Optional[str]:
+        """Grants on the table itself; a grant on its database, the usual
+        kind, covers the stage table already.
+        """
+
+        return ("SELECT privilege_type, grantee, is_grantable FROM information_schema.table_privileges "
+                "WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {} ORDER BY grantee, privilege_type")
+
+
+    def granteeName(self, grantee: str) -> str:
+        """The catalog's own spelling, `'user'@'host'`, which GRANT takes."""
+
+        return grantee
+
+
     def uniqueKeysQuery(self) -> str:
         """A column indexed by a prefix only -- which a TEXT column's index
         must be -- comes back NULL, as a functional index's already does: a
         column list alone can't recreate either.
         """
 
+        return self._indexesQuery(unique=True)
+
+
+    @staticmethod
+    def _indexesQuery(unique: bool) -> str:
+        """One table's unique or plain B-tree indexes, the primary key aside,
+        as rows of (name, column)."""
+
         return ("SELECT index_name, CASE WHEN sub_part IS NULL THEN column_name END FROM information_schema.statistics "
-                "WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {} AND non_unique = 0 AND index_name <> 'PRIMARY' "
-                "ORDER BY index_name, seq_in_index")
+                "WHERE table_schema = COALESCE({{}}, DATABASE()) AND table_name = {{}} AND non_unique = {} AND index_name <> 'PRIMARY' {}"
+                "ORDER BY index_name, seq_in_index").format(0 if unique else 1, '' if unique else "AND index_type = 'BTREE' ")
 
 
     def tableExistsQuery(self) -> str:
@@ -144,15 +203,36 @@ class MySQLDialect(DatabaseDialect):
 
     @staticmethod
     def _onDuplicateKey(table: str, primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
-        """A key-only table gets a no-op assignment of its key, since an empty
-        SET is invalid. Not INSERT IGNORE, which also silences truncation,
-        NOT NULL and foreign-key errors.
+        """The update for a row that matched one already there, guarded first.
+
+        ON DUPLICATE KEY fires on any unique key, not only the primary key: a
+        new row whose email another row already had updated that other row
+        with the new one's values, and the new row was never written -- two
+        people merged into one without an error, where every other database
+        refuses the row. The guard keeps the matched row's key where it is
+        the incoming row's, and otherwise asks for a subquery returning two
+        rows, which fails the statement in every sql_mode (1242, which
+        isUniqueKeyClash recognises). MySQL evaluates the subquery only when
+        the keys differ, and assignments left to right, so nothing is
+        updated before the guard. It also stands in for the no-op assignment
+        a key-only table needs, since an empty SET is invalid. Not INSERT
+        IGNORE, which also silences truncation, NOT NULL and foreign-key errors.
+
+        The matched row's columns are qualified with the table, since a load
+        from a stage table names the same columns in its SELECT.
         """
 
-        if not nonPrimaryKeyColumns:
-            return 'ON DUPLICATE KEY UPDATE {0}.{1}={0}.{1}'.format(table, primaryKeyColumns[0])
+        same = ' AND '.join('{0}.{1} <=> VALUES({1})'.format(table, column) for column in primaryKeyColumns)
+        keyColumn = '{}.{}'.format(table, primaryKeyColumns[0])
+        guard = '{0} = IF({1}, {0}, {2})'.format(keyColumn, same, UNIQUE_KEY_CLASH.format(keyColumn))
 
-        return 'ON DUPLICATE KEY UPDATE {}'.format(', '.join('{0}=VALUES({0})'.format(column) for column in nonPrimaryKeyColumns))
+        return 'ON DUPLICATE KEY UPDATE {}'.format(', '.join([guard] + ['{0}=VALUES({0})'.format(column) for column in nonPrimaryKeyColumns]))
+
+
+    def isUniqueKeyClash(self, error: BaseException) -> bool:
+        """Whether `error` is _onDuplicateKey's guard refusing a row."""
+
+        return getattr(error, 'errno', None) == 1242 and 'more than 1 row' in str(error)
 
 
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
@@ -174,8 +254,17 @@ class MySQLDialect(DatabaseDialect):
 
 
 class MariaDBDialect(MySQLDialect):
-    """MySQL's dialect and driver, unchanged: MariaDB is compatible with
-    everything this uses.
+    """MySQL's dialect and driver: MariaDB is compatible with everything this
+    uses but the statement timeout, which it names otherwise.
     """
 
     databaseType = DatabaseType.MARIADB
+
+
+    def limitStatements(self, connection: Connection, cursor: Cursor, seconds: float) -> None:
+        """MariaDB's own variable, in seconds; it has no max_execution_time.
+        Every statement, a streamed SELECT for its whole run.
+        """
+
+        cursor.execute('SET SESSION max_statement_time = {:g}'.format(seconds))
+

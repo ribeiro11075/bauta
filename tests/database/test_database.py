@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from bauta.configuration import connectionConfig, DatabaseType
+from bauta.configuration import ConfigurationError, connectionConfig, DatabaseType
 from bauta.database import Database
 
 
@@ -529,3 +529,122 @@ def test_an_in_memory_sqlite_database_opens_though_it_cannot_use_wal():
 
     with Database(connectionSettings=connectionConfig(type='sqlite', path=':memory:')) as database:
         assert database.query('PRAGMA journal_mode')[0][0] == 'memory'
+
+
+@pytest.mark.parametrize('renamesDone, expected, target, stage', [(1, 'undid it', [(1,)], [(2,)]), (2, 'finished it', [(2,)], [(1,)])])
+def test_a_swap_killed_between_renames_is_put_right_where_renames_commit_alone(tmp_path, monkeypatch, renamesDone, expected, target, stage):
+    """Oracle commits each rename, so a job killed between them left the
+    tables part-way: after the second, no target at all, and every later run
+    failed looking for it. Checked here on SQLite, told its swap isn't atomic;
+    test_integration_oracle.py checks Oracle itself.
+    """
+    from bauta.database import DIALECTS
+
+    monkeypatch.setattr(DIALECTS[DatabaseType.SQLITE], 'ATOMIC_SWAP', False)
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(tmp_path / 't.db')), create=True) as database:
+        for table, row in (('orders', 1), ('orders_stage', 2)):
+            database.alter('CREATE TABLE {} (id INT PRIMARY KEY)'.format(table))
+            database.insert(table=table, data=[(row,)])
+        database.alter('ALTER TABLE orders_stage RENAME TO orders_tmp')
+        if renamesDone == 2:
+            database.alter('ALTER TABLE orders RENAME TO orders_stage')
+
+        assert expected in database.recoverInterruptedSwap('orders', 'orders_stage')
+        assert (database.query('SELECT id FROM orders'), database.query('SELECT id FROM orders_stage')) == (target, stage)
+        assert not database.tableExists('orders_tmp')
+        assert database.recoverInterruptedSwap('orders', 'orders_stage') is None
+
+        database.alter('CREATE TABLE orders_tmp (id INT)')
+        with pytest.raises(ConfigurationError, match='all exist'):
+            database.recoverInterruptedSwap('orders', 'orders_stage')
+
+
+def test_an_atomic_swap_never_looks_for_a_leftover(tmp_path):
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(tmp_path / 't.db')), create=True) as database:
+        database.alter('CREATE TABLE orders_tmp (id INT)')
+
+        assert database.recoverInterruptedSwap('orders', 'orders_stage') is None
+
+
+@pytest.mark.parametrize('answer, message', [(False, 'says this session is not encrypted'), (None, 'could not say whether')])
+def test_require_encryption_refuses_a_session_the_server_does_not_call_encrypted(monkeypatch, answer, message):
+    """TLS is set in a connection's options, and nothing checked it was:
+    PostgreSQL, Oracle and SQL Server without it copied production in the
+    clear, saying so only in a dry run's log line. A server that can't say
+    is refused too, since the setting promises the one answer.
+    """
+    from bauta.database import DIALECTS
+
+    connection = MagicMock()
+    monkeypatch.setattr(DIALECTS[DatabaseType.POSTGRESQL], 'connect', lambda settings: (connection, MagicMock()))
+    monkeypatch.setattr(DIALECTS[DatabaseType.POSTGRESQL], 'isEncrypted', lambda cursor: answer)
+    settings = connectionConfig(type='postgresql', user='u', password='p', database='d', host='h', requireEncryption=True)
+
+    with pytest.raises(ConfigurationError, match=message):
+        Database(connectionSettings=settings)
+    connection.close.assert_called_once()
+
+    monkeypatch.setattr(DIALECTS[DatabaseType.POSTGRESQL], 'isEncrypted', lambda cursor: True)
+    Database(connectionSettings=settings).close()
+    Database(connectionSettings=settings.model_copy(update={'requireEncryption': False, 'host': 'h2'})).close()
+
+
+def test_require_encryption_is_a_server_connections_setting():
+    with pytest.raises(Exception, match='requireEncryption'):
+        connectionConfig(type='sqlite', path=':memory:', requireEncryption=True)
+
+
+def test_a_read_only_connection_refuses_every_write_and_its_session_does_too(tmp_path):
+    """Every write bauta makes -- a load, clear's DELETE, schema --apply's
+    DDL, a swap -- goes through a method that refuses on a readOnly
+    connection, and SQLite's session refuses a write made around them.
+    """
+    import sqlite3
+
+    path = tmp_path / 'prod.db'
+    with sqlite3.connect(path) as connection:
+        connection.execute('CREATE TABLE orders (id INT PRIMARY KEY)')
+        connection.execute('INSERT INTO orders VALUES (1)')
+    connection.close()
+    settings = connectionConfig(type='sqlite', path=str(path), readOnly=True)
+
+    with Database(connectionSettings=settings) as database:
+        for write in (lambda: database.insert('orders', [(2,)]), lambda: database.upsert('orders', [(2,)]), lambda: database.truncate('orders'),
+                      lambda: database.alter('DROP TABLE orders'), lambda: database.execute('DELETE FROM orders'),
+                      lambda: database.swap('orders', 'orders_stage')):
+            with pytest.raises(ConfigurationError, match='is readOnly'):
+                write()
+        with pytest.raises(sqlite3.OperationalError, match='readonly|read-only|query_only'):
+            database.cursor.execute('INSERT INTO orders VALUES (3)')
+
+        assert database.query('SELECT id FROM orders') == [(1,)]
+
+
+def test_a_watermark_named_twice_is_bound_twice(tmp_path):
+    """`created > {{ watermark }} OR updated > {{ watermark }}` passed
+    validation, and every run failed: two placeholders, one parameter.
+    """
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(tmp_path / 't.db')), create=True) as database:
+        database.alter('CREATE TABLE events (id INT, created INT, updated INT)')
+        database.insert('events', [(1, 1, 1), (2, 1, 9), (3, 9, 1)])
+
+        query, parameters = database.bindWatermark('SELECT id FROM events WHERE created > {{ watermark }} OR updated > {{watermark}} ORDER BY id', 5)
+        _, chunks = database.stream(query, 10, parameters)
+
+        assert parameters == (5, 5) and list(chunks) == [[(2,), (3,)]]
+        assert database.bindWatermark('SELECT 1', 5) == ('SELECT 1', ())
+
+
+def test_a_watermark_in_a_comment_or_a_literal_is_left_unbound(tmp_path):
+    """Counting every {{ watermark }} bound one for each mention in a comment
+    too, which SQLite, DuckDB and Oracle don't count as a placeholder: the
+    query failed on a count of bindings.
+    """
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(tmp_path / 't.db')), create=True) as database:
+        database.alter('CREATE TABLE events (id INT)')
+        database.insert('events', [(1,), (5,)])
+        for text in ('SELECT id FROM events WHERE id > {{ watermark }} -- from {{ watermark }}',
+                     "SELECT id FROM events /* {{ watermark }} */ WHERE id > {{ watermark }} AND 'a {{ watermark }}' <> ''"):
+            query, parameters = database.bindWatermark(text, 2)
+            _, chunks = database.stream(query, 10, parameters)
+            assert parameters == (2,) and list(chunks) == [[(5,)]]

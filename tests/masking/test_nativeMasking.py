@@ -72,7 +72,7 @@ COMBINATIONS = [
     ('key', {}), ('key', {'charset': 'hex'}), ('key', {'charset': 'digits'}),
     ('fpe', {}), ('fpe', {'charset': 'hex'}), ('fpe', {'charset': 'digits'}), ('fpe', {'strict': True}),
     ('hash', {}), ('hash', {'length': 12}), ('hash', {'length': 64, 'prefix': 'cust_'}),
-    ('email', {}), ('email', {'keepDomain': True}), ('email', {'length': 8}),
+    ('email', {}), ('email', {'keepDomain': True}), ('email', {'length': 24}),
     ('email', {'mailDomain': 'masked.invalid'}),
     ('digits', {}), ('digits', {'keepLeading': 2}), ('digits', {'keepTrailing': 4}),
     ('digits', {'keepLeading': 1, 'keepTrailing': 1}),

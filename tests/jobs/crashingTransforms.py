@@ -45,3 +45,10 @@ def lingerAfterwards(value):
     if not any(thread.name == 'lingering' for thread in threading.enumerate()):
         threading.Thread(target=time.sleep, args=(3600,), name='lingering').start()
     return value
+
+
+def fromEnvironment(value):
+    """BAUTA_TEST_PROBE as the job's process sees it, for checking a job runs
+    with the environment of the run that started it.
+    """
+    return os.environ.get('BAUTA_TEST_PROBE')

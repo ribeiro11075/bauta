@@ -86,3 +86,24 @@ def test_a_uuid_primary_key_gets_a_different_uuid_in_every_row_and_run(server):
         assert all(uuid.UUID(value) for value in identifiers)
     finally:
         database.alter('DROP TABLE {}'.format(table))
+
+
+def test_generated_rows_keep_to_check_constraints_as_each_server_spells_them(server):
+    """Each catalog spells a CHECK its own way -- PostgreSQL's = ANY (ARRAY[...]),
+    SQL Server's OR of brackets, MySQL's character sets -- and none was read,
+    so the first row breaking one was refused.
+    """
+    name, database = server[0], server[1]
+    table = 'chk_{}'.format(uuid.uuid4().hex[:8])
+    number = 'NUMBER(10,2)' if name == 'oracle' else 'DECIMAL(10,2)'
+    text = 'VARCHAR2(10)' if name == 'oracle' else 'VARCHAR(10)'
+    database.alter("CREATE TABLE {0} (id INT PRIMARY KEY, status {1} NOT NULL, amount {2}, pct INT, CONSTRAINT {0}_s CHECK (status IN "
+                   "('open', 'closed', 'held')), CONSTRAINT {0}_a CHECK (amount > 0 AND amount < 1000), CONSTRAINT {0}_p CHECK "
+                   "(pct BETWEEN 1 AND 100))".format(table, text, number))
+    try:
+        assert synthesizeTable(database, table, 300, seed=1) == 300
+        statuses, low, high, smallest, largest = database.query('SELECT count(DISTINCT status), min(amount), max(amount), min(pct), max(pct) '
+                                                                 'FROM {}'.format(table))[0]
+        assert int(statuses) == 3 and 0 < low and high < 1000 and 1 <= smallest and largest <= 100
+    finally:
+        database.alter('DROP TABLE {}'.format(table))

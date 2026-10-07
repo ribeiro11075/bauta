@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from ..configuration import ConnectionConfig, DataJobConfig
 from ..log import LOGGER_NAME, ConnectionForwarder, forwardToConnection, handleForwardedRecord
+from ..masking import core as maskingCore
 from ..masking import setMaskingThreads
 from .dependencyGraph import JobOutcome, JobStatus
 from .memory import MemoryBackend
@@ -24,10 +25,36 @@ from .throttle import setSharedReadLimits
 logger = logging.getLogger(LOGGER_NAME)
 
 
-# Jobs run in processes started this way on every platform. `fork` -- Linux's
-# default before Python 3.14 -- copies whatever locks the parent's threads
-# happen to hold, which can deadlock the child.
-PROCESS_CONTEXT = mp.get_context('spawn')
+START_METHOD_VARIABLE = 'BAUTA_START_METHOD'
+
+
+def _processContext() -> Any:
+    """How job processes are started: forked from a forkserver that has
+    imported bauta once, or, where there is none or BAUTA_START_METHOD=spawn
+    says so, started afresh.
+
+    Not plain `fork` -- Linux's default before Python 3.14 -- which copies
+    whatever locks the parent's threads happen to hold, and can deadlock the
+    child. The forkserver is a process of its own, started single-threaded
+    before any job, so forking it copies no such lock. Started afresh, each
+    job imported bauta, pydantic and its configuration models over again:
+    about 200 ms and as much CPU a job, so a run of 60 small tables took 13.6
+    seconds on one worker, and 1.5 forked. Either way a job imports the
+    program that ran bauta again, as `__mp_main__`, so a program embedding
+    bauta still needs its `if __name__ == '__main__':` guard.
+    """
+
+    if os.environ.get(START_METHOD_VARIABLE) == 'spawn' or 'forkserver' not in mp.get_all_start_methods():
+        return mp.get_context('spawn')
+
+    context = mp.get_context('forkserver')
+    # Only bauta's own modules: a driver can start threads as it loads.
+    context.set_forkserver_preload(['bauta.jobs.workers'])
+
+    return context
+
+
+PROCESS_CONTEXT = _processContext()
 
 
 # How long a timed-out job gets to exit after SIGTERM before it is killed.
@@ -84,9 +111,23 @@ def _initializeWorker(connection: Any, parentAlive: Any, logLevel: int) -> Conne
     return forwardToConnection(connection, logLevel)
 
 
+def _adoptEnvironment(environment: Dict[str, str]) -> None:
+    """The run's environment as it is now, in place of the one the forkserver
+    was started with: a process running bauta from Python, an orchestrator's,
+    can set BAUTA_NATIVE or BAUTA_PIPELINE between runs. The native masker is
+    chosen again for it, since the forkserver may have chosen already.
+    """
+
+    if dict(os.environ) != environment:
+        os.environ.clear()
+        os.environ.update(environment)
+    maskingCore._nativeModule.cache_clear()
+
+
 def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobConfig: DataJobConfig,
                 connectionConfiguration: Dict[str, ConnectionConfig], memory: MemoryBackend, maskingThreads: int = 1,
-                budget: Optional[CoreBudget] = None, readLimits: Optional[Dict[str, Any]] = None) -> None:
+                budget: Optional[CoreBudget] = None, readLimits: Optional[Dict[str, Any]] = None,
+                environment: Optional[Dict[str, str]] = None) -> None:
     """The whole life of one job's process: run the job, and send its log
     records and then its outcome back on `connection`, which it alone writes to.
 
@@ -95,6 +136,8 @@ def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobC
     jobs; see throttle.sharedReadLimits.
     """
 
+    if environment is not None:
+        _adoptEnvironment(environment)
     forwarder = _initializeWorker(connection, parentAlive, logLevel)
     setMaskingThreads(maskingThreads)
     if budget is not None:
@@ -134,7 +177,8 @@ class _JobProcess:
         childEnd, self._alive = PROCESS_CONTEXT.Pipe(duplex=False)
         self.process = PROCESS_CONTEXT.Process(
             target=_jobProcess, name='bauta {}'.format(job), daemon=True,
-            args=(sendingEnd, childEnd, logLevel, job, jobConfig, connectionConfiguration, memory, maskingThreads, budget, readLimits))
+            args=(sendingEnd, childEnd, logLevel, job, jobConfig, connectionConfiguration, memory, maskingThreads, budget, readLimits,
+                  dict(os.environ)))
         self.process.start()
         sendingEnd.close()
         childEnd.close()

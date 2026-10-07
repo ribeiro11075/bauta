@@ -114,9 +114,9 @@ Every command and flag is on its own page under [commands](docs/reference/comman
 | Path | What it is |
 | --- | --- |
 | `bauta/configuration/` | reading and validating the YAML: `${NAME}` and `passwordCommand` in `environment.py`, the models in `models.py` |
-| `bauta/database/` | streaming and loading rows in `connection.py`; what differs between the seven databases in `dialects/`, one module each |
+| `bauta/database/` | streaming and loading rows in `connection.py`, swaps and what a stage table is given in `maintenance.py`; what differs between the seven databases in `dialects/`, one module each |
 | `bauta/jobs/` | `runner.py` runs a cycle of jobs, each in a process of its own (`workers.py`) moving rows a chunk at a time (`pipeline.py`); run state in `memory.py`, history and manifests in `reporting.py` |
-| `bauta/masking/` | the keyed hash, `Strategy` and masking plans in `core.py`, the built-in strategies in `strategies.py` |
+| `bauta/masking/` | the keyed hash, `Strategy` and masking plans in `core.py`, the built-in strategies in `strategies/`, one module a kind |
 | `bauta/transform/` | per-column transforms, applied before masking, and the ones that ship in `builtinTransforms.py` |
 | `bauta/generate/` | `discover`, `subset`, `schema` and `synthesize`: what is built from a live schema |
 | `bauta/review/` | `audit`, `coverage` and `verify-references`: reports that move no data |

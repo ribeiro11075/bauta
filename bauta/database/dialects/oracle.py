@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime
 import decimal
 import logging
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..driver import Connection, Cursor, native
@@ -60,9 +61,16 @@ def _oracleValues(cursor: Cursor, metadata: Any) -> Any:
     return None
 
 
+# The condition Oracle stores for a NOT NULL column.
+_NOT_NULL_CHECK = re.compile(r'^\s*"?[^"\s]+"?\s+IS\s+NOT\s+NULL\s*$', re.IGNORECASE)
+
+
 class OracleDialect(DatabaseDialect):
 
     databaseType = DatabaseType.ORACLE
+
+    # Each rename commits on its own; see swap.
+    ATOMIC_SWAP = False
 
     # A NUMBER's; BINARY_DOUBLE and BINARY_FLOAT hold both. See bindTypes.
     REFUSED_FLOATS = frozenset({'nan', 'inf'})
@@ -207,6 +215,15 @@ class OracleDialect(DatabaseDialect):
                 "FROM all_tab_columns WHERE owner = " + self.OWNER + " AND table_name = {} ORDER BY column_id")
 
 
+    def limitStatements(self, connection: Connection, cursor: Cursor, seconds: float) -> None:
+        """Each round trip to the server, which for a streamed query is each
+        fetch. Oracle has no session setting for it; oracledb ends a call
+        that runs past it, and the connection with it.
+        """
+
+        native(connection).call_timeout = max(1, round(seconds * 1000))
+
+
     def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
 
         cursor.execute("SELECT SYS_CONTEXT('USERENV', 'NETWORK_PROTOCOL') FROM dual")
@@ -222,15 +239,50 @@ class OracleDialect(DatabaseDialect):
                 "WHERE cons.constraint_type = 'P' AND cons.owner = " + self.OWNER + " AND cons.table_name = {} ORDER BY cols.position")
 
 
+    def checkConstraintsQuery(self) -> Optional[str]:
+
+        return ("SELECT search_condition_vc FROM all_constraints WHERE constraint_type = 'C' AND owner = " + self.OWNER + " AND table_name = {} "
+                "ORDER BY constraint_name")
+
+
+    def checkConstraints(self, cursor: Cursor, table: str) -> List[str]:
+        """Without the ones Oracle keeps for NOT NULL columns, `"STATUS" IS NOT
+        NULL`, which say nothing of the values a row may hold. Told apart by
+        what they say, not by their system-made names, which an unnamed CHECK
+        has too.
+        """
+
+        return [definition for definition in super().checkConstraints(cursor, table) if not _NOT_NULL_CHECK.match(definition)]
+
+
+    def plainIndexesQuery(self) -> Optional[str]:
+
+        return self._indexesQuery(unique=False)
+
+
+    def tableGrantsQuery(self) -> Optional[str]:
+
+        return ("SELECT privilege, grantee, grantable FROM all_tab_privs WHERE table_schema = " + self.OWNER + " AND table_name = {} "
+                "AND type = 'TABLE' AND grantee <> table_schema ORDER BY grantee, privilege")
+
+
     def uniqueKeysQuery(self) -> str:
         """Unique indexes, which a unique constraint is enforced by, apart from
         the primary key's and the ones Oracle keeps for a LOB column's
         storage. A function-based index's columns come back NULL.
         """
 
+        return self._indexesQuery(unique=True)
+
+
+    def _indexesQuery(self, unique: bool) -> str:
+        """One table's unique or plain indexes, the primary key's aside, as
+        rows of (name, column)."""
+
         return ("SELECT ic.index_name, CASE WHEN i.index_type IN ('NORMAL', 'NORMAL/REV') THEN ic.column_name END "
                 "FROM all_indexes i JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name "
-                "WHERE i.uniqueness = 'UNIQUE' AND i.index_type <> 'LOB' AND i.table_owner = " + self.OWNER + " AND i.table_name = {} "
+                "WHERE i.uniqueness = '" + ('UNIQUE' if unique else 'NONUNIQUE') + "' AND i.index_type <> 'LOB' AND i.table_owner = " + self.OWNER + " "
+                "AND i.table_name = {} "
                 "AND NOT EXISTS (SELECT 1 FROM all_constraints c WHERE c.owner = i.table_owner AND c.table_name = i.table_name "
                 "AND c.constraint_type = 'P' AND c.index_name = i.index_name) "
                 "ORDER BY ic.index_name, ic.column_position")

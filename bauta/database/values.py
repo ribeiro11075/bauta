@@ -31,6 +31,13 @@ class UnloadableValueError(ValueError):
     """
 
 
+class UniqueKeyClashError(UnloadableValueError):
+    """An upserted row that matched a different row by a unique key other
+    than the primary key, refused rather than merged into it. Never retried.
+    See MySQLDialect._onDuplicateKey.
+    """
+
+
 _NON_FINITE_NAMES = {'nan': 'NaN', 'inf': 'an infinity'}
 
 

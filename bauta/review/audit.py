@@ -6,6 +6,7 @@ Works on plain data; the CLI supplies whatever needs a connection.
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import decimal
 import re
@@ -529,8 +530,13 @@ def _auditMaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence[s
     if redacted:
         findings.append(Finding('info', name, 'redact on {}: identifiers with a recognisable shape are removed, names are not'.format(
             ', '.join(redacted))))
+    byKey = sorted(column for column, policy in plan.columns.items() if policy['strategy'] == 'json' and 'otherwise' not in policy)
+    if byKey:
+        findings.append(Finding('info', name, 'json on {}: values no field names are masked as their key says where it names personal '
+                                'data -- name, dob, address -- and otherwise redacted, which removes identifiers with a recognisable shape '
+                                'but not names; name each field whose key does not say what it holds'.format(', '.join(byKey))))
     documents = sorted(column for column, policy in plan.columns.items()
-                       if policy['strategy'] == 'json' and policy.get('otherwise', {'strategy': 'redact'})['strategy'] == 'redact')
+                       if policy['strategy'] == 'json' and 'otherwise' in policy and policy['otherwise']['strategy'] == 'redact')
     if documents:
         findings.append(Finding('info', name, 'json on {}: values no field names are redacted, which removes identifiers with a recognisable '
                                 'shape but not names; name each field that holds one'.format(', '.join(documents))))
@@ -599,44 +605,51 @@ def _auditUnmaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence
                                 job.sourceConnection, job.targetConnection)))
 
 
-def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mapping[str, Sequence[str]]] = None,
-              encryption: Optional[Mapping[str, Optional[bool]]] = None, unreachable: Optional[Mapping[str, str]] = None,
-              targetColumns: Optional[Mapping[str, Sequence[str]]] = None, foreignKeys: Optional[Mapping[str, Sequence[ForeignKey]]] = None,
-              declaredForeignKeys: Optional[Mapping[str, Sequence[ForeignKey]]] = None,
-              generatedAt: Optional[datetime.datetime] = None, rules: DiscoveryRules = BUILTIN_RULES,
-              connections: Optional[Mapping[str, ConnectionConfig]] = None,
-              foreignKeysElsewhere: Optional[Mapping[str, Mapping[str, int]]] = None,
-              unreadableTargets: Optional[Mapping[str, str]] = None,
-              samples: Optional[Mapping[str, Sequence[Sequence[Any]]]] = None) -> Dict[str, Any]:
-    """The audit report, as a JSON-ready dict.
+@dataclasses.dataclass(frozen=True)
+class ConnectedFacts:
+    """What `audit --connect` learned by connecting, all of it empty offline.
 
-    `returnedColumns` maps a masked job to the columns its query returns, so
-    each column's actual policy can be shown -- defaultStrategy included --
-    rather than only the declared ones. `encryption` maps a connection alias to
-    whether its connection is encrypted (None: couldn't tell). `unreachable`
-    maps a job to why its query couldn't be checked. `targetColumns` maps a
-    masked job to its target's columns in load order, and `foreignKeys` maps a
-    target connection alias to the foreign keys that apply to its tables, for
-    checking that references still match once masked. `declaredForeignKeys`
-    maps a target connection alias to the foreign keys it declares itself, for
-    checking what a swap does to them. All of these come from connecting, and
-    all are optional. `connections`, the aliases' settings, say what kind of
-    target each job writes, for whether `run --full-refresh` can replace it.
-    `foreignKeysElsewhere` maps an alias whose jobs' schemas declare no foreign
-    keys to the other schemas that do, and how many each. `unreachable` maps a
-    job whose sourceQuery couldn't be run to why; `unreadableTargets` one
-    whose target table's columns couldn't be read, most often because it
-    doesn't exist yet. `samples` maps a job to rows its sourceQuery returned,
-    in returnedColumns' order, read to question the values of columns kept as
-    they are, and of columns sharing a domain; they are never reported.
+    `returnedColumns` maps a job to the columns its query returns, so each
+    column's actual policy can be shown -- defaultStrategy included -- rather
+    than only the declared ones, and `samples` to rows of them, read to
+    question the values of columns kept as they are and of columns sharing a
+    domain, and never reported. `unreachable` maps a job whose sourceQuery
+    couldn't be run to why, and `unreadableTargets` one whose target table's
+    columns couldn't be read, most often because it doesn't exist yet.
+    `targetColumns` maps a masked job to its target's columns in load order.
+    `encryption` maps a connection alias to whether its connection is
+    encrypted (None: couldn't tell). `foreignKeys` maps a target alias to the
+    foreign keys that apply to its tables, for checking that references still
+    match once masked, and `declaredForeignKeys` to those it declares itself,
+    for checking what a swap does to them. `foreignKeysElsewhere` maps an
+    alias whose jobs' schemas declare no foreign keys to the other schemas
+    that do, and how many each.
     """
 
-    returnedColumns = returnedColumns or {}
-    samples = samples or {}
+    returnedColumns: Mapping[str, Sequence[str]] = dataclasses.field(default_factory=dict)
+    samples: Mapping[str, Sequence[Sequence[Any]]] = dataclasses.field(default_factory=dict)
+    unreachable: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    unreadableTargets: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    targetColumns: Mapping[str, Sequence[str]] = dataclasses.field(default_factory=dict)
+    encryption: Mapping[str, Optional[bool]] = dataclasses.field(default_factory=dict)
+    foreignKeys: Mapping[str, Sequence[ForeignKey]] = dataclasses.field(default_factory=dict)
+    declaredForeignKeys: Mapping[str, Sequence[ForeignKey]] = dataclasses.field(default_factory=dict)
+    foreignKeysElsewhere: Mapping[str, Mapping[str, int]] = dataclasses.field(default_factory=dict)
+
+
+def auditJobs(jobs: Mapping[str, DataJobConfig], facts: Optional[ConnectedFacts] = None, connections: Optional[Mapping[str, ConnectionConfig]] = None,
+              rules: DiscoveryRules = BUILTIN_RULES, generatedAt: Optional[datetime.datetime] = None) -> Dict[str, Any]:
+    """The audit report, as a JSON-ready dict: from the jobs alone, and from
+    `facts` where connecting found any; see ConnectedFacts. `connections`,
+    the aliases' settings, say what kind of target each job writes, for
+    whether `run --full-refresh` can replace it.
+    """
+
+    facts = facts or ConnectedFacts()
+    returnedColumns, samples, encryption, unreachable, unreadableTargets = (facts.returnedColumns, facts.samples, facts.encryption, facts.unreachable,
+                                                                           facts.unreadableTargets)
+    foreignKeys, declaredForeignKeys = facts.foreignKeys, facts.declaredForeignKeys
     sampled: List[_Sampled] = []
-    encryption = encryption or {}
-    unreachable = unreachable or {}
-    unreadableTargets = unreadableTargets or {}
     findings: List[Finding] = []
     usages: Dict[str, List[_Usage]] = {}
     maskedSources = {job.sourceConnection for job in jobs.values() if job.masking is not None}
@@ -675,16 +688,16 @@ def auditJobs(jobs: Mapping[str, DataJobConfig], returnedColumns: Optional[Mappi
         targetJobs = {name: job for name, job in jobs.items() if job.targetConnection == target}
         _auditDomains(target, [usage for name in sorted(targetJobs) for usage in usages.get(name, [])], findings)
         _auditSampledDomains(target, [column for column in sampled if column.job in targetJobs], findings)
-        if foreignKeys and foreignKeys.get(target):
-            _auditForeignKeys(target, targetJobs, usages, targetColumns or {}, foreignKeys[target], findings)
+        if foreignKeys.get(target):
+            _auditForeignKeys(target, targetJobs, usages, facts.targetColumns, foreignKeys[target], findings)
             _auditCoverage(target, targetJobs, foreignKeys[target], findings)
             _auditOrdering(target, targetJobs, foreignKeys[target], findings)
-        if declaredForeignKeys and declaredForeignKeys.get(target):
+        if declaredForeignKeys.get(target):
             _auditSwaps(target, targetJobs, declaredForeignKeys[target], findings)
-        if foreignKeys and declaredForeignKeys is not None and target in declaredForeignKeys:
+        if foreignKeys and target in declaredForeignKeys:
             _auditUndeclared(target, targetJobs, foreignKeys.get(target, []), declaredForeignKeys[target], findings)
 
-    for alias, schemas in sorted((foreignKeysElsewhere or {}).items()):
+    for alias, schemas in sorted(facts.foreignKeysElsewhere.items()):
         if schemas:
             findings.append(Finding('warning', None, '{} declares no foreign keys in the schema(s) its jobs use, but {} in {}, so no reference '
                                     'between the tables copied was checked. Set currentSchema on the connection, or qualify the jobs\' '

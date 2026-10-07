@@ -11,13 +11,20 @@ from __future__ import annotations
 import datetime
 import decimal
 import hashlib
+import logging
+import math
+import re
 import uuid
-from typing import AbstractSet, Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import AbstractSet, Any, Callable, Dict, Iterator, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
 from ..database.dialects import ColumnDefinition, ForeignKey, quoteIdentifier
-from .discovery import BUILTIN_RULES, DiscoveryRules, nameWords
+from .checks import ColumnCheck, columnChecks
+from .discovery import BUILTIN_RULES, DiscoveryRules, nameWords, personalDataHint
+from ..log import LOGGER_NAME
 from ..masking import STRATEGIES, KeyedHash, changesValues
 from .schema import INTEGER_BOOLEAN_NOTE, PortableType, portableType, tableKey
+
+logger = logging.getLogger(LOGGER_NAME)
 
 DEFAULT_NULL_SHARE = 0.1
 
@@ -28,7 +35,82 @@ _WORDS = ('alpha', 'bravo', 'delta', 'harbor', 'maple', 'orbit', 'quartz', 'rive
           'amber', 'cobalt', 'ember', 'falcon', 'granite', 'juniper', 'lumen', 'meadow', 'nectar', 'pebble', 'saffron', 'tundra')
 
 _EPOCH = datetime.date(2015, 1, 1)
-_RECENT_DAYS = (datetime.date(2026, 12, 31) - _EPOCH).days
+
+
+def _recentDays() -> int:
+    """Days from _EPOCH to the end of this year, the span generated dates fall
+    in. It ended at 2026-12-31, fixed, so from 2027 "recent" dates never
+    reached the present. The end of the year rather than today, so a seed
+    gives the same rows all year.
+    """
+
+    return (datetime.date(datetime.date.today().year, 12, 31) - _EPOCH).days
+
+
+# How a column's values are spread in a source, for `--profile`: where
+# synthetic rows take their shape from production without taking anyone's
+# values. Labels are read only from a column with at most this many values,
+# and only those this many rows share, so a value rare enough to point at
+# someone is never copied.
+PROFILE_MOST_LABELS = 20
+PROFILE_FEWEST_ROWS_PER_LABEL = 5
+
+
+class ColumnProfile(NamedTuple):
+    """One column as a source holds it: the share of rows NULL, and either
+    its labels with their counts, or its smallest and largest value.
+    """
+
+    nullShare: float
+    labels: Tuple[Tuple[Any, int], ...] = ()
+    low: Any = None
+    high: Any = None
+
+
+def profileTable(database: Any, table: str, rules: DiscoveryRules = BUILTIN_RULES) -> Dict[str, ColumnProfile]:
+    """How each of `table`'s columns is spread in `database`, by upper-cased
+    name, for synthesize to generate rows shaped like them.
+
+    Never a column whose name suggests personal data, nor a key, which
+    synthesize makes its own way; and of the rest only aggregates: the share
+    NULL, the range of a number or a date, and the labels of a column of few
+    values that enough rows share. Read one column at a time, so a type a
+    database can't take MIN of is passed over rather than failing the rest.
+    """
+
+    definitions = database.getColumnDefinitions(table)
+    if not definitions:
+        raise SynthesisError('table {} was not found where it is profiled from'.format(table))
+
+    keys = {column.upper() for column in database.getPrimaryColumnNames(table)}
+    keys.update(column.upper() for foreignKey in database.getForeignKeysFor([table]) if tableKey(foreignKey.table) == tableKey(table)
+                for column in foreignKey.columns)
+    total = int(database.query('SELECT count(*) FROM {}'.format(table))[0][0])
+    profiles: Dict[str, ColumnProfile] = {}
+    if not total:
+        return profiles
+
+    for definition in definitions:
+        name = definition.name
+        if name.upper() in keys or personalDataHint(name, rules) is not None:
+            continue
+        kind = portableType(database.type, definition).kind
+        column = quoteIdentifier(database.type, name)
+        try:
+            if kind in ('text', 'fixedText'):
+                counted = database.query('SELECT {0}, count(*) FROM {1} WHERE {0} IS NOT NULL GROUP BY {0} ORDER BY 2 DESC'.format(column, table))
+                present = sum(int(count) for _, count in counted)
+                labels = tuple((value, int(count)) for value, count in counted if int(count) >= PROFILE_FEWEST_ROWS_PER_LABEL)
+                if len(counted) > PROFILE_MOST_LABELS or not labels:
+                    labels = ()
+                profiles[name.upper()] = ColumnProfile(nullShare=1 - present / total, labels=labels)
+            elif kind in ('smallint', 'integer', 'bigint', 'decimal', 'float', 'date', 'timestamp', 'timestampTz'):
+                count, low, high = database.query('SELECT count({0}), min({0}), max({0}) FROM {1}'.format(column, table))[0]
+                profiles[name.upper()] = ColumnProfile(nullShare=1 - int(count) / total, low=low, high=high)
+        except Exception:
+            database.rollback()
+
+    return profiles
 
 
 class SynthesisError(Exception):
@@ -216,11 +298,12 @@ class _Synthesizer:
             limit = portable.length
             return (lambda row: self._sentence(row, name, limit)), 'words' + (', at most {} characters'.format(limit) if limit else '')
         if kind == 'date':
-            return (lambda row: _EPOCH + datetime.timedelta(days=int(unit(row, name) * _RECENT_DAYS))), 'a date since 2015'
+            days = _recentDays()
+            return (lambda row: _EPOCH + datetime.timedelta(days=int(unit(row, name) * days))), 'a date since 2015'
         if kind in ('timestamp', 'timestampTz'):
             zone = datetime.timezone.utc if kind == 'timestampTz' else None
-            start = datetime.datetime.combine(_EPOCH, datetime.time(), zone)
-            return (lambda row: start + datetime.timedelta(seconds=int(unit(row, name) * _RECENT_DAYS * 86400))), 'a timestamp since 2015'
+            start, days = datetime.datetime.combine(_EPOCH, datetime.time(), zone), _recentDays()
+            return (lambda row: start + datetime.timedelta(seconds=int(unit(row, name) * days * 86400))), 'a timestamp since 2015'
         if kind == 'time':
             return (lambda row: (datetime.datetime.min + datetime.timedelta(seconds=int(unit(row, name) * 86400))).time()), 'a time of day'
         if kind == 'binary':
@@ -234,13 +317,128 @@ class _Synthesizer:
         return (lambda row: self._sentence(row, name)), 'words'
 
 
-    def orNull(self, generator: Generator, column: ColumnDefinition) -> Generator:
-        """NULL for a share of rows, where the column allows it."""
+    def byCheck(self, column: ColumnDefinition, portable: PortableType, check: ColumnCheck) -> Optional[Tuple[Generator, str]]:
+        """Values the table's CHECK constraints allow: one of the values they
+        list, or a number within their bounds at the column's own type and
+        scale. A range with one side open reaches 10,000 past the other.
+        None where the checks give nothing this column's type can follow.
+        """
 
-        if not column.nullable or self.nullShare <= 0:
+        if check.choices:
+            return self._pick(column.name, check.choices), 'one of the {} values its CHECK allows'.format(len(check.choices))
+        if check.low is None and check.high is None:
+            return None
+
+        low = decimal.Decimal(check.low if check.low is not None else check.high - 10000)  # type: ignore[operator]
+        high = decimal.Decimal(check.high if check.high is not None else low + 10000)
+        ranged = self._withinRange(column.name, portable, low, high, check.lowIncluded, check.highIncluded)
+
+        return None if ranged is None else (ranged[0], ranged[1] + ', as its CHECK allows')
+
+
+    def byProfile(self, column: ColumnDefinition, portable: PortableType, profile: ColumnProfile) -> Optional[Tuple[Generator, str]]:
+        """Values spread as the profiled source's are: its labels, each as
+        often as there, or a value between its smallest and largest. None
+        where the profile gives neither.
+        """
+
+        name, unit = column.name, self._unit
+
+        if profile.labels:
+            return self._pick(name, [value for value, _ in profile.labels], [count for _, count in profile.labels]), \
+                'one of {} labels, as often as in the profiled source'.format(len(profile.labels))
+
+        low, high = profile.low, profile.high
+        if low is None or high is None:
+            return None
+        if isinstance(low, float) and portable.kind == 'decimal':
+            # SQLite keeps a DECIMAL as a float, by its shortest text.
+            low, high = decimal.Decimal(repr(low)), decimal.Decimal(repr(high))
+        asText = isinstance(low, str)
+        if asText and portable.kind in ('date', 'timestamp', 'timestampTz'):
+            # SQLite keeps dates as ISO text, and is given it back.
+            try:
+                low, high = (datetime.datetime.fromisoformat(value) if 'T' in value or ':' in value else datetime.date.fromisoformat(value)
+                             for value in (low, high))
+            except ValueError:
+                return None
+        if portable.kind in ('date', 'timestamp', 'timestampTz') and isinstance(low, datetime.date):
+            span = high - low
+            moment = (lambda row: low + span * unit(row, name)) if isinstance(low, datetime.datetime) else \
+                (lambda row: low + datetime.timedelta(days=int(span.days * unit(row, name))))
+            return ((lambda row: moment(row).isoformat()) if asText else moment), 'a date between the profiled source\'s first and last'
+        if isinstance(low, (int, float, decimal.Decimal)) and not isinstance(low, bool):
+            ranged = self._withinRange(name, portable, decimal.Decimal(repr(low) if isinstance(low, float) else low),
+                                       decimal.Decimal(repr(high) if isinstance(high, float) else high))
+            return None if ranged is None else (ranged[0], ranged[1] + ', as in the profiled source')
+
+        return None
+
+
+    def _pick(self, name: str, values: Sequence[Any], weights: Optional[Sequence[int]] = None) -> Generator:
+        """One of `values` for each row, each as often as its weight says, or
+        all alike.
+        """
+
+        total = sum(weights) if weights else len(values)
+        edges: List[float] = []
+        running = 0
+        for weight in (weights or [1] * len(values)):
+            running += weight
+            edges.append(running / total)
+
+        def pick(row: int) -> Any:
+            drawn = self._unit(row, name + '#pick')
+            return values[next((index for index, edge in enumerate(edges) if drawn < edge), len(values) - 1)]
+
+        return pick
+
+
+    def _withinRange(self, name: str, portable: PortableType, low: decimal.Decimal, high: decimal.Decimal, lowIncluded: bool = True,
+                     highIncluded: bool = True) -> Optional[Tuple[Generator, str]]:
+        """Numbers from `low` to `high`, each bound included or not, at the
+        column's own type and scale; None for another type, or a range no
+        value of it fits in.
+        """
+
+        unit = self._unit
+
+        if _integerKind(portable):
+            first = math.ceil(low) + (1 if not lowIncluded and low == math.ceil(low) else 0)
+            last = math.floor(high) - (1 if not highIncluded and high == math.floor(high) else 0)
+            if last < first:
+                return None
+            return (lambda row: first + int(unit(row, name) * (last - first + 1))), 'an integer from {} to {}'.format(first, last)
+        if portable.kind == 'decimal':
+            step = decimal.Decimal(1).scaleb(-(portable.scale or 0))
+            smallest = low.quantize(step, rounding=decimal.ROUND_CEILING)
+            smallest += step if not lowIncluded and smallest == low else 0
+            largest = high.quantize(step, rounding=decimal.ROUND_FLOOR)
+            largest -= step if not highIncluded and largest == high else 0
+            if largest < smallest:
+                return None
+            span = largest - smallest
+            return (lambda row: min(largest, smallest + (span * decimal.Decimal(repr(unit(row, name)))).quantize(step, rounding=decimal.ROUND_FLOOR))), \
+                'a decimal from {} to {}'.format(smallest, largest)
+        if portable.kind == 'float':
+            lowest, highest = float(low), float(high)
+            # Strictly inside: unit is below 1, and the nudge keeps it above an excluded low.
+            return (lambda row: lowest + (highest - lowest) * (0.000001 + 0.999998 * unit(row, name))), \
+                'a number from {:g} to {:g}'.format(lowest, highest)
+
+        return None
+
+
+    def orNull(self, generator: Generator, column: ColumnDefinition, share: Optional[float] = None) -> Generator:
+        """NULL for a share of rows, where the column allows it: `share`, a
+        profiled source's, or the run's.
+        """
+
+        share = self.nullShare if share is None else share
+        if not column.nullable or share <= 0:
             return generator
 
-        return lambda row: None if self._unit(row, column.name + '#null') < self.nullShare else generator(row)
+        return lambda row: None if self._unit(row, column.name + '#null') < share else generator(row)
 
 
 def _sequential(start: int) -> Generator:
@@ -270,8 +468,8 @@ def _integerKind(portable: PortableType) -> bool:
 
 
 def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: Optional[Sequence[ForeignKey]] = None,
-              nullShare: float = DEFAULT_NULL_SHARE,
-              rules: DiscoveryRules = BUILTIN_RULES) -> Tuple[List[str], Callable[[int], Tuple[Any, ...]], List[ColumnPlan], int]:
+              nullShare: float = DEFAULT_NULL_SHARE, rules: DiscoveryRules = BUILTIN_RULES,
+              profile: Optional[Mapping[str, ColumnProfile]] = None) -> Tuple[List[str], Callable[[int], Tuple[Any, ...]], List[ColumnPlan], int]:
     """How `table` would be filled: its columns, a row generator, what each
     column gets, and how many rows can be made.
 
@@ -293,10 +491,50 @@ def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: 
     foreignKeys = [foreignKey for foreignKey in (foreignKeys if foreignKeys is not None else database.getForeignKeysFor([table]))
                    if tableKey(foreignKey.table) == tableKey(table)]
     synthesizer = _Synthesizer(table, seed, nullShare, rules)
-    spelled = {definition.name.upper(): definition.name for definition in definitions}
+    checks, unread = columnChecks(database.getCheckConstraints(table), [definition.name for definition in definitions])
+    for definition in unread:
+        # A definition is schema, not data: it may be logged.
+        logger.warning('{}: CHECK {} is not one synthesize can follow -- it lists values or bounds a number on one column -- so rows '
+                       'breaking it will be refused'.format(table, definition))
     generators: Dict[str, Generator] = {}
     plans: Dict[str, ColumnPlan] = {}
     available = rows
+
+    _planForeignKeys(database, table, definitions, foreignKeys, synthesizer, existing, generators, plans)
+
+    keyColumns = [definition for definition in definitions if definition.name.upper() in primaryKey]
+    _planPrimaryKey(database, table, [definition for definition in keyColumns if definition.name.upper() not in generators], synthesizer, existing,
+                    rows, generators, plans)
+    if keyColumns and all(plans[definition.name.upper()].source == 'foreign key' for definition in keyColumns):
+        # Every key column is a foreign key -- a bridge table. Only as many
+        # distinct combinations exist as the parents allow.
+        available = min(rows, _combinations(generators, [definition.name.upper() for definition in keyColumns]))
+
+    for definition in definitions:
+        name = definition.name.upper()
+        if name not in generators:
+            columnProfile = (profile or {}).get(name)
+            generator, plans[name] = _planValues(synthesizer, definition, portableType(database.type, definition), checks.get(name), columnProfile)
+            share = columnProfile.nullShare if columnProfile is not None else None
+            generators[name] = _offset(synthesizer.orNull(_fitting(generator, definition.length), definition, share), existing)
+
+    columns = [definition.name for definition in definitions]
+    ordered = [generators[column.upper()] for column in columns]
+
+    def makeRow(row: int) -> Tuple[Any, ...]:
+        return tuple(generator(row) for generator in ordered)
+
+    return columns, makeRow, [plans[column.upper()] for column in columns], available
+
+
+def _planForeignKeys(database: Any, table: str, definitions: Sequence[ColumnDefinition], foreignKeys: Sequence[ForeignKey],
+                     synthesizer: '_Synthesizer', existing: int, generators: Dict[str, Generator], plans: Dict[str, ColumnPlan]) -> None:
+    """Each foreign-key column a value its parent holds, drawn from up to
+    PARENT_SAMPLE_SIZE of its keys; NULL for a reference to the table
+    itself, or to a parent with no rows where the column allows it.
+    """
+
+    spelled = {definition.name.upper(): definition.name for definition in definitions}
 
     for foreignKey in foreignKeys:
         columns = [column.upper() for column in foreignKey.columns]
@@ -331,10 +569,14 @@ def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: 
             raise SynthesisError('{} references itself through NOT NULL column(s) {}; synthesize can only leave such references NULL'.format(
                 table, ', '.join(foreignKey.columns)))
 
-    keyColumns = [definition for definition in definitions if definition.name.upper() in primaryKey]
-    generatedKeyParts = [definition for definition in keyColumns if definition.name.upper() not in generators]
 
-    for definition in generatedKeyParts:
+def _planPrimaryKey(database: Any, table: str, keyParts: Sequence[ColumnDefinition], synthesizer: '_Synthesizer', existing: int, rows: int,
+                    generators: Dict[str, Generator], plans: Dict[str, ColumnPlan]) -> None:
+    """The primary key's columns that aren't foreign keys, unique: integers
+    after the table's largest, UUIDs, or text numbered past the rows already there.
+    """
+
+    for definition in keyParts:
         portable = portableType(database.type, definition)
         name = definition.name
         if _integerKind(portable):
@@ -355,32 +597,24 @@ def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: 
         else:
             raise SynthesisError('{}.{} is a {} primary key, which synthesize can\'t make unique'.format(table, name, portable.kind))
 
-    if keyColumns and not generatedKeyParts:
-        # Every key column is a foreign key -- a bridge table. Only as many
-        # distinct combinations exist as the parents allow.
-        available = min(rows, _combinations(generators, [definition.name.upper() for definition in keyColumns]))
 
-    for definition in definitions:
-        name = definition.name.upper()
-        if name in generators:
-            continue
-        portable = portableType(database.type, definition)
-        named = synthesizer.byName(definition, portable)
-        if named is not None:
-            generator, reason = named
-            plans[name] = ColumnPlan(definition.name, 'name', reason)
-        else:
-            generator, description = synthesizer.byType(definition, portable)
-            plans[name] = ColumnPlan(definition.name, 'type', description + (', sometimes NULL' if definition.nullable else ''))
-        generators[name] = _offset(synthesizer.orNull(_fitting(generator, definition.length), definition), existing)
+def _planValues(synthesizer: '_Synthesizer', definition: ColumnDefinition, portable: PortableType, check: Optional[ColumnCheck],
+                profile: Optional[ColumnProfile]) -> Tuple[Generator, ColumnPlan]:
+    """Any other column's values, from the first of these that can say what
+    they are: its CHECK constraints, the profiled source, its name, its type.
+    """
 
-    columns = [definition.name for definition in definitions]
-    ordered = [generators[column.upper()] for column in columns]
+    nullable = definition.nullable
+    for source, follow, suffix in (('check', lambda: synthesizer.byCheck(definition, portable, check) if check else None, ', sometimes NULL'),
+                                   ('profile', lambda: synthesizer.byProfile(definition, portable, profile) if profile else None, ', NULL as often'),
+                                   ('name', lambda: synthesizer.byName(definition, portable), ''),
+                                   ('type', lambda: synthesizer.byType(definition, portable), ', sometimes NULL')):
+        found = follow()
+        if found is not None:
+            generator, reason = found
+            return generator, ColumnPlan(definition.name, source, reason + (suffix if nullable else ''))
 
-    def makeRow(row: int) -> Tuple[Any, ...]:
-        return tuple(generator(row) for generator in ordered)
-
-    return columns, makeRow, [plans[column.upper()] for column in columns], available
+    raise AssertionError('unreachable: byType always answers')
 
 
 def _fitting(generator: Generator, length: Optional[int]) -> Generator:
@@ -405,14 +639,16 @@ def _combinations(generators: Dict[str, Generator], keyColumns: List[str]) -> in
 
 
 def synthesizeTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: Optional[Sequence[ForeignKey]] = None,
-                    chunkSize: int = 1000, nullShare: float = DEFAULT_NULL_SHARE, rules: DiscoveryRules = BUILTIN_RULES) -> int:
+                    chunkSize: int = 1000, nullShare: float = DEFAULT_NULL_SHARE, rules: DiscoveryRules = BUILTIN_RULES,
+                    profile: Optional[Mapping[str, ColumnProfile]] = None) -> int:
     """Inserts up to `rows` generated rows into `table`, and returns how many.
 
     Fewer than asked only for a table whose primary key is made entirely of
     foreign keys, which can't have more distinct rows than its parents allow.
     """
 
-    columns, makeRow, plans, available = planTable(database, table, rows, seed=seed, foreignKeys=foreignKeys, nullShare=nullShare, rules=rules)
+    columns, makeRow, plans, available = planTable(database, table, rows, seed=seed, foreignKeys=foreignKeys, nullShare=nullShare, rules=rules,
+                                                   profile=profile)
     keyColumns = {column.upper() for column in database.getPrimaryColumnNames(table)}
     keyIndexes = [index for index, column in enumerate(columns) if column.upper() in keyColumns]
     # Only a key made wholly of foreign keys can repeat: any other has a part
@@ -428,9 +664,13 @@ def synthesizeTable(database: Any, table: str, rows: int, seed: int = 0, foreign
             database.insert(table=table, data=chunk, chunkSize=chunkSize, columns=columns)
         except Exception as error:
             # Each chunk commits, so what came before is already in the table.
-            raise SynthesisError('{} refused a generated row after {} inserted ({}). Primary keys are made unique, and generated text '
-                                 'ends in the row\'s number, but a UNIQUE constraint on a column with too few distinct values -- a short '
-                                 'column, a name, a number -- cannot be satisfied'.format(table, inserted, error)) from error
+            if re.search(r'check', str(error), re.IGNORECASE):
+                why = ('Values are kept to a CHECK that lists them or bounds a number on one column; this one is another kind, '
+                       'which synthesize said it could not follow')
+            else:
+                why = ('Primary keys are made unique, and generated text ends in the row\'s number, but a UNIQUE constraint on a column '
+                       'with too few distinct values -- a short column, a name, a number -- cannot be satisfied')
+            raise SynthesisError('{} refused a generated row after {} inserted ({}). {}'.format(table, inserted, error, why)) from error
         inserted += len(chunk)
 
     return inserted

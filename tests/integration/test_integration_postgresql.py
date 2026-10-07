@@ -306,3 +306,32 @@ def test_a_json_column_masked_by_a_plain_strategy_masks_as_it_did_and_stays_json
     finally:
         liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(source))
         liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(target))
+
+
+def test_ip_and_key_mask_inet_cidr_and_macaddr_into_columns_of_those_types(connectionSettings, liveDatabase):
+    """discover proposed hash for an inet column, whose hex token PostgreSQL
+    refused; ip keeps each value an address, and key over hex a MAC address.
+    """
+    from bauta.configuration import DataJobConfig
+    from bauta.jobs.pipeline import _executeDataJob
+
+    source, target = ('net_{}_{}'.format(role, uuid.uuid4().hex[:8]) for role in ('src', 'dst'))
+    for table in (source, target):
+        liveDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, addr INET, net CIDR, mac MACADDR)'.format(table))
+    try:
+        liveDatabase.alter("INSERT INTO {} VALUES (1, '192.168.1.10/24', '10.20.0.0/16', '08:00:2b:01:02:03'), "
+                           "(2, '2001:db8::1', NULL, '08:00:2b:01:02:04')".format(source))
+        job = DataJobConfig(sourceConnection='pg', targetConnection='pg', sourceQuery='SELECT id, addr, net, mac FROM {}'.format(source),
+                            targetTableFinal=target, insertStrategy='upsert',
+                            masking={'key': 'an-ip-masking-key-long-enough', 'columns': {
+                                'id': 'keep', 'addr': 'ip', 'net': {'strategy': 'ip', 'keepPrefix': 8}, 'mac': {'strategy': 'key', 'charset': 'hex'}}})
+
+        _executeDataJob('j', job, {'pg': connectionSettings})
+
+        rows = liveDatabase.query('SELECT id, addr::text, net::text, mac::text FROM {} ORDER BY id'.format(target))
+        assert rows[0][1].endswith('/24') and rows[0][1] != '192.168.1.10/24' and rows[0][2].startswith('10.') and rows[0][2].endswith('/16')
+        assert ':' in rows[1][1] and rows[1][1] != '2001:db8::1' and rows[1][2] is None
+        assert all(row[3] not in ('08:00:2b:01:02:03', '08:00:2b:01:02:04') for row in rows)
+    finally:
+        for table in (source, target):
+            liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))

@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
+import signal
+import threading
 from typing import Any, ContextManager, Generator, List, Optional, Sequence
 
 from ..configuration import ConfigurationError, DataJobConfig, InsertStrategy
@@ -33,6 +36,34 @@ class PostLoadError(Exception):
         super().__init__('the load finished and {} holds its {} row(s), but a postTargetAdhocQuery failed -- {}: {}'.format(
             targetTable, rowCount, query, describeError(error)))
         self.rowCount = rowCount
+
+
+@contextlib.contextmanager
+def _terminationDeferred() -> Generator[None, None, None]:
+    """SIGTERM held until the block ends, then acted on as it would have
+    been. A swap's renames commit one at a time on Oracle, and a job stopped
+    for exceeding timeoutSeconds is sent SIGTERM: arriving between two of
+    them, it left the target missing. The runner kills a job that hasn't
+    exited within its grace period, so a swap still running then can be cut
+    short, which recoverInterruptedSwap puts right on the next run.
+
+    Only on the main thread, where Python lets a handler be set; a job runs
+    its target there.
+    """
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    received: List[int] = []
+    previous = signal.signal(signal.SIGTERM, lambda number, frame: received.append(number))
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        if received:
+            logger.warning('Stopping now that the swap has finished, as asked while it ran')
+            os.kill(os.getpid(), signal.SIGTERM)
 
 
 class LoadTarget:
@@ -130,6 +161,14 @@ class TableTarget(LoadTarget):
             # a caller that built the job without it.
             raise ConfigurationError('targetTableStage is required when insertStrategy is swap')
 
+        if jobConfig.insertStrategy == InsertStrategy.SWAP:
+            # First, since a swap stopped after its second rename left no
+            # target for the columns below to be read from.
+            assert jobConfig.targetTableStage is not None
+            recovered = self.database.recoverInterruptedSwap(jobConfig.targetTableFinal, jobConfig.targetTableStage)
+            if recovered is not None:
+                logger.warning(recovered)
+
         columns = jobConfig.targetColumns or self.database.getAllColumnNames(table=jobConfig.targetTableFinal)
         logger.debug('Resolved target columns for {}: {}'.format(jobConfig.targetTableFinal, columns))
 
@@ -160,6 +199,7 @@ class TableTarget(LoadTarget):
         if jobConfig.insertStrategy == InsertStrategy.SWAP:
             assert jobConfig.targetTableStage is not None
             self._giveStageTheTargetsKeys(jobConfig.targetTableFinal, jobConfig.targetTableStage)
+            self._giveStageTheTargetsAccess(jobConfig.targetTableFinal, jobConfig.targetTableStage)
 
 
     def _giveStageTheTargetsKeys(self, final: str, stage: str) -> None:
@@ -185,6 +225,28 @@ class TableTarget(LoadTarget):
             logger.info('Gave stage table {} the {} of {}, so the swap keeps them'.format(stage, ' and '.join(added), final))
 
 
+    def _giveStageTheTargetsAccess(self, final: str, stage: str) -> None:
+        """The target's plain indexes and table grants, given to the stage as
+        its keys are, for the same reason: what only the target had was there
+        after every other swap. Who could read the copy changed from one run
+        to the next. One that can't be given is a warning: the swap goes on as
+        it did before.
+        """
+
+        try:
+            given, problems = self.database.copyAccess(fromTable=final, toTable=stage)
+        except Exception as error:
+            logger.warning('Could not read the indexes and grants of {} to give stage table {}, so after this swap {} may lack them '
+                           'until the next one: {}'.format(final, stage, final, describeError(error)))
+            return
+
+        if given:
+            logger.info('Gave stage table {} the {} of {}, so the swap keeps them'.format(stage, ', '.join(given), final))
+        for problem in problems:
+            logger.warning('Could not give stage table {} the {} of {}, so after this swap {} lacks it until the next one'.format(
+                stage, problem, final, final))
+
+
     def write(self, rows: List[Any]) -> None:
 
         ChunkWriter(self.database, self.loadName, self.columns, self.jobConfig.chunkSize, self._streamsDirectlyIntoTarget).write(rows)
@@ -208,7 +270,8 @@ class TableTarget(LoadTarget):
         if jobConfig.insertStrategy == InsertStrategy.SWAP:
             assert jobConfig.targetTableStage is not None
             logger.info('Swapping {} with stage table {}'.format(jobConfig.targetTableFinal, jobConfig.targetTableStage))
-            self.database.swap(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage)
+            with _terminationDeferred():
+                self.database.swap(targetTable=jobConfig.targetTableFinal, stageTable=jobConfig.targetTableStage)
 
             if jobConfig.masking is not None:
                 # The swap moved what the target held into the stage. For a job

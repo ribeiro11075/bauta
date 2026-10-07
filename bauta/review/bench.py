@@ -73,7 +73,7 @@ def benchJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Mappin
 
             query, parameters = jobConfig.sourceQuery, None
             if jobConfig.watermarkColumn:
-                query, parameters = source.substituteWatermarkPlaceholder(query), (jobConfig.watermarkInitial,)
+                query, parameters = source.bindWatermark(query, jobConfig.watermarkInitial)
 
             started = time.perf_counter()
             columns, stream = source.stream(query=query, chunkSize=jobConfig.chunkSize, parameters=parameters)

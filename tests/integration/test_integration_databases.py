@@ -532,3 +532,42 @@ def test_a_repeated_key_fails_a_swap_before_it_reaches_the_target(liveDatabase, 
         assert liveDatabase.query('SELECT id, name, amount FROM {}'.format(peopleTable)) == [(1, 'kept', 1)]
     finally:
         liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(stageTable))
+
+
+# A column each database orders UUIDs in by its own rule: SQL Server's
+# uniqueidentifier, by its last six bytes first; text, by its characters.
+UUID_TYPES = {'postgresql': 'UUID', 'mssql': 'UNIQUEIDENTIFIER', 'mariadb': 'UUID', 'duckdb': 'UUID'}
+
+
+def test_partitions_slice_a_uuid_key_and_read_each_row_once(liveDatabase, connectionSettings, databaseName):
+    """Partitions were ranges of a number, so a table keyed by a UUID could
+    only be read as one stream, and `partitions.column` naming one failed the
+    job. It is sliced where the database deals its values into even shares,
+    in its own order, the bounds bound as parameters -- and the query's
+    literal % survives being given them.
+    """
+    import uuid as uuids
+
+    from bauta.jobs import pipeline
+    from tests.jobConfigs import dataJob
+
+    keyType = UUID_TYPES.get(databaseName, 'VARCHAR2(36)' if databaseName == 'oracle' else 'VARCHAR(36)')
+    text = 'VARCHAR2(20)' if databaseName == 'oracle' else 'VARCHAR(20)'
+    source, target = ('uuid_{}_{}'.format(role, uuids.uuid4().hex[:8]) for role in ('src', 'dst'))
+    for table in (source, target):
+        liveDatabase.alter('CREATE TABLE {} (id {} PRIMARY KEY, label {})'.format(table, keyType, text))
+    try:
+        native = keyType in ('UUID', 'UNIQUEIDENTIFIER') and databaseName != 'mariadb'
+        rows = [(identifier if native else str(identifier), 'a%{}'.format(index % 5)) for index, identifier in
+                enumerate(uuids.uuid4() for _ in range(400))]
+        liveDatabase.insert(table=source, data=rows, chunkSize=100)
+        job = dataJob(sourceConnection='db', targetConnection='db', sourceQuery="SELECT id, label FROM {} WHERE label LIKE 'a%'".format(source),
+                      targetTableFinal=target, insertStrategy='upsert', chunkSize=30, unmasked=True, partitions={'column': 'id', 'count': 4})
+
+        outcome = pipeline._executeDataJob('job1', job, {'db': connectionSettings})
+
+        assert outcome.rowCount == 400
+        assert [tuple(int(value) for value in row) for row in liveDatabase.query('SELECT count(*), count(DISTINCT id) FROM {}'.format(target))] == [(400, 400)]
+    finally:
+        for table in (source, target):
+            liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))

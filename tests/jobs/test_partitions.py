@@ -233,12 +233,20 @@ def test_a_partition_column_the_query_does_not_return_fails_before_the_target_is
     assert _rows(connections['copy'], 'SELECT count(*) FROM customers_stage') == [(1,)]
 
 
-def test_a_text_partition_column_is_refused_naming_its_type_and_no_value(connections):
-    with pytest.raises(ConfigurationError) as error:
-        _executeDataJob('text', _job(partitions={'column': 'email', 'count': 2}), connections)
+def test_a_text_partition_column_is_sliced_at_values_that_are_never_logged(connections, caplog):
+    """A text column was refused: a partition was a range of numbers. It is
+    sliced where its values divide evenly, and those values, which are data,
+    are bound into the slices' queries and appear in no log line.
+    """
+    import logging
 
-    assert 'holds str values' in str(error.value)
-    assert '@' not in str(error.value)
+    with caplog.at_level(logging.DEBUG, logger='bauta'):
+        outcome = _executeDataJob('text', _job(partitions={'column': 'email', 'count': 3}), connections)
+
+    assert outcome.rowCount == len(ROWS)
+    assert _rows(connections['copy'], 'SELECT count(*), count(DISTINCT email) FROM customers') == [(len(ROWS), len(ROWS))]
+    assert 'as 3 partition(s) of email' in caplog.text
+    assert '@' not in caplog.text
 
 
 def test_partitions_run_through_a_whole_run_and_record_one_watermark(connections, tmp_path):
@@ -259,3 +267,37 @@ def test_partitions_run_through_a_whole_run_and_record_one_watermark(connections
     assert memory.readWatermarks() == {'copyCustomers': max(row[0] for row in ROWS)}
     assert 'as 3 partition(s) of id' in (tmp_path / 'run.log').read_text()
     assert _rows(connections['copy'], 'SELECT count(DISTINCT email) FROM customers') == [(len(ROWS),)]
+
+
+def test_quantile_slices_cover_every_value_once_in_the_databases_order():
+    """A column that isn't a number is sliced at the largest value of each
+    share the database dealt, compared in the database: never sorted here.
+    """
+    from bauta.jobs.partitions import Slice, quantileSlices
+
+    slices = quantileSlices('"id"', ['c', 'f', 'f', 'z'], '%s')
+
+    assert slices == [Slice('("id" <= %s OR "id" IS NULL)', ('c',)), Slice('"id" > %s AND "id" <= %s', ('c', 'f')), Slice('"id" > %s', ('f',))]
+    assert quantileSlices('"id"', ['only'], '?') == [Slice(None)]
+    assert quantileSlices('"id"', [], '?') == [Slice(None)]
+
+
+def test_a_quantile_query_needs_no_min_or_max_of_the_column():
+    """PostgreSQL has no MAX for uuid."""
+    from bauta.jobs.partitions import quantileQuery
+
+    query = quantileQuery('SELECT id FROM t;', '"id"', 4)
+
+    assert 'NTILE(4) OVER (ORDER BY "id")' in query and 'MAX(' not in query and 'MIN(' not in query and ';' not in query
+
+
+def test_a_watermark_column_named_in_another_case_is_found(connections):
+    """Oracle returns an unquoted column in capitals, so `watermarkColumn: id`
+    was refused as missing from ID, as partitions.column never was.
+    """
+    job = _job(sourceQuery='SELECT id AS ID, email, phone, ref FROM customers WHERE id > {{ watermark }}', watermarkColumn='id', watermarkInitial=-1,
+               insertStrategy='upsert', targetTableStage=None, masking={'key': KEY, 'columns': {**POLICY, 'id': 'keep'}}, partitions=None)
+
+    outcome = _executeDataJob('upper', job, connections, watermark=-1)
+
+    assert outcome.rowCount == len(ROWS) and outcome.watermark == max(row[0] for row in ROWS)

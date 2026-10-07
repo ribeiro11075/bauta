@@ -7,7 +7,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..driver import Connection, Cursor, native
 from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType, SQLiteConnection
-from .base import ColumnDefinition, ForeignKey, settingsOf, _OnConflictDialect, _renameInThreeSteps, _schemaForeignKeys, _uniqueColumnGroups, _withKeys
+from ...configuration.sqltext import codeOnly
+from .base import ColumnDefinition, ForeignKey, settingsOf, _OnConflictDialect, _renameInThreeSteps, _schemaForeignKeys, _namedColumnGroups, _uniqueColumnGroups, _withKeys
 from .names import catalogName, catalogTableName, quoteIdentifier
 
 
@@ -55,6 +56,25 @@ def _qualifiedIndex(createStatement: str, schema: str) -> str:
     return '{}{}.{}'.format(createStatement[:head.end()], schema, createStatement[head.end():])
 
 
+def _checkClauses(statement: str) -> List[str]:
+    """Each `CHECK (...)` condition in a CREATE TABLE statement, its
+    parentheses balanced in the code alone: one inside a quoted value or name
+    doesn't count.
+    """
+
+    code = codeOnly(statement, identifiers=True)
+    clauses = []
+    for match in re.finditer(r'\bCHECK\s*\(', code, re.IGNORECASE):
+        depth = 0
+        for index in range(match.end() - 1, len(code)):
+            depth += {'(': 1, ')': -1}.get(code[index], 0)
+            if depth == 0:
+                clauses.append(statement[match.end() - 1:index + 1])
+                break
+
+    return clauses
+
+
 class SQLiteDialect(_OnConflictDialect):
     """settings.path is a file path or ":memory:". No columnCategory:
     sqlite3 reports no column types.
@@ -88,6 +108,11 @@ class SQLiteDialect(_OnConflictDialect):
     def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
 
         return {'database': settingsOf(settings, SQLiteConnection).path, 'timeout': 30.0}
+
+
+    def readOnlySessionStatement(self) -> Optional[str]:
+
+        return 'PRAGMA query_only = ON'
 
 
     def placeholders(self, count: int) -> List[str]:
@@ -133,6 +158,32 @@ class SQLiteDialect(_OnConflictDialect):
                        (name, schema or 'main', schema or 'main'))
 
         return _uniqueColumnGroups(cursor.fetchall())
+
+
+    def sourceIndexes(self, cursor: Cursor, table: str) -> List[Tuple[str, Tuple[str, ...]]]:
+        """From pragma_index_list, the indexes CREATE INDEX made (origin c)
+        that are neither unique nor partial; one over an expression is left out.
+        """
+
+        schema, name = catalogTableName(self.databaseType, table)
+        cursor.execute('SELECT il.name, ii.name FROM pragma_index_list(?, ?) il, pragma_index_info(il.name, ?) ii '
+                       'WHERE il."unique" = 0 AND il.origin = \'c\' AND il.partial = 0 ORDER BY il.name, ii.seqno',
+                       (name, schema or 'main', schema or 'main'))
+
+        return _namedColumnGroups(cursor.fetchall())
+
+
+    def checkConstraints(self, cursor: Cursor, table: str) -> List[str]:
+        """From the table's own CREATE statement, which is all SQLite keeps of
+        them: each CHECK's parenthesized condition.
+        """
+
+        schema, name = catalogTableName(self.databaseType, table)
+        master = '{}.sqlite_master'.format(quoteIdentifier(self.databaseType, schema) if schema else 'main')
+        cursor.execute("SELECT sql FROM {} WHERE type = 'table' AND lower(name) = lower(?)".format(master), (name,))
+        row = cursor.fetchone()
+
+        return _checkClauses(row[0]) if row and row[0] else []
 
 
     def addKeys(self, cursor: Cursor, table: str, catalogTable: str, primaryKey: Sequence[str], uniqueKeys: Sequence[Sequence[str]]) -> None:

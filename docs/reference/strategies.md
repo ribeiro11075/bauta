@@ -9,14 +9,15 @@ A NULL stays NULL under every strategy except `constant` and `null`.
 | `null` | NULL. The right choice for free text. | none |
 | `constant` | `value` in every row, NULLs included. | `value` (required) |
 | `hash` | An opaque hex token, e.g. `cust_9f86d081884c7d65`. | `length` (12–64, default 16), `prefix`; `normalize`: `strip`, `lower` ([below](#values-held-more-than-one-way-normalize)) |
-| `email` | Still an email address, e.g. `u9f86d081884c@example.test`. Keyed on the lower-cased address. | `length` (8–40, default 12), `mailDomain` (default `example.test`), `keepDomain` |
+| `email` | Still an email address, e.g. `u9f86d081884c@example.test`. Keyed on the lower-cased address. | `length` (12–40, default 12), `mailDomain` (default `example.test`), `keepDomain` |
 | `digits` | Each digit replaced, everything else kept: `+1 (555) 010-9999` → `+1 (831) 402-5517`. Keyed on the digits alone, so formatting doesn't matter. Integers keep their digit count. Digits in any script (full-width `１２３`, Arabic-Indic `١٢٣`) are masked too, and written back in their own script. A value the keeps cover entirely fails the job rather than being copied through: `555-0100` under `keepLeading: 3, keepTrailing: 4`. | `keepLeading`, `keepTrailing` (e.g. `4` for a card number) |
 | `number` | A number of the same type and precision, either within `variance` of the original (default `0.1`) or within `min`–`max`. A value the variance would round back to itself, such as a small integer, moves one step instead; zero stays zero. | `min` + `max`, or `variance` (0–1); `decimals` |
 | `dateShift` | Moved by a keyed number of whole days, never zero. The shift is keyed on the day, so a date, a timestamp and ISO text of that same day all move to the same day — and two days move by unrelated amounts, so **a start and an end can change order**. `shiftBy` moves every date of one person alike instead; see [below](#dateshift-by-a-column-shiftby). Times of day are kept. ISO 8601 text, which is how SQLite stores dates, is written back in the same format. `0001-01-01` and `9999-12-31` are kept, since they mean "no date" or "forever"; a date near either is shifted away from it. | `maxDays` (default 30); `shiftBy`: a column of the row |
 | `key` | A one-to-one mapping, safe for primary and foreign keys. See below. | `charset`: `alphanumeric` (default), `digits`, `hex`; `normalize`: `strip`, `lower`, `integer` |
 | `fpe` | Like `key`, but using NIST's FF1 format-preserving encryption, for policies that must name a standard. See below. | `charset`: `alphanumeric` (default), `digits`, `hex`; `strict`; `normalize`: `strip`, `lower`, `integer` |
 | `fakeName`, `fakeFirstName`, `fakeLastName`, `fakeCity`, `fakeCompany`, `fakeStreetAddress` | Realistic values from bundled lists. Not unique. | `maxLength`; `locale`; `lists` (1 or 2), and `matchGender` for the name strategies; [below](#fake-data-by-country) |
-| `coordinate` | A latitude or longitude moved along its axis by a keyed distance on the ground, between half of `meters` and all of it, wherever the point is. See [below](#coordinate). | `axis` (required): `latitude` or `longitude`; `meters` (default 1000); `latitudeColumn`, for a longitude |
+| `ip` | An IP address as another of its family, one-to-one: IPv4 to IPv4, IPv6 to IPv6, always valid, so an `inet` or `cidr` column takes it. See [below](#ip). | `keepPrefix` (0–128): leading bits kept |
+| `coordinate` | A latitude or longitude moved along its axis by a keyed distance on the ground, between half of `meters` and all of it, wherever the point is. See [below](#coordinate). | `axis` (required): `latitude` or `longitude`; `meters` (default 1000); `latitudeColumn`, for a longitude; `scale`, for degrees stored multiplied |
 | `redact` | Free text with each recognisable identifier replaced: emails, phone numbers, US SSNs, card numbers and IBANs (both checksum-verified), IPv4 addresses. **Names aren't found.** See below. | `replacement`: `label` (default) or `mask`; `detect`: a list of `email`, `phone`, `ssn`, `card`, `iban`, `ip`; `patterns`: extra regular expressions |
 | `json` | A JSON document with each path `fields` names masked by its own policy, and every other value by `otherwise`. See below. | `fields` (required): path → column policy; `otherwise`: a policy, default `redact` with `replacement: mask` |
 | `shuffle` | The column's values rearranged among rows in the same chunk. **Not anonymization:** every real value is still in the table, and a small chunk barely moves them. It moves values between rows rather than mapping them, so it breaks a key and its references even where both are shuffled alike; `audit` warns. See [limits](#limits). | none |
@@ -116,7 +117,27 @@ columns:
 - **A degree of longitude spans fewer metres away from the equator.** `latitudeColumn` names the row's latitude, read before it is masked, so a longitude moves by `meters` at that latitude. Without it a longitude moves by `meters` as measured at the equator: half that at 60°.
 - The move is keyed on the value, so equal coordinates mask alike. A latitude that would pass a pole moves the other way, and a longitude wraps at 180°.
 - Floats come back as floats. A `Decimal` keeps its scale and moves at least one step of it; a column of two decimal places (about a kilometre) can't hold a smaller move.
-- [`discover`](../guides/propose-a-policy.md) proposes `coordinate` for columns named like a latitude or a longitude, with `latitudeColumn` where the table has one latitude.
+- **A value outside its axis fails the job**, naming the column, never the value: beyond 90° either side for a latitude, 180° for a longitude. It is no position in degrees, so moving it by a kilometre's worth of degrees would leave it where it was.
+- **`scale`** reads a column of degrees stored multiplied, as integers or decimals: `scale: 1000000` for microdegrees (`40712776` for 40.712776°), `10000000` for the E7 of many GPS formats. The value is moved in degrees and comes back at its own type, an integer as an integer, moved at least one step. `latitudeColumn` is read at the same scale.
+
+  ```yaml
+  lat: { strategy: coordinate, axis: latitude, scale: 1000000 }
+  ```
+- [`discover`](../guides/propose-a-policy.md) proposes `coordinate` for columns named like a latitude or a longitude, with `latitudeColumn` where the table has one latitude, and with `scale` where the sampled values are larger than degrees can be: check it, since their size alone suggested it. Sampled values no usual scale brings into range are proposed `null`.
+
+## `ip`
+
+`digits` and `key` on an address can make `589.439.074.458`, and `hash` a hex token, none of which an `inet` column takes. `ip` maps every IPv4 address to an IPv4 address and every IPv6 address to an IPv6 address by `key`'s keyed permutation over all 2<sup>32</sup> or 2<sup>128</sup> of them, so it never collides and every mask is an address:
+
+```yaml
+client_ip: ip                                  # 192.168.1.10 -> 47.44.170.239
+office_ip: { strategy: ip, keepPrefix: 16 }    # 192.168.1.10 -> 192.168.217.255
+```
+
+- **`keepPrefix`** keeps that many leading bits, so the copy still says which /16 or /24 an address was in, and permutes the rest, keyed on the bits kept, so one host in two subnets lands apart. Keeping more bits leaves fewer to hide in: `keepPrefix: 24` leaves 256 possible masks for each address.
+- Values come back as they came: text as text, PostgreSQL's `inet` and `cidr` as addresses, interfaces and networks, with a mask's prefix length kept (`10.1.2.3/24` stays a /24, a `cidr`'s host bits stay zero), 4 or 16 bytes as bytes, and an integer below 2<sup>32</sup>, as MySQL's `INET_ATON` stores one, as an integer.
+- Text that isn't an address fails the job, naming the column, never the value.
+- A MAC address needs no strategy of its own: `key` with `charset: hex` keeps it valid -- hex digits for hex digits, separators where they were -- and one-to-one.
 
 ## Fake data by country
 
@@ -180,12 +201,13 @@ columns:
       contact.owner_id: { strategy: key, domain: customers }   # matches customers.id masked in domain customers
       family[].first_name: fakeFirstName
       address: 'null'                                           # an object, dropped whole
-    otherwise: { strategy: redact, replacement: mask }         # the default
+    # no otherwise: values masked by what their key names, else redacted
 ```
 
 - **Paths** join keys with dots, and name every element of an array with `[]`: `orders[].card`, or `[].email` for a document that is an array.
 - **A field's policy** is any column policy but `shuffle`, which has only the one value to move, and one naming another column of the row (`shiftBy`, `latitudeColumn`), which a value in a document has none of. It masks in the `domain` it names or, like a column, in its own name's: the path's last key. A policy on an object or an array applies to it whole.
-- **`otherwise`** masks every value no field names. The default, `redact`, masks identifiers it finds by shape in text, and in whole numbers long enough to be a phone or card number (`5550109999` masks as `"555-010-9999"` would, and stays a number), and leaves other numbers and booleans as they are. **A name no field names passes through**; `audit` notes each `json` column this applies to. `otherwise: 'null'` removes every value no field names instead.
+- **Without `otherwise`, a value is masked by what its key names.** Under a key that names personal data as `discover` reads a column's name -- `name`, `first_name`, `dob`, `address`, `city`, `postcode`, `phone`, `email`, `ssn`, `company`, `gender` and the like, plurals too -- a value is masked as that kind (`fakeName`, `dateShift`, `fakeStreetAddress`, `key`, `null`...) in its key's domain, so `{"ssn": ...}` masks as an `ssn` column masked with `key` does. An array under such a key has each element masked so, and an object under one has each value masked so where the value's own key names nothing else -- `{"name": {"first": "Ann", "last": "Lee"}}` -- or goes to `otherwise` where that kind can't mask it, a count under `byEmail` say. A value that kind can't mask -- `"dob": "sometime in 1984"` -- fails the job, naming its path; name the path in `fields` to mask it another way. Matching is by the key's words, so `product.name` is masked as a person's name too: name it in `fields` to keep it.
+- **Every other value** goes to `otherwise`, by default `redact`, which masks identifiers it finds by shape in text, and in whole numbers long enough to be a phone or card number (`5550109999` masks as `"555-010-9999"` would, and stays a number), and leaves other numbers and booleans as they are. **A name under a key that doesn't say so** -- `"contact": "Ann Smith"` -- **passes through**; `audit` notes each `json` column this applies to. **Setting `otherwise` turns key matching off**: every value no field names is masked with it alone. `otherwise: 'null'` removes every value no field names.
 - **Keys are data too** where a document is keyed by, say, email address: `{"ann@corp.example": {...}}`. Identifiers `redact` finds in an object's keys are masked, unless `otherwise` is `keep`. Paths in `fields` match keys as they came.
 - The document comes back in the form it came: an object as an object, JSON text as JSON text, keys in their order.
 
@@ -226,9 +248,9 @@ A strategy that masks parts of a value in domains other than its column's, as `j
 
 - **Free text** can hold personal data anywhere in it. `null` or `constant` remove it all. `redact` keeps the text and removes identifiers with a recognisable shape, but not names. `hash` would only replace the text with an opaque token, and `keep` would copy it as it is.
 - **Scripts other than Latin.** `key` and `fpe` refuse letters and digits outside ASCII rather than copy them; `digits` and `redact` handle digits in any script. `redact` finds only email addresses written in ASCII.
-- **Unique columns** need enough bits to avoid collisions. `hash` enforces a minimum length for that reason. The `fake*` strategies are never unique. For a unique column, use `key`, which never collides.
+- **Unique columns** need either `key` or enough bits. `email` and `hash` are a keyed hash cut to `length` hex characters, so two values can mask alike, which a unique column refuses and the load fails on (every database, MySQL and MariaDB included, refuses it rather than merging the two rows). The odds, over a column of distinct values: at 12 characters (48 bits, `email`'s default), about one in 550 for a million rows and one in six for ten million; at 16 (`hash`'s default), one in 3,600 for a hundred million; at 24, about one in 10<sup>13</sup> for a hundred million. Give `length: 24` to an email column the target holds unique. `key` never collides, since it is a permutation, but keeps the value's length and shape -- on an email address it scrambles the domain too, rather than using a reserved one that can't receive mail. The `fake*` strategies are never unique.
 - **`number` with `variance`** keeps magnitudes realistic, which also reveals them roughly. Use `min`/`max` if the magnitude itself is sensitive.
 - **`dateShift`** is keyed on the date, so everyone born on the same day still shares a birthday after masking, and a day's events stay a day's events whether the column holds a date or a timestamp. That's what keeps the data consistent, and it means dates are shifted, not randomized. It also means two dates in a row move independently and can change order; use [`shiftBy`](#dateshift-by-a-column-shiftby) where their order or the time between them matters.
-- **`shuffle` needs large chunks.** Values only move within a chunk, so a row keeps its own value with probability 1/chunk size, and a chunk of one row isn't shuffled at all. The last chunk of a load and a small incremental run are both small. Don't use `shuffle` on incremental jobs.
+- **`shuffle` needs large chunks.** Values only move within a chunk, so a row keeps its own value with probability 1/chunk size, and a chunk of one row isn't shuffled at all. The last chunk of a load and a small incremental run are both small. Don't use `shuffle` on incremental jobs: `audit` warns about one, and a job with a watermark that shuffles any column is refused where its source or target has [`requireMasking`](connections.md#requiring-masking), whose promise a single unshuffled row breaks. A full load's last chunk is not refused, since whether it is small depends on the table's size; where that matters, mask with a strategy that replaces each value.
 - **Masking hides values, not patterns.** Row counts, NULL rates and relationships are all preserved, which is the point, and a combination of kept columns (zip code, birth year and gender) can still identify someone. Review what you `keep`.
 - **Hard deletes** aren't propagated by incremental loads, masked or not. See [design.md](../concepts/how-it-works.md#deletes).

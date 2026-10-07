@@ -11,6 +11,8 @@ import datetime
 import json
 import os
 import socket
+import time
+import urllib.error
 import urllib.request
 import uuid
 from abc import ABC, abstractmethod
@@ -375,7 +377,37 @@ def notify(url: str, result: RunResult, always: bool = False) -> bool:
 
     request = urllib.request.Request(url, data=json.dumps(notificationPayload(result), default=str).encode('utf-8'), method='POST',
                                      headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-        response.read()
 
-    return True
+    for attempt in range(NOTIFY_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                response.read()
+            return True
+        except Exception as error:
+            if isinstance(error, urllib.error.HTTPError):
+                # It holds the response open, which nothing reads.
+                error.close()
+            if attempt + 1 == NOTIFY_ATTEMPTS or not _mayPassOnRetry(error):
+                raise
+            time.sleep(NOTIFY_RETRY_DELAY_SECONDS)
+
+    raise AssertionError('unreachable: the last attempt returns or raises')
+
+
+# Sent twice at most, a few seconds apart. A failure alert is sent when
+# something has already gone wrong, often on a network having a bad moment,
+# and one dropped request lost it.
+NOTIFY_ATTEMPTS = 2
+NOTIFY_RETRY_DELAY_SECONDS = 3.0
+
+
+def _mayPassOnRetry(error: BaseException) -> bool:
+    """Whether a webhook's failure could be gone a moment later: the network,
+    a timeout, the server's own error (5xx) or a rate limit (429). Any other
+    answer -- a wrong URL, a token revoked -- would be the same again.
+    """
+
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code >= 500 or error.code == 429
+
+    return isinstance(error, (urllib.error.URLError, OSError, TimeoutError))

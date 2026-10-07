@@ -316,6 +316,18 @@ def test_connection_options_are_kept_out_of_the_models_repr():
     assert 'hunter2' not in repr(settings)
 
 
+def test_a_sql_catalogs_password_is_kept_out_of_its_description_and_repr():
+    """A SQL catalog's uri is a database URL, password and all, and `run
+    --dry-run` logged describeTarget(), so the password went into the log.
+    """
+    settings = connectionConfig(type='iceberg', catalog='sql', uri='postgresql+psycopg://catalog:hun@ter2@db:5432/catalog', warehouse='s3://lake/w')
+
+    assert 'ter2' not in settings.describeTarget()
+    assert 'postgresql+psycopg://catalog:***@db:5432/catalog' in settings.describeTarget()
+    assert 'ter2' not in repr(settings)
+    assert settings.uri == 'postgresql+psycopg://catalog:hun@ter2@db:5432/catalog'
+
+
 @pytest.mark.parametrize('timeout', [0, -5])
 def test_timeout_seconds_must_be_positive(timeout):
     with pytest.raises(ConfigurationError, match='timeoutSeconds'):
@@ -476,6 +488,18 @@ def test_requiring_masking_is_not_waived_by_a_job_declaring_itself_unmasked():
 
     with pytest.raises(ConfigurationError):
         Configuration.validateJobGraph(jobsFile.jobs, connections=_databases(staging={'requireMasking': True}))
+
+
+def test_a_read_only_database_refuses_a_job_loading_into_it_and_serves_as_a_source():
+    """An alias pointed the wrong way -- production as a job's target -- was
+    written to like any other database.
+    """
+    jobsFile = Configuration.validateJobConfiguration(_jobsFile(_job(sourceConnection='prod', targetConnection='staging', unmasked=True)),
+                                                      DataJobsFile)
+
+    with pytest.raises(ConfigurationError, match='targetConnection "staging" is readOnly'):
+        Configuration.validateJobGraph(jobsFile.jobs, connections=_databases(staging={'readOnly': True}))
+    Configuration.validateJobGraph(jobsFile.jobs, connections=_databases(prod={'readOnly': True}))
 
 
 def test_a_masked_job_satisfies_a_database_that_requires_masking():
@@ -654,3 +678,30 @@ def test_partitions_are_refused_on_duckdb_which_one_job_at_a_time_may_open():
 
     with pytest.raises(ConfigurationError, match='targetConnection "lake" takes at most 1 at once .DuckDB lets one process'):
         Configuration.validateJobGraph(jobsFile.jobs, connections=connections)
+
+
+def test_a_database_that_requires_masking_refuses_shuffle_on_an_incremental_job():
+    """shuffle moves values between a chunk's rows, and an incremental run's
+    chunk is what changed since the last: a single row kept its own value,
+    so real values reached a database promised to hold none.
+    """
+    def incremental(**masking):
+        return _job(sourceConnection='prod', targetConnection='staging', insertStrategy='upsert', watermarkColumn='id', watermarkInitial=0,
+                    sourceQuery='select id, salary from people where id > {{ watermark }}',
+                    masking={'key': MASKING_KEY, 'columns': {'id': 'keep'}, **masking})
+
+    shuffled = Configuration.validateJobConfiguration(_jobsFile(incremental(columns={'id': 'keep', 'salary': 'shuffle'})), DataJobsFile)
+    with pytest.raises(ConfigurationError, match='incremental job shuffles salary'):
+        Configuration.validateJobGraph(shuffled.jobs, connections=_databases(staging={'requireMasking': True}))
+    Configuration.validateJobGraph(shuffled.jobs, connections=_databases())
+
+    replaced = Configuration.validateJobConfiguration(_jobsFile(incremental(columns={'id': 'keep', 'salary': {'strategy': 'number', 'variance': 0.1}})),
+                                                      DataJobsFile)
+    Configuration.validateJobGraph(replaced.jobs, connections=_databases(staging={'requireMasking': True}))
+
+
+def test_a_watermark_placeholder_only_in_a_comment_is_no_placeholder():
+    """Bound to nothing, it left the job reading every row on every run."""
+    with pytest.raises(ConfigurationError, match='no {{ watermark }} placeholder'):
+        Configuration.validateJobConfiguration(_watermarkJob(sourceQuery='select id, updated_at from orders -- where updated_at > {{ watermark }}'),
+                                               DataJobsFile)

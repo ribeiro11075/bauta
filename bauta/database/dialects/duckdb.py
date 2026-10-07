@@ -270,6 +270,15 @@ class DuckDBDialect(_OnConflictDialect):
         return arguments
 
 
+    def checkConstraints(self, cursor: Cursor, table: str) -> List[str]:
+
+        schema, name = catalogTableName(self.databaseType, table)
+        cursor.execute("SELECT expression FROM duckdb_constraints() WHERE constraint_type = 'CHECK' AND schema_name = COALESCE(?, current_schema()) "
+                       "AND table_name = ? ORDER BY constraint_index", (schema, name))
+
+        return [str(row[0]) for row in cursor.fetchall()]
+
+
     def placeholders(self, count: int) -> List[str]:
 
         return count * ['?']

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import ipaddress
 import json
+import math
 import re
 import uuid
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
@@ -16,7 +18,7 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Name
 import yaml
 
 from . import builtinDiscovery
-from .builtinDiscovery import isIsoDate
+from .builtinDiscovery import isIpAddress, isIsoDate
 from ..configuration import DatabaseType, DiscoveryRulesFile
 from ..configuration.models import DEFAULT_CHUNK_SIZE
 from ..database.dialects import ColumnCategory, ForeignKey, quoteFoldedTable
@@ -365,6 +367,10 @@ def _isNumeric(values: Sequence[Any], category: Optional[ColumnCategory]) -> boo
 TEXT_STRATEGIES = {'email', 'hash', 'fakeFirstName', 'fakeLastName', 'fakeName', 'fakeCity', 'fakeCompany', 'fakeStreetAddress'}
 
 
+# What PostgreSQL's inet and cidr arrive as.
+_ADDRESS_VALUES = (ipaddress.IPv4Address, ipaddress.IPv6Address, ipaddress.IPv4Network, ipaddress.IPv6Network)
+
+
 def _compatible(strategy: str, values: Sequence[Any], category: Optional[ColumnCategory]) -> bool:
     """Whether a name-based guess fits what the column holds (`token_count` is
     not a credential). With nothing to contradict it, the name stands.
@@ -382,6 +388,8 @@ def _compatible(strategy: str, values: Sequence[Any], category: Optional[ColumnC
     if strategy == 'dateShift':
         return kind == ColumnCategory.DATE or (kind != ColumnCategory.NUMBER and bool(present)
                                                 and all(isinstance(value, str) and isIsoDate(value) for value in present))
+    if strategy == 'ip':
+        return bool(present) and all(isinstance(value, _ADDRESS_VALUES) or isinstance(value, str) and isIpAddress(value) for value in present)
     if strategy in ('digits', 'key'):
         return kind != ColumnCategory.DATE and all(
             isinstance(value, (str, int)) and not isinstance(value, bool)
@@ -389,6 +397,41 @@ def _compatible(strategy: str, values: Sequence[Any], category: Optional[ColumnC
             for value in present)
 
     return True
+
+
+# The scales a column of coordinates is tried at, smallest first: the ones
+# in use, microdegrees (10**6) and the E7 of GPS formats (10**7) above all.
+# Size alone can't always tell them apart -- an E7 longitude sampled below 18
+# degrees fits 10**6 too -- so the proposal says to check it.
+_COORDINATE_SCALES = (10 ** 5, 10 ** 6, 10 ** 7)
+
+
+def _coordinateSuggestion(column: str, rule: Any, values: Sequence[Any]) -> Suggestion:
+    """`coordinate` for a column named like a latitude or longitude, with the
+    `scale` its sampled values need, where they are larger than degrees can
+    be: microdegrees moved as degrees changed in their ninth decimal place.
+    Sampled values no scale brings into range get `null`, since they are no
+    position `coordinate` can move.
+    """
+
+    policy = dict(rule.policy)
+    limit = 90 if policy.get('axis') == 'latitude' else 180
+    numbers = [abs(float(value)) for value in values
+               if isinstance(value, (int, float, decimal.Decimal)) and not isinstance(value, bool) and math.isfinite(value)]
+    largest = max(numbers, default=0.0)
+
+    if largest <= limit:
+        return Suggestion(column, policy, rule.reason)
+
+    scale = next((scale for scale in _COORDINATE_SCALES if largest / scale <= limit), None)
+    if scale is None:
+        return Suggestion(column, {'strategy': 'null'}, '{}, but its sampled values are no {} in degrees at any scale; review'.format(
+            rule.reason, policy.get('axis')))
+
+    policy['scale'] = scale
+
+    return Suggestion(column, policy, '{}; its values look like degrees times {} -- check that scale, which their size alone '
+                                      'suggests'.format(rule.reason, scale))
 
 
 def suggestColumn(table: str, column: str, category: Optional[ColumnCategory], values: Sequence[Any],
@@ -423,6 +466,8 @@ def suggestColumn(table: str, column: str, category: Optional[ColumnCategory], v
     words = nameWords(column)
     for rule in rules.names:
         if words & rule.words and _compatible(rule.policy['strategy'], values, category):
+            if rule.policy['strategy'] == 'coordinate':
+                return _coordinateSuggestion(column, rule, values)
             return Suggestion(column, dict(rule.policy), rule.reason)
 
     if 'name' in words and nameWords(table) & rules.personalTables and _compatible('fakeName', values, category):

@@ -2593,6 +2593,72 @@
   ]
  },
  "pythonOnly": {
+  "coordinate {\"axis\": \"latitude\", \"scale\": 1000000}": [
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "51505915",
+    "maskedType": "int",
+    "type": "int",
+    "value": "51501350"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-136810",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-141890"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-7232",
+    "maskedType": "int",
+    "type": "int",
+    "value": "0"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "89991396",
+    "maskedType": "int",
+    "type": "int",
+    "value": "89999900"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "38716221.8",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "38722300.5"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "51505914.629636966",
+    "maskedType": "float",
+    "type": "float",
+    "value": "51501350.0"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "error": "MaskingError",
+    "message": "a latitude is within 90 degrees either side of zero, and a value here is not, even divided by its scale",
+    "type": "int",
+    "value": "90000001"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "error": "MaskingError",
+    "message": "a latitude is within 90 degrees either side of zero, and a value here is not, even divided by its scale",
+    "type": "int",
+    "value": "51501350000"
+   }
+  ],
   "coordinate {\"axis\": \"latitude\"}": [
    {
     "context": "None",
@@ -2637,16 +2703,16 @@
    {
     "context": "None",
     "contextType": "NoneType",
-    "masked": "180.0051232646621",
-    "maskedType": "float",
+    "error": "MaskingError",
+    "message": "a latitude is within 90 degrees either side of zero, and a value here is not. If the column holds degrees multiplied by a power of ten -- microdegrees, say -- set scale",
     "type": "float",
     "value": "179.9999"
    },
    {
     "context": "None",
     "contextType": "NoneType",
-    "masked": "-180.0067940994239",
-    "maskedType": "float",
+    "error": "MaskingError",
+    "message": "a latitude is within 90 degrees either side of zero, and a value here is not. If the column holds degrees multiplied by a power of ten -- microdegrees, say -- set scale",
     "type": "float",
     "value": "-180.0"
    },
@@ -2995,6 +3061,56 @@
     "maskedType": "float",
     "type": "int",
     "value": "7"
+   }
+  ],
+  "coordinate {\"axis\": \"longitude\", \"latitudeColumn\": \"lat\", \"scale\": 10000000}": [
+   {
+    "context": "515013500",
+    "contextType": "int",
+    "masked": "-1513462",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1418900"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-1477764",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1418900"
+   },
+   {
+    "context": "515013500",
+    "contextType": "int",
+    "masked": "-1305430.9",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-1418900.5"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "-1348266.1",
+    "maskedType": "Decimal",
+    "type": "Decimal",
+    "value": "-1418900.5"
+   },
+   {
+    "context": "515013500",
+    "contextType": "int",
+    "masked": "1799885304",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1800000000"
+   },
+   {
+    "context": "None",
+    "contextType": "NoneType",
+    "masked": "1799928602",
+    "maskedType": "int",
+    "type": "int",
+    "value": "-1800000000"
    }
   ],
   "dateShift {\"maxDays\": 10}": [
@@ -3979,6 +4095,166 @@
     "value": "None"
    }
   ],
+  "ip {\"keepPrefix\": 16}": [
+   {
+    "masked": "192.168.21.176",
+    "maskedType": "str",
+    "type": "str",
+    "value": "192.168.1.1"
+   },
+   {
+    "masked": "10.0.94.188",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.0.0.1"
+   },
+   {
+    "masked": "0.0.39.184",
+    "maskedType": "str",
+    "type": "str",
+    "value": "0.0.0.0"
+   },
+   {
+    "masked": "255.255.247.45",
+    "maskedType": "str",
+    "type": "str",
+    "value": "255.255.255.255"
+   },
+   {
+    "masked": "2001:3400:efc5:db96:5d0:8c21:8711:2cc2",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2001:db8::1"
+   },
+   {
+    "masked": "fe80:f803:1b4:7241:d107:d81f:82d7:dc17/64",
+    "maskedType": "str",
+    "type": "str",
+    "value": "fe80::1/64"
+   },
+   {
+    "masked": "10.1.57.65/24",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.1.2.3/24"
+   },
+   {
+    "masked": "10.20.231.121/16",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.20.0.0/16"
+   },
+   {
+    "masked": "172.16.232.41",
+    "maskedType": "IPv4Address",
+    "type": "IPv4Address",
+    "value": "172.16.254.3"
+   },
+   {
+    "masked": "10.1.57.65/24",
+    "maskedType": "IPv4Interface",
+    "type": "IPv4Interface",
+    "value": "10.1.2.3/24"
+   },
+   {
+    "masked": "b'\\n\\x00^\\xbc'",
+    "maskedType": "bytes",
+    "type": "bytes",
+    "value": "b'\\n\\x00\\x00\\x01'"
+   },
+   {
+    "masked": "3232241072",
+    "maskedType": "int",
+    "type": "int",
+    "value": "3232235777"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the ip strategy could not read a text value as an IP address",
+    "type": "str",
+    "value": "not an address"
+   }
+  ],
+  "ip {}": [
+   {
+    "masked": "95.58.106.93",
+    "maskedType": "str",
+    "type": "str",
+    "value": "192.168.1.1"
+   },
+   {
+    "masked": "187.80.44.163",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.0.0.1"
+   },
+   {
+    "masked": "240.189.24.215",
+    "maskedType": "str",
+    "type": "str",
+    "value": "0.0.0.0"
+   },
+   {
+    "masked": "108.33.3.165",
+    "maskedType": "str",
+    "type": "str",
+    "value": "255.255.255.255"
+   },
+   {
+    "masked": "319f:d686:9efc:22dd:9991:502a:324:3572",
+    "maskedType": "str",
+    "type": "str",
+    "value": "2001:db8::1"
+   },
+   {
+    "masked": "68c9:5e06:d54:f1a5:a170:ee73:6902:cb69/64",
+    "maskedType": "str",
+    "type": "str",
+    "value": "fe80::1/64"
+   },
+   {
+    "masked": "129.195.202.91/24",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.1.2.3/24"
+   },
+   {
+    "masked": "181.203.34.62/16",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.20.0.0/16"
+   },
+   {
+    "masked": "28.26.128.228",
+    "maskedType": "IPv4Address",
+    "type": "IPv4Address",
+    "value": "172.16.254.3"
+   },
+   {
+    "masked": "129.195.202.91/24",
+    "maskedType": "IPv4Interface",
+    "type": "IPv4Interface",
+    "value": "10.1.2.3/24"
+   },
+   {
+    "masked": "b'\\xbbP,\\xa3'",
+    "maskedType": "bytes",
+    "type": "bytes",
+    "value": "b'\\n\\x00\\x00\\x01'"
+   },
+   {
+    "masked": "1597663837",
+    "maskedType": "int",
+    "type": "int",
+    "value": "3232235777"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the ip strategy could not read a text value as an IP address",
+    "type": "str",
+    "value": "not an address"
+   }
+  ],
   "json {\"fields\": {\"card\": \"null\"}, \"otherwise\": {\"replacement\": \"label\", \"strategy\": \"redact\"}}": [
    {
     "masked": "{'contact': {'email': '[EMAIL]', 'phone': '[PHONE]'}, 'card': None, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'u7585b672d72c@example.test': 1}, 'notes': ['call [PHONE]', None]}",
@@ -3995,13 +4271,13 @@
   ],
   "json {\"fields\": {\"contact.email\": \"email\", \"customer_id\": {\"domain\": \"customers\", \"strategy\": \"key\"}}}": [
    {
-    "masked": "{'contact': {'email': 'u910e604dfa38@example.test', 'phone': 1286456000}, 'card': 5226276914481111, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'u7585b672d72c@example.test': 1}, 'notes': ['call +0 263 204 5622', None]}",
+    "masked": "{'contact': {'email': 'u910e604dfa38@example.test', 'phone': 5998861987}, 'card': 5226276914481111, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'u7585b672d72c@example.test': 1}, 'notes': ['call +0 263 204 5622', None]}",
     "maskedType": "dict",
     "type": "dict",
     "value": "{'contact': {'email': 'Ann.Lee@corp.example.com', 'phone': 5550109999}, 'card': 4111111111111111, 'visits': 3, 'total': 12.5, 'vip': True, 'byEmail': {'bob@corp.example': 1}, 'notes': ['call +1 555 010 9999', None]}"
    },
    {
-    "masked": "{\"customer_id\": 18, \"ssn\": \"131-13-8212\", \"ssnNumber\": 131138212}",
+    "masked": "{\"customer_id\": 18, \"ssn\": \"072-20-8481\", \"ssnNumber\": 830126563}",
     "maskedType": "str",
     "type": "str",
     "value": "{\"customer_id\": 42, \"ssn\": \"123-45-6789\", \"ssnNumber\": 123456789}"

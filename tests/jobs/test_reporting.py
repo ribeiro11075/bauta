@@ -197,6 +197,46 @@ def test_a_notification_is_sent_only_when_a_cycle_does_not_succeed(webServer):
     assert json.loads(server.requests[2][3])['status'] == 'interrupted'
 
 
+@pytest.mark.parametrize('answers, sent, raises', [([503, 200], 2, False), ([429, 200], 2, False), ([503, 503], 2, True), ([404], 1, True)])
+def test_a_notification_is_sent_again_once_where_the_failure_may_pass(monkeypatch, answers, sent, raises):
+    """A failure alert goes out when something has gone wrong already, often
+    on a network having a bad moment, and one dropped request lost it. A
+    wrong URL or a revoked token answers the same every time, so isn't retried.
+    """
+    import urllib.error
+
+    from bauta.jobs import reporting
+
+    calls = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exception):
+            return False
+
+        def read(self):
+            return b''
+
+    def answer(request, timeout):
+        code = answers[len(calls)]
+        calls.append(code)
+        if code != 200:
+            raise urllib.error.HTTPError(request.full_url, code, 'no', {}, None)
+        return _Response()
+
+    monkeypatch.setattr(reporting.urllib.request, 'urlopen', answer)
+    monkeypatch.setattr(reporting.time, 'sleep', lambda seconds: None)
+
+    if raises:
+        with pytest.raises(urllib.error.HTTPError):
+            notify('http://hooks.example.test/x', _result(FAILED))
+    else:
+        assert notify('http://hooks.example.test/x', _result(FAILED)) is True
+    assert len(calls) == sent
+
+
 def test_the_notification_text_leads_with_the_outcome():
     payload = notificationPayload(_result(COMPLETED))
 

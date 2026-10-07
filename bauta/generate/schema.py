@@ -47,14 +47,19 @@ class TableDefinition(NamedTuple):
     columns: List[ColumnDefinition]
     primaryKey: List[str]
     foreignKeys: List[ForeignKey]
+    # (name, columns) of each plain index; see Database.getIndexes.
+    indexes: Sequence[Tuple[str, Tuple[str, ...]]] = ()
 
 
 class Statement(NamedTuple):
-    """One DDL statement, with any notes about lossy type choices."""
+    """One DDL statement, with any notes about lossy type choices. `isIndex`
+    marks a CREATE INDEX, which belongs to the table created before it.
+    """
 
     table: str
     sql: str
     notes: List[str]
+    isIndex: bool = False
 
 
 INTEGER_BOOLEAN_NOTE = 'the source stores this as an integer, so it stays one'
@@ -84,7 +89,10 @@ def _text(length: Optional[int], fixed: bool = False) -> PortableType:
 
 
 def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> PortableType:
-    """Maps one source column to the portable vocabulary."""
+    """Maps one source column to the portable vocabulary: by its own
+    database's rules where it has its own names, then by those the
+    information_schema databases share.
+    """
 
     name = column.dataType.lower().strip()
     if sourceType == DatabaseType.POSTGRESQL and name.endswith('[]'):
@@ -97,97 +105,116 @@ def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> Portable
         base = base[:-len(' unsigned')].strip()
 
     if sourceType == DatabaseType.ORACLE:
-        if base == 'number':
-            # INTEGER is stored as NUMBER with scale 0 and no precision.
-            if column.scale == 0:
-                return _integerForPrecision(column.precision)
-            if column.precision is None:
-                return PortableType('decimal', note='unconstrained NUMBER; mapped to an unbounded decimal')
-            return PortableType('decimal', precision=column.precision, scale=column.scale)
-        if base in ('float', 'binary_double', 'binary_float'):
-            return PortableType('float')
-        if base in ('varchar2', 'nvarchar2', 'varchar'):
-            return _text(column.length)
-        if base in ('char', 'nchar'):
-            return _text(column.length, fixed=True)
-        if base in ('clob', 'nclob', 'long'):
-            return PortableType('text')
-        if base == 'date':
-            return PortableType('timestamp', note='Oracle DATE carries a time of day; mapped to a timestamp')
-        if base.startswith('timestamp'):
-            return PortableType('timestampTz' if 'time zone' in base else 'timestamp')
-        if base in ('blob', 'raw', 'long raw'):
-            return PortableType('binary')
-        return PortableType('text', note='unrecognized Oracle type {}; mapped to text'.format(column.dataType))
-
+        return _oracleType(base, column)
     if sourceType == DatabaseType.SQLITE:
-        # SQLite's own type-affinity rules, in its documented order.
-        upper = base.upper()
-        if 'INT' in upper:
-            # Whatever it is declared as, SQLite stores an integer in up to 8 bytes.
-            return PortableType('bigint') if 'BIG' in upper else PortableType('integer', precision=SQLITE_INTEGER_DIGITS)
-        if 'BOOL' in upper:
-            return PortableType('smallint', note=INTEGER_BOOLEAN_NOTE)
-        if any(word in upper for word in ('CHAR', 'CLOB', 'TEXT')):
-            return _text(column.length, fixed=upper in ('CHAR', 'NCHAR'))
-        if 'BLOB' in upper or not upper:
-            return PortableType('binary') if upper else PortableType('text', note='no declared type; mapped to text')
-        if any(word in upper for word in ('REAL', 'FLOA', 'DOUB')):
-            return PortableType('float')
-        if 'DATETIME' in upper or 'TIMESTAMP' in upper:
-            return PortableType('timestamp')
-        if 'DATE' in upper:
-            return PortableType('date')
-        if 'TIME' in upper:
-            return PortableType('time')
-        if any(word in upper for word in ('DEC', 'NUM')):
-            return PortableType('decimal', precision=column.precision, scale=column.scale)
-        return PortableType('text', note='unrecognized SQLite type {}; mapped to text'.format(column.dataType))
-
+        return _sqliteType(base, column)
     if sourceType == DatabaseType.DUCKDB:
-        # DuckDB's own names; the ones it shares with PostgreSQL fall through
-        # to the table below. Nested types have no counterpart elsewhere.
-        if base == 'boolean':
-            return PortableType('boolean')
-        if base == 'utinyint':
-            return PortableType('smallint')
-        if base == 'usmallint':
-            return PortableType('integer')
-        if base == 'uinteger':
-            return PortableType('bigint')
-        if base in ('ubigint', 'hugeint', 'uhugeint'):
-            # HUGEINT's range runs to 39 digits, one past what DECIMAL holds on
-            # DuckDB, Oracle and SQL Server; a target clamps it, and says so.
-            digits = {'ubigint': UNSIGNED_BIGINT_DIGITS, 'hugeint': 39, 'uhugeint': 39}[base]
-            return PortableType('decimal', precision=digits, scale=0,
-                                note='DuckDB {} has no integer counterpart; mapped to a decimal of {} digits'.format(base.upper(), digits))
-        if base in ('timestamp_s', 'timestamp_ms', 'timestamp_ns', 'datetime'):
-            return PortableType('timestamp')
-        if base.endswith(']') or base.startswith(('struct', 'map', 'union', 'list')):
-            return PortableType('json', note='DuckDB {} has no counterpart; mapped to JSON'.format(column.dataType))
-        if base == 'interval':
-            return PortableType('text', note='DuckDB INTERVAL has no portable counterpart; mapped to text')
+        # DuckDB's own names; the ones it shares with PostgreSQL fall through.
+        own = _duckdbType(base, column)
+        if own is not None:
+            return own
 
-    # MySQL, MariaDB, PostgreSQL, SQL Server and DuckDB all report through
-    # information_schema, with names that overlap enough to share one table.
+    return _sharedType(sourceType, base, unsigned, column)
+
+
+def _oracleType(base: str, column: ColumnDefinition) -> PortableType:
+
+    if base == 'number':
+        # INTEGER is stored as NUMBER with scale 0 and no precision.
+        if column.scale == 0:
+            return _integerForPrecision(column.precision)
+        if column.precision is None:
+            return PortableType('decimal', note='unconstrained NUMBER; mapped to an unbounded decimal')
+        return PortableType('decimal', precision=column.precision, scale=column.scale)
+    if base in ('float', 'binary_double', 'binary_float'):
+        return PortableType('float')
+    if base in ('varchar2', 'nvarchar2', 'varchar'):
+        return _text(column.length)
+    if base in ('char', 'nchar'):
+        return _text(column.length, fixed=True)
+    if base in ('clob', 'nclob', 'long'):
+        return PortableType('text')
+    if base == 'date':
+        return PortableType('timestamp', note='Oracle DATE carries a time of day; mapped to a timestamp')
+    if base.startswith('timestamp'):
+        return PortableType('timestampTz' if 'time zone' in base else 'timestamp')
+    if base in ('blob', 'raw', 'long raw'):
+        return PortableType('binary')
+
+    return PortableType('text', note='unrecognized Oracle type {}; mapped to text'.format(column.dataType))
+
+
+def _sqliteType(base: str, column: ColumnDefinition) -> PortableType:
+    """SQLite's own type-affinity rules, in its documented order."""
+
+    upper = base.upper()
+    if 'INT' in upper:
+        # Whatever it is declared as, SQLite stores an integer in up to 8 bytes.
+        return PortableType('bigint') if 'BIG' in upper else PortableType('integer', precision=SQLITE_INTEGER_DIGITS)
+    if 'BOOL' in upper:
+        return PortableType('smallint', note=INTEGER_BOOLEAN_NOTE)
+    if any(word in upper for word in ('CHAR', 'CLOB', 'TEXT')):
+        return _text(column.length, fixed=upper in ('CHAR', 'NCHAR'))
+    if 'BLOB' in upper or not upper:
+        return PortableType('binary') if upper else PortableType('text', note='no declared type; mapped to text')
+    if any(word in upper for word in ('REAL', 'FLOA', 'DOUB')):
+        return PortableType('float')
+    if 'DATETIME' in upper or 'TIMESTAMP' in upper:
+        return PortableType('timestamp')
+    if 'DATE' in upper:
+        return PortableType('date')
+    if 'TIME' in upper:
+        return PortableType('time')
+    if any(word in upper for word in ('DEC', 'NUM')):
+        return PortableType('decimal', precision=column.precision, scale=column.scale)
+
+    return PortableType('text', note='unrecognized SQLite type {}; mapped to text'.format(column.dataType))
+
+
+def _duckdbType(base: str, column: ColumnDefinition) -> Optional[PortableType]:
+    """DuckDB's own type names, or None for one it shares with PostgreSQL.
+    Nested types have no counterpart elsewhere.
+    """
+
+    if base == 'boolean':
+        return PortableType('boolean')
+    if base in _DUCKDB_UNSIGNED:
+        return PortableType(_DUCKDB_UNSIGNED[base])
+    if base in ('ubigint', 'hugeint', 'uhugeint'):
+        # HUGEINT's range runs to 39 digits, one past what DECIMAL holds on
+        # DuckDB, Oracle and SQL Server; a target clamps it, and says so.
+        digits = UNSIGNED_BIGINT_DIGITS if base == 'ubigint' else 39
+        return PortableType('decimal', precision=digits, scale=0,
+                            note='DuckDB {} has no integer counterpart; mapped to a decimal of {} digits'.format(base.upper(), digits))
+    if base in ('timestamp_s', 'timestamp_ms', 'timestamp_ns', 'datetime'):
+        return PortableType('timestamp')
+    if base.endswith(']') or base.startswith(('struct', 'map', 'union', 'list')):
+        return PortableType('json', note='DuckDB {} has no counterpart; mapped to JSON'.format(column.dataType))
+    if base == 'interval':
+        return PortableType('text', note='DuckDB INTERVAL has no portable counterpart; mapped to text')
+
+    return None
+
+
+def _sharedType(sourceType: DatabaseType, base: str, unsigned: bool, column: ColumnDefinition) -> PortableType:
+    """MySQL, MariaDB, PostgreSQL, SQL Server and DuckDB all report through
+    information_schema, with names that overlap enough to share one table:
+    _SHARED_KINDS for the names that say all there is, and the cases below
+    for those that need the column's size or the database.
+    """
+
     if unsigned and base in _UNSIGNED:
         # MySQL's unsigned integers run past the signed type of the same name
         # -- a SMALLINT UNSIGNED to 65535, an INT UNSIGNED to 4294967295 -- so
         # each takes the next type up, and BIGINT UNSIGNED, which no target's
         # integer holds, a decimal.
         return _UNSIGNED[base]
-    if base in ('tinyint', 'smallint', 'int2'):
-        return PortableType('smallint')
-    if base in ('int', 'integer', 'mediumint', 'int4', 'serial'):
-        return PortableType('integer')
-    if base in ('bigint', 'int8', 'bigserial'):
-        return PortableType('bigint')
-    if base in ('decimal', 'numeric', 'money', 'smallmoney'):
-        if base in ('money', 'smallmoney'):
-            return PortableType('decimal', precision=19, scale=4)
+    if base in _SHARED_KINDS:
+        return PortableType(_SHARED_KINDS[base])
+    if base in ('money', 'smallmoney'):
+        return PortableType('decimal', precision=19, scale=4)
+    if base in ('decimal', 'numeric'):
         return PortableType('decimal', precision=column.precision, scale=column.scale)
-    if base in ('float', 'double', 'double precision', 'real', 'float4', 'float8'):
-        return PortableType('float')
     # Only these two drivers hand back real booleans. MySQL's BOOLEAN is a
     # TINYINT and its BIT(n) a bit string, and both arrive as integers, which
     # PostgreSQL would refuse to load into a BOOLEAN column.
@@ -204,22 +231,28 @@ def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> Portable
         # characters, and the type is unbounded for any practical purpose.
         note = 'MySQL {} values; mapped to text'.format(base.upper()) if base in ('enum', 'set') else None
         return PortableType('text', note=note)
-    if base == 'date':
-        return PortableType('date')
-    if base in ('datetime', 'datetime2', 'smalldatetime', 'timestamp', 'timestamp without time zone'):
-        return PortableType('timestamp')
-    if base in ('datetimeoffset', 'timestamp with time zone', 'timestamptz'):
-        return PortableType('timestampTz')
-    if base in ('time', 'time without time zone'):
-        return PortableType('time')
-    if base in ('binary', 'varbinary', 'blob', 'tinyblob', 'mediumblob', 'longblob', 'bytea', 'image'):
-        return PortableType('binary')
-    if base in ('uuid', 'uniqueidentifier'):
-        return PortableType('uuid')
-    if base in ('json', 'jsonb'):
-        return PortableType('json')
 
     return PortableType('text', note='unrecognized type {}; mapped to text'.format(column.dataType))
+
+
+# The information_schema names whose kind is all there is to say of them, for
+# _sharedType. The groups don't overlap, so the order is only for reading.
+_SHARED_KINDS = {name: kind for names, kind in (
+    (('tinyint', 'smallint', 'int2'), 'smallint'),
+    (('int', 'integer', 'mediumint', 'int4', 'serial'), 'integer'),
+    (('bigint', 'int8', 'bigserial'), 'bigint'),
+    (('float', 'double', 'double precision', 'real', 'float4', 'float8'), 'float'),
+    (('date',), 'date'),
+    (('datetime', 'datetime2', 'smalldatetime', 'timestamp', 'timestamp without time zone'), 'timestamp'),
+    (('datetimeoffset', 'timestamp with time zone', 'timestamptz'), 'timestampTz'),
+    (('time', 'time without time zone'), 'time'),
+    (('binary', 'varbinary', 'blob', 'tinyblob', 'mediumblob', 'longblob', 'bytea', 'image'), 'binary'),
+    (('uuid', 'uniqueidentifier'), 'uuid'),
+    (('json', 'jsonb'), 'json'),
+    ) for name in names}
+
+# DuckDB's unsigned integers that the next signed type up holds.
+_DUCKDB_UNSIGNED = {'utinyint': 'smallint', 'usmallint': 'integer', 'uinteger': 'bigint'}
 
 
 # Where a key column can't be an unbounded type -- MySQL can't index TEXT,
@@ -427,7 +460,8 @@ def readTable(database: Any, table: str, foreignKeys: Sequence[ForeignKey]) -> T
         raise SchemaError('table {} was not found in the source database'.format(table))
 
     return TableDefinition(name=table, columns=columns, primaryKey=database.getPrimaryColumnNames(table),
-                           foreignKeys=[foreignKey for foreignKey in foreignKeys if tableKey(foreignKey.table) == tableKey(table)])
+                           foreignKeys=[foreignKey for foreignKey in foreignKeys if tableKey(foreignKey.table) == tableKey(table)],
+                           indexes=database.getIndexes(table))
 
 
 def orderParentsFirst(tables: Iterable[str], foreignKeys: Sequence[ForeignKey]) -> List[str]:
@@ -482,8 +516,11 @@ def createStatements(sourceType: DatabaseType, targetType: DatabaseType, tables:
     for name in order:
         table = byName[tableKey(name)]
         if not stagesOnly:
-            statements.append(_createTable(sourceType, targetType, table, table.name, includeForeignKeys, names,
-                                           unique.get(tableKey(name), []), taken))
+            created = _createTable(sourceType, targetType, table, table.name, includeForeignKeys, names, unique.get(tableKey(name), []), taken)
+            if table.indexes and targetType == DatabaseType.DUCKDB:
+                created.notes.append('{} index(es) left out: DuckDB will not swap a table that has one'.format(len(table.indexes)))
+            statements.append(created)
+            statements.extend(_createIndexes(sourceType, targetType, table, unique.get(tableKey(name), []), taken))
         if stageSuffix:
             # No foreign keys, so none of the unique constraints they need either.
             statements.append(_createTable(sourceType, targetType, table, table.name + stageSuffix, False, names, (), taken))
@@ -584,6 +621,55 @@ def _createTable(sourceType: DatabaseType, targetType: DatabaseType, table: Tabl
     return Statement(table=name, sql=sql, notes=notes)
 
 
+# The column types each target refuses in an index: large objects, and text
+# or binary without a length.
+_UNINDEXABLE = {
+    DatabaseType.MYSQL: re.compile(r'TEXT|BLOB|JSON', re.IGNORECASE),
+    DatabaseType.MARIADB: re.compile(r'TEXT|BLOB|JSON', re.IGNORECASE),
+    DatabaseType.ORACLE: re.compile(r'\b[NB]?CLOB\b|\bBLOB\b|\bLONG\b', re.IGNORECASE),
+    DatabaseType.MSSQL: re.compile(r'\(MAX\)|\bN?TEXT\b|\bIMAGE\b|\bXML\b', re.IGNORECASE),
+    }
+
+
+def _createIndexes(sourceType: DatabaseType, targetType: DatabaseType, table: TableDefinition, unique: Sequence[Tuple[str, ...]],
+                   taken: Set[str]) -> List[Statement]:
+    """CREATE INDEX for each of the source table's plain indexes, so a copy
+    is queried as production is: without them, anything tested against it
+    ran on full scans. One over the same columns as the primary key or a
+    unique constraint is left out, and the stage tables get none, since a
+    swap gives its stage the target's. DuckDB gets none at all: it won't
+    swap a table that has an index.
+    """
+
+    if not table.indexes or targetType == DatabaseType.DUCKDB:
+        return []
+
+    def columnName(name: str) -> str:
+        return quoteIdentifier(targetType, name) if sourceType == targetType else quoteFolded(targetType, name)
+
+    covered = {tuple(column.upper() for column in table.primaryKey)} | {tuple(column.upper() for column in group) for group in unique}
+    definitions = {column.name.upper(): column for column in table.columns}
+    statements = []
+    for name, columns in table.indexes:
+        if tuple(column.upper() for column in columns) in covered:
+            continue
+        covered.add(tuple(column.upper() for column in columns))
+        unindexable = [column for column in columns if column.upper() in definitions and _UNINDEXABLE.get(targetType) is not None
+                       and _UNINDEXABLE[targetType].search(renderType(targetType, portableType(sourceType, definitions[column.upper()]), False)[0])]
+        if unindexable:
+            # A PostgreSQL text column is a LONGTEXT, CLOB or NVARCHAR(MAX)
+            # elsewhere, which none of those index; left out with a note
+            # rather than stopping --apply with half the tables made.
+            statements.append(Statement(table=table.name, sql='', notes=['index {} left out: {} is a type {} cannot index'.format(
+                name, ', '.join(unindexable), targetType.value)], isIndex=True))
+            continue
+        statements.append(Statement(table=table.name, sql='CREATE INDEX {} ON {} ({})'.format(
+            _constraintName(targetType, name, taken), quoteFoldedTable(targetType, table.name), ', '.join(columnName(column) for column in columns)),
+            notes=[], isIndex=True))
+
+    return statements
+
+
 def _constraintName(targetType: DatabaseType, name: str, taken: Set[str]) -> str:
     """Source constraint names, with anything outside [A-Za-z0-9_] replaced and
     cut to 63 characters, the shortest limit among the dialects.
@@ -620,7 +706,8 @@ def renderScript(statements: Sequence[Statement], heading: Sequence[str]) -> str
 
     for statement in statements:
         comments = ''.join('-- {}\n'.format(note) for note in statement.notes)
-        parts.append('{}{};'.format(comments, statement.sql))
+        # An index left out is its note alone.
+        parts.append('{}{};'.format(comments, statement.sql) if statement.sql else comments.rstrip('\n'))
 
     return '\n\n'.join(parts) + '\n'
 

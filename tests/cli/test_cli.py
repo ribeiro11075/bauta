@@ -685,7 +685,7 @@ def test_schema_prints_ddl_for_the_target(schemaWorkspace, capsys):
 
 def test_schema_all_tables_creates_every_table_parents_first(schemaWorkspace, capsys):
     assert main(['schema', '--quiet', '--connection', 'demo', '--target', 'copy', '--all-tables', '--apply']) == EXIT_SUCCESS
-    assert '4 table(s) created, 0 already existed' in capsys.readouterr().out
+    assert '4 table(s) created, with 0 index(es); 0 already existed' in capsys.readouterr().out
 
     copy = sqlite3.connect(str(schemaWorkspace / 'copy.db'))
     try:
@@ -714,7 +714,7 @@ def test_schema_apply_creates_missing_tables_and_leaves_existing_ones(schemaWork
     copy.close()
 
     assert main(['schema', '--quiet', '--connection', 'demo', '--target', 'copy', '--table', 'customers', '--related', '--apply']) == EXIT_SUCCESS
-    assert '1 table(s) created, 1 already existed' in capsys.readouterr().out
+    assert '1 table(s) created, with 0 index(es); 1 already existed' in capsys.readouterr().out
 
     copy = sqlite3.connect(str(schemaWorkspace / 'copy.db'))
     try:
@@ -1907,3 +1907,48 @@ def test_a_run_of_every_job_still_replaces_the_manifest_file(maskedWorkspace):
     manifest = json.loads((maskedWorkspace / 'manifest.json').read_text())
     assert [entry['job'] for entry in manifest['jobs']] == ['maskRows'] and 'generatedAt' not in manifest['jobs'][0]
     assert not list(maskedWorkspace.glob('.manifest.json.*.tmp'))
+
+
+def test_audit_offline_says_a_renamed_column_passes_and_to_gate_with_connect(schemaWorkspace, caplog):
+    """Offline, `email AS contact` with `contact: keep` passes, which only
+    sampling catches, and nothing said so.
+    """
+    import logging
+
+    (schemaWorkspace / 'configuration' / 'jobs.yaml').write_text("""jobs:
+  copyCustomers:
+    sourceConnection: demo
+    sourceQuery: SELECT id, email AS contact FROM customers
+    targetConnection: copy
+    targetTableFinal: customers
+    insertStrategy: upsert
+    masking:
+      key: an-audit-cli-masking-key
+      columns: {id: keep, contact: keep}
+""")
+
+    with caplog.at_level(logging.INFO, logger='bauta'):
+        main(['audit'])
+        assert 'Gate CI with audit --connect --strict' in caplog.text
+        caplog.clear()
+        main(['audit', '--connect'])
+        assert 'Gate CI with audit --connect' not in caplog.text
+
+
+def test_run_state_in_a_read_only_connection_is_refused_before_anything_runs(tmp_path, capsys):
+    """It failed only once the run tried to keep its state, as `no such
+    table: bauta_memory`. Reading history from one still works.
+    """
+    for name in ('src.db', 'tgt.db'):
+        with sqlite3.connect(tmp_path / name) as connection:
+            connection.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
+        connection.close()
+    configuration = tmp_path / 'configuration'
+    configuration.mkdir()
+    (configuration / 'connections.yaml').write_text('src: {type: sqlite, path: ../src.db, readOnly: true}\ntgt: {type: sqlite, path: ../tgt.db}\n')
+    (configuration / 'jobs.yaml').write_text('memory: {connection: src}\njobs:\n  j: {sourceConnection: src, targetConnection: tgt, '
+                                             'sourceQuery: SELECT id FROM t, targetTableFinal: t, insertStrategy: upsert, unmasked: true}\n')
+
+    assert main(['validate', '--config', str(configuration), '--quiet']) == EXIT_BAD_CONFIGURATION
+    assert main(['run', '--config', str(configuration), '--quiet']) == EXIT_BAD_CONFIGURATION
+    assert 'which is readOnly' in capsys.readouterr().err

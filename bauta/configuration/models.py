@@ -11,6 +11,7 @@ from typing import Annotated, Any, Callable, Dict, List, Literal, Mapping, Optio
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 
+from .sqltext import codeOnly
 from ..masking import changesValues, policyFor, validateColumnPolicy, validateKey, warnIfWeakKey
 from .connections import (_CONNECTION_ADAPTER, CONNECTION_TYPES, anchorPaths, CleanedListMapping, CleanedMapping, CleanedStringList, ConnectionConfig,
                           DuckDBConnection, FilesConnection, IcebergConnection, _listed)
@@ -47,6 +48,13 @@ def _withoutAnchorKeys(value: Any) -> Any:
 
 
 WATERMARK_PLACEHOLDER = re.compile(r'\{\{\s*watermark\s*\}\}')
+
+def watermarkPlaceholders(query: str) -> int:
+    """How many {{ watermark }} placeholders `query` has outside its comments,
+    string literals and quoted names: the ones bound.
+    """
+
+    return len(WATERMARK_PLACEHOLDER.findall(codeOnly(query, identifiers=True)))
 
 
 class InsertStrategy(str, Enum):
@@ -344,7 +352,9 @@ class DataJobConfig(BaseJobConfig):
         watermarkInitial is required: binding None would match no rows, forever.
         """
 
-        hasPlaceholder = bool(WATERMARK_PLACEHOLDER.search(self.sourceQuery))
+        # Outside comments and literals: one only in a comment is bound to
+        # nothing, so the job would read every row on every run.
+        hasPlaceholder = watermarkPlaceholders(self.sourceQuery) > 0
 
         if self.watermarkColumn and not hasPlaceholder:
             raise ValueError('watermarkColumn is set but sourceQuery has no {{ watermark }} placeholder to bind it into')
@@ -392,6 +402,75 @@ class DataJobConfig(BaseJobConfig):
                              'target with only the rows that changed'.format(self.insertStrategy.value))
 
         return self
+
+
+def _requiredMaskingProblems(job: DataJobConfig, connections: Mapping[str, ConnectionConfig]) -> List[str]:
+    """A job without a masking policy, or one whose defaultStrategy copies
+    what it doesn't name, reading or writing a connection with requireMasking.
+    """
+
+    if job.masking is not None and not _passesUnnamedColumns(job.masking):
+        return []
+
+    problems = []
+    for setting in ('sourceConnection', 'targetConnection'):
+        alias = getattr(job, setting)
+        connection = connections.get(alias)
+        if connection is None or not connection.requireMasking:
+            continue
+        if job.masking is None:
+            problems.append('{} "{}" is configured with requireMasking, and this job has no masking policy. Add one naming every column '
+                            'sourceQuery returns -- `keep` for the ones that need no masking'.format(setting, alias))
+        else:
+            # Every column named is a decision someone made; a passthrough
+            # default copies the ones nobody did, a column production adds
+            # later included.
+            problems.append('{} "{}" is configured with requireMasking, and this job\'s defaultStrategy copies every column its policy '
+                            'doesn\'t name as it is. Name each column -- `keep` for the ones that need no masking -- or give '
+                            'defaultStrategy one that masks'.format(setting, alias))
+
+    return problems
+
+
+def _incrementalShuffleProblems(job: DataJobConfig, connections: Mapping[str, ConnectionConfig]) -> List[str]:
+    """`shuffle` on an incremental job reading or writing a connection with
+    requireMasking. shuffle moves values between the rows of one chunk, and
+    an incremental run's chunks are what changed since the last: often a row
+    or two, which keep their own values, or swap them between two people.
+    """
+
+    if not job.watermarkColumn or job.masking is None:
+        return []
+
+    shuffled = sorted(column for column, policy in job.masking.columns.items() if policy.get('strategy') == 'shuffle')
+    if job.masking.defaultStrategy and job.masking.defaultStrategy.get('strategy') == 'shuffle':
+        shuffled.append('its defaultStrategy')
+    if not shuffled:
+        return []
+
+    return ['{} "{}" is configured with requireMasking, and this incremental job shuffles {}: its chunks hold only the rows that changed, '
+            'often one, whose value shuffle leaves where it is. Mask with a strategy that replaces each value'.format(
+                setting, getattr(job, setting), ', '.join(shuffled))
+            for setting in ('sourceConnection', 'targetConnection')
+            if connections.get(getattr(job, setting)) is not None and connections[getattr(job, setting)].requireMasking]
+
+
+def _connectionProblems(job: DataJobConfig, connections: Mapping[str, ConnectionConfig]) -> List[str]:
+    """What the job's connections, as configured, rule out: writing to a
+    readOnly one, reading from files or Iceberg, settings its target doesn't
+    take, and more partitions than its connections allow jobs.
+    """
+
+    source, target = connections.get(job.sourceConnection), connections.get(job.targetConnection)
+    problems = []
+    if getattr(target, 'readOnly', False):
+        problems.append('targetConnection "{}" is readOnly, so nothing may be written to it'.format(job.targetConnection))
+    if isLake(source):
+        problems.append('sourceConnection "{}" is {}, which can only be written to'.format(job.sourceConnection, _TARGET_NAMES[targetKind(source)]))
+    problems.extend('targetConnection "{}" {}'.format(job.targetConnection, problem) for problem in ([] if target is None else targetProblems(job, target)))
+    problems.extend(partitionLimitProblems(job, connections))
+
+    return problems
 
 
 def filePathProblem(path: str) -> Optional[str]:
@@ -894,42 +973,16 @@ class Configuration:
         problems: List[str] = []
 
         for jobName, job in jobs.items():
-
-            if connections is not None and isinstance(job, DataJobConfig) and (job.masking is None or _passesUnnamedColumns(job.masking)):
-                for setting in ('sourceConnection', 'targetConnection'):
-                    alias = getattr(job, setting)
-                    connection = connections.get(alias)
-                    if connection is not None and connection.requireMasking:
-                        if job.masking is None:
-                            problems.append('{}: {} "{}" is configured with requireMasking, and this job has no masking policy. '
-                                            'Add one naming every column sourceQuery returns -- `keep` for the ones that need no '
-                                            'masking'.format(jobName, setting, alias))
-                        else:
-                            # Every column named is a decision someone made;
-                            # a passthrough default copies the ones nobody did,
-                            # a column production adds later included.
-                            problems.append('{}: {} "{}" is configured with requireMasking, and this job\'s defaultStrategy copies '
-                                            'every column its policy doesn\'t name as it is. Name each column -- `keep` for the ones '
-                                            'that need no masking -- or give defaultStrategy one that masks'.format(jobName, setting, alias))
-
-            for predecessor in job.predecessors:
-                if predecessor not in jobs:
-                    problems.append(f'{jobName}: predecessor "{predecessor}" is not a known job')
-
-            if connections is not None and isinstance(job, DataJobConfig):
-                source, target = connections.get(job.sourceConnection), connections.get(job.targetConnection)
-                if isLake(source):
-                    problems.append('{}: sourceConnection "{}" is {}, which can only be written to'.format(
-                        jobName, job.sourceConnection, _TARGET_NAMES[targetKind(source)]))
-                for problem in ([] if target is None else targetProblems(job, target)):
-                    problems.append('{}: targetConnection "{}" {}'.format(jobName, job.targetConnection, problem))
-                problems.extend('{}: {}'.format(jobName, problem) for problem in partitionLimitProblems(job, connections))
-
-            if connectionAliases is not None and isinstance(job, DataJobConfig):
-                if job.sourceConnection not in connectionAliases:
-                    problems.append(f'{jobName}: sourceConnection "{job.sourceConnection}" is not a known connection alias')
-                if job.targetConnection not in connectionAliases:
-                    problems.append(f'{jobName}: targetConnection "{job.targetConnection}" is not a known connection alias')
+            found: List[str] = []
+            if isinstance(job, DataJobConfig) and connections is not None:
+                found += _requiredMaskingProblems(job, connections) + _incrementalShuffleProblems(job, connections)
+            found += ['predecessor "{}" is not a known job'.format(predecessor) for predecessor in job.predecessors if predecessor not in jobs]
+            if isinstance(job, DataJobConfig) and connections is not None:
+                found += _connectionProblems(job, connections)
+            if isinstance(job, DataJobConfig) and connectionAliases is not None:
+                found += ['{} "{}" is not a known connection alias'.format(setting, getattr(job, setting))
+                          for setting in ('sourceConnection', 'targetConnection') if getattr(job, setting) not in connectionAliases]
+            problems.extend('{}: {}'.format(jobName, problem) for problem in found)
 
         cycle = findCycle({jobName: job.predecessors for jobName, job in jobs.items()})
         if cycle:

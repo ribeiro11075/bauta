@@ -65,7 +65,30 @@ def test_mysql_upsert_of_a_key_only_table_does_not_use_insert_ignore():
     query = MySQLDialect().upsertQuery('links', ['a', 'b'], ['a', 'b'], [])
 
     assert 'IGNORE' not in query
-    assert query.endswith('ON DUPLICATE KEY UPDATE links.a=links.a')
+    assert query.endswith('ON DUPLICATE KEY UPDATE links.a = IF(links.a <=> VALUES(a) AND links.b <=> VALUES(b), links.a, '
+                          '(SELECT links.a UNION ALL SELECT links.a))')
+
+
+def test_mysql_upsert_refuses_a_row_matched_by_another_unique_key_before_assigning_anything():
+    """ON DUPLICATE KEY fires on any unique key: a new row (id 2) whose email
+    row 1 already had overwrote row 1's name with its own and was never
+    written. The guard comes first, keeping the key where the matched row's
+    is the incoming one's and failing the statement where it is not.
+    """
+    dialect = MySQLDialect()
+    query = dialect.upsertQuery('people', ['id', 'email', 'name'], ['id'], ['email', 'name'])
+    update = query.split('ON DUPLICATE KEY UPDATE ', 1)[1]
+
+    assert update.startswith('people.id = IF(people.id <=> VALUES(id), people.id, (SELECT people.id UNION ALL SELECT people.id)), ')
+    assert update.endswith('email=VALUES(email), name=VALUES(name)')
+    assert dialect.upsertFromStageQuery('people', 'stage', ['id', 'email', 'name'], ['id'], ['email', 'name']).endswith(update)
+
+    class Refused(Exception):
+        errno = 1242
+
+    assert dialect.isUniqueKeyClash(Refused('1242 (21000): Subquery returns more than 1 row'))
+    assert not dialect.isUniqueKeyClash(Refused('something else'))
+    assert not PostgreSQLDialect().isUniqueKeyClash(Refused('1242 (21000): Subquery returns more than 1 row'))
 
 
 @pytest.mark.parametrize('dialect', [PostgreSQLDialect(), OracleDialect(), SQLiteDialect(), DuckDBDialect()])
@@ -209,7 +232,8 @@ def test_upsert_of_a_key_only_table_is_valid_sql(dialect):
 
     assert not query.rstrip().endswith(('SET', 'UPDATE'))
     assert 'DO UPDATE SET ' not in query
-    assert 'ON DUPLICATE KEY UPDATE ' not in query or query.endswith('ON DUPLICATE KEY UPDATE t.id=t.id')
+    assert 'ON DUPLICATE KEY UPDATE ' not in query or query.endswith('ON DUPLICATE KEY UPDATE t.id = IF(t.id <=> VALUES(id), t.id, '
+                                                                     '(SELECT t.id UNION ALL SELECT t.id))')
 
 
 @pytest.mark.parametrize('dialect', [
@@ -220,7 +244,8 @@ def test_upsert_from_stage_of_a_key_only_table_is_valid_sql(dialect):
 
     assert not query.rstrip().endswith(('SET', 'UPDATE'))
     assert 'DO UPDATE SET ' not in query
-    assert 'ON DUPLICATE KEY UPDATE ' not in query or query.endswith('ON DUPLICATE KEY UPDATE t.id=t.id')
+    assert 'ON DUPLICATE KEY UPDATE ' not in query or query.endswith('ON DUPLICATE KEY UPDATE t.id = IF(t.id <=> VALUES(id), t.id, '
+                                                                     '(SELECT t.id UNION ALL SELECT t.id))')
 
 
 def test_copy_writes_each_row_through_psycopg():

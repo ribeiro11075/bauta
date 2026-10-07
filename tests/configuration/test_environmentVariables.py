@@ -156,6 +156,25 @@ def test_a_failing_password_command_raises_without_revealing_output(script, mess
         _connection(passwordCommand=[sys.executable, '-c', script]).plainPassword()
 
 
+def test_a_failing_password_command_keeps_its_message_but_not_a_token_it_printed():
+    """stderr was quoted into the error whole, and from there into the log,
+    history and any webhook: a token tool that printed the token before
+    failing put it in all three.
+    """
+    import sys
+    from bauta.configuration import PasswordCommandError
+
+    script = ('import sys; print("hunter2-plain"); sys.stderr.write("ExpiredToken: refreshing eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbm4ifQ.c2lnbmF0dXJl '
+              'with hunter2-plain failed"); sys.exit(1)')
+
+    with pytest.raises(PasswordCommandError) as raised:
+        _connection(passwordCommand=[sys.executable, '-c', script]).plainPassword()
+
+    message = str(raised.value)
+    assert 'ExpiredToken: refreshing <redacted> with <redacted> failed' in message
+    assert 'eyJ' not in message and 'hunter2' not in message
+
+
 def test_a_missing_password_command_raises_a_retryable_error():
     from bauta.configuration import PasswordCommandError
 
@@ -180,3 +199,9 @@ def test_checking_options_never_runs_the_password_command():
     settings = _connection(passwordCommand=['/no/such/command'], options={'sslmode': 'require'})
 
     assert DIALECTS[DatabaseType.POSTGRESQL].connectArguments(settings, resolvePassword=False)['sslmode'] == 'require'
+
+
+def test_a_short_secret_a_failing_command_printed_is_redacted_as_a_word():
+    from bauta.configuration.environment import _withoutSecrets
+
+    assert _withoutSecrets('password abc rejected; abcdef kept', 'abc') == 'password <redacted> rejected; abcdef kept'

@@ -18,7 +18,7 @@ For each table, `discover` reads the schema and samples rows (`--sample`, defaul
         status: {strategy: keep}  # no sign of personal data -- review
 ```
 
-- **Names first, then values.** Column names are matched against [rules](#your-own-rules-discoveryyaml) for common patterns (email, phone, SSN, card, name, address, birth date and so on). A name-based suggestion is dropped if it doesn't fit the column's type, so `place_of_birth` isn't treated as a date. Sampled values are then checked for emails, national identifiers, card numbers (with a Luhn check), IP addresses, UUIDs, dates, phone numbers and long free text.
+- **Names first, then values.** Column names are matched against [rules](#your-own-rules-discoveryyaml) for common patterns (email, phone, SSN, card, name, address, birth date and so on). A name-based suggestion is dropped if it doesn't fit the column's type, so `place_of_birth` isn't treated as a date. Sampled values are then checked for emails, national identifiers, card numbers (with a Luhn check), IPv4 and IPv6 addresses, MAC addresses, UUIDs, dates, phone numbers and long free text.
 - **Inside JSON documents.** A JSON column -- a document PostgreSQL or Oracle returns as one, or text MySQL and DuckDB return that parses as an object or array -- is read value by value: each key against the name rules and each key path's values against the value rules, so `{"contact": {"alt_email": ...}}` is found. Anything found is proposed as a [`json`](../reference/strategies.md#json) policy naming each path, with the rest of the document redacted: `{strategy: json, fields: {contact.alt_email: {strategy: email}}}`. An IP address PostgreSQL returns as `inet` is read as its text, so an `ip_address` column is found as a text one would be.
 - **Keys are decided together.** Primary keys, the columns that foreign keys reference, and the foreign-key columns themselves get matching domains, so both ends of a relationship agree. Numeric keys are proposed as `keep`, since surrogate ids reveal little, and text keys as `key`. **`--mask-keys` masks the numeric ones too**, in the domain each relationship shares:
 
@@ -105,7 +105,8 @@ exclude: [ip]                           # built-in rules to leave out
 | `firstName`, `lastName`, `fullName` | people's names |
 | `userName` | user names and logins |
 | `company` | companies and employers |
-| `ip` | IP addresses, by name, and IPv4 by value |
+| `ip` | IP addresses, by name, and IPv4 and IPv6 by value, proposed as [`ip`](../reference/strategies.md#ip), which keeps each an address; a column named for one whose values aren't all addresses gets `hash` |
+| `mac` | MAC addresses, by name and by value (`08:00:2b:01:02:03`, `08-00-…`, `0800.2b01.0203`), proposed as `key` with `charset: hex`: a device identifier, kept valid and one-to-one |
 | `streetAddress`, `city`, `postalCode` | addresses |
 | `birthDate` | dates of birth |
 | `compensation` | salaries, income and bonuses |

@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import decimal
+import math
 from typing import Any, Dict, List, Optional, Sequence
 
-from ..driver import Cursor
+from ..driver import Connection, Cursor
 from ...configuration import DatabaseConfig, DatabaseType, MSSQLConnection
 from .base import DatabaseDialect, settingsOf, _mergeUpdateInsertClause
 from .names import bareName, unqualifiedName
@@ -88,6 +89,16 @@ class MSSQLDialect(DatabaseDialect):
                 "FROM information_schema.columns WHERE table_schema = COALESCE({}, SCHEMA_NAME()) AND table_name = {} ORDER BY ordinal_position")
 
 
+    def limitStatements(self, connection: Connection, cursor: Cursor, seconds: float) -> None:
+        """By the optimizer's estimate rather than the clock: a query
+        estimated to cost more than `seconds` is refused before it starts,
+        and one estimated below runs to its end. pymssql's own timeout left
+        the session hung rather than ending the query.
+        """
+
+        cursor.execute('SET QUERY_GOVERNOR_COST_LIMIT {:d}'.format(max(1, math.ceil(seconds))))
+
+
     def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
         """Needs VIEW SERVER STATE; without it the query fails, and the answer
         is None.
@@ -107,19 +118,51 @@ class MSSQLDialect(DatabaseDialect):
                 "ORDER BY k.ordinal_position")
 
 
+    def checkConstraintsQuery(self) -> Optional[str]:
+
+        return ("SELECT cc.definition FROM sys.check_constraints cc JOIN sys.tables t ON t.object_id = cc.parent_object_id "
+                "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                "WHERE cc.is_disabled = 0 AND s.name = COALESCE({}, SCHEMA_NAME()) AND t.name = {} ORDER BY cc.name")
+
+
+    def plainIndexesQuery(self) -> Optional[str]:
+        """Non-clustered row-store indexes: a table has one clustered index,
+        the stage its own, and a columnstore or XML index is no column list.
+        """
+
+        return self._indexesQuery(unique=False)
+
+
+    def tableGrantsQuery(self) -> Optional[str]:
+
+        return ("SELECT p.permission_name, pr.name, CASE WHEN p.state = 'W' THEN 1 ELSE 0 END FROM sys.database_permissions p "
+                "JOIN sys.database_principals pr ON pr.principal_id = p.grantee_principal_id "
+                "JOIN sys.tables t ON t.object_id = p.major_id JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                "WHERE p.class = 1 AND p.minor_id = 0 AND p.state IN ('G', 'W') "
+                "AND s.name = COALESCE({}, SCHEMA_NAME()) AND t.name = {} ORDER BY pr.name, p.permission_name")
+
+
     def uniqueKeysQuery(self) -> str:
         """Unique indexes, which a unique constraint is enforced by, without a
         filter and only their key columns, not those they INCLUDE. A computed
         column comes back NULL, since a stage table has none to match.
         """
 
+        return self._indexesQuery(unique=True)
+
+
+    @staticmethod
+    def _indexesQuery(unique: bool) -> str:
+        """One table's unique or plain indexes, the primary key's aside, as
+        rows of (name, column)."""
+
         return ("SELECT i.name, CASE WHEN c.is_computed = 0 THEN c.name END FROM sys.indexes i "
                 "JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id "
                 "JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id "
                 "JOIN sys.tables t ON t.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = t.schema_id "
-                "WHERE i.is_unique = 1 AND i.is_primary_key = 0 AND i.has_filter = 0 AND i.is_disabled = 0 AND ic.is_included_column = 0 "
-                "AND s.name = COALESCE({}, SCHEMA_NAME()) AND t.name = {} "
-                "ORDER BY i.name, ic.key_ordinal")
+                "WHERE i.is_unique = {} AND i.is_primary_key = 0 {}AND i.has_filter = 0 AND i.is_disabled = 0 AND ic.is_included_column = 0 "
+                "AND s.name = COALESCE({{}}, SCHEMA_NAME()) AND t.name = {{}} "
+                "ORDER BY i.name, ic.key_ordinal").format(1 if unique else 0, '' if unique else 'AND i.type = 2 AND i.is_hypothetical = 0 ')
 
 
     # How sys.columns' type, size and collation are written back into a

@@ -527,3 +527,55 @@ def test_a_postgresql_array_keeps_its_type_between_postgresql_databases_and_is_t
     assert '"tags" character varying(20)[]' in same.sql and '"scores" integer[]' in same.sql and not same.notes
     assert '[tags] NVARCHAR(MAX)' in other.sql
     assert 'tags: PostgreSQL array character varying(20)[]; mapped to text' in other.notes
+
+
+def _indexed():
+    return TableDefinition(name='orders', columns=[column('integer', name='id', nullable=False), column('integer', name='customer_id'),
+                                                   column('date', name='placed'), column('text', name='notes')],
+                           primaryKey=['id'], foreignKeys=[],
+                           indexes=[('orders_customer', ('customer_id', 'placed')), ('orders_id', ('id',)), ('orders_notes', ('notes',))])
+
+
+def test_schema_recreates_the_source_tables_plain_indexes():
+    """Only keys were created, so anything tested against the copy ran on
+    full scans. One over the primary key's columns repeats it, and is left out.
+    """
+    statements = createStatements(DatabaseType.POSTGRESQL, DatabaseType.POSTGRESQL, [_indexed()], stageSuffix='_stage')
+
+    indexes = [statement.sql for statement in statements if statement.isIndex]
+    assert indexes == ['CREATE INDEX orders_customer ON "orders" ("customer_id", "placed")', 'CREATE INDEX orders_notes ON "orders" ("notes")']
+    assert not any('orders_stage' in sql for sql in indexes)
+
+
+def test_an_index_on_a_column_the_target_cannot_index_is_left_out_with_a_note():
+    """PostgreSQL's text is LONGTEXT on MySQL, which no index takes: the
+    statement failed, and --apply stopped with half the tables made.
+    """
+    statements = createStatements(DatabaseType.POSTGRESQL, DatabaseType.MYSQL, [_indexed()])
+
+    (left,) = [statement for statement in statements if statement.isIndex and not statement.sql]
+    assert left.notes == ['index orders_notes left out: notes is a type mysql cannot index']
+    assert [statement.sql for statement in statements if statement.isIndex and statement.sql] == [
+        'CREATE INDEX orders_customer ON `orders` (`customer_id`, `placed`)']
+
+
+def test_duckdb_is_given_no_index_since_it_would_not_swap_the_table():
+    statements = createStatements(DatabaseType.POSTGRESQL, DatabaseType.DUCKDB, [_indexed()])
+
+    assert not [statement for statement in statements if statement.isIndex]
+    assert any('left out: DuckDB will not swap' in note for statement in statements for note in statement.notes)
+
+
+def test_schema_reads_sqlite_indexes_and_applies_them_only_to_tables_it_creates(tmp_path):
+    from bauta.generate.schema import readTable
+
+    path = tmp_path / 'source.db'
+    with sqlite3.connect(path) as connection:
+        connection.executescript('CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INT, email TEXT UNIQUE, total INT);'
+                                 'CREATE INDEX orders_customer ON orders (customer_id); CREATE INDEX orders_expr ON orders (total * 2);')
+    connection.close()
+
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(path))) as source:
+        table = readTable(source, 'orders', [])
+
+    assert list(table.indexes) == [('orders_customer', ('customer_id',))]

@@ -239,3 +239,93 @@ def test_your_own_rules_choose_realistic_values_too(tmp_path):
 
     assert {plan.column: plan.source for plan in builtIn} == {'id': 'primary key', 'nome': 'type', 'phone': 'name'}
     assert {plan.column: plan.source for plan in yours} == {'id': 'primary key', 'nome': 'name', 'phone': 'type'}
+
+
+def test_generated_dates_reach_the_end_of_the_current_year(monkeypatch):
+    """The span ended at 2026-12-31, fixed in the code, so from 2027 no
+    generated date was recent.
+    """
+    import datetime as real
+
+    from bauta.generate import synthesize
+
+    class _Date(real.date):
+        @classmethod
+        def today(cls):
+            return cls(2031, 6, 1)
+
+    monkeypatch.setattr(synthesize.datetime, 'date', _Date)
+
+    assert synthesize._EPOCH + real.timedelta(days=synthesize._recentDays()) == real.date(2031, 12, 31)
+
+
+def test_synthesized_rows_keep_to_the_tables_check_constraints(tmp_path, caplog):
+    """CHECK constraints were never read, so a status column got words and an
+    amount any number, and the database refused the first row breaking one.
+    """
+    import logging
+    import sqlite3
+
+    from bauta.configuration import connectionConfig
+    from bauta.database import Database
+    from bauta.generate.synthesize import synthesizeTable
+
+    path = tmp_path / 'checked.db'
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT NOT NULL CHECK (status IN ('open', 'closed')), "
+                           "amount DECIMAL(10,2) CHECK (amount > 0 AND amount < 50), pct INT CHECK (pct BETWEEN 1 AND 5), "
+                           "code TEXT CHECK (length(code) < 500))")
+    connection.close()
+
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(path))) as database, caplog.at_level(logging.WARNING, logger='bauta'):
+        assert synthesizeTable(database, 'orders', 400, nullShare=0.0) == 400
+        statuses, low, high, pcts = database.query('SELECT count(DISTINCT status), min(amount), max(amount), count(DISTINCT pct) FROM orders')[0]
+
+    assert (statuses, pcts) == (2, 5) and 0 < low and high < 50
+    assert 'CHECK (length(code) < 500) is not one synthesize can follow' in caplog.text
+
+
+def test_a_row_refused_by_a_check_it_could_not_follow_says_so(tmp_path):
+    import sqlite3
+
+    from bauta.configuration import connectionConfig
+    from bauta.database import Database
+    from bauta.generate.synthesize import SynthesisError, synthesizeTable
+
+    path = tmp_path / 'checked.db'
+    with sqlite3.connect(path) as connection:
+        connection.execute('CREATE TABLE spans (id INTEGER PRIMARY KEY, a INT NOT NULL, b INT NOT NULL, CHECK (a <= b))')
+    connection.close()
+
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(path))) as database:
+        with pytest.raises(SynthesisError, match='synthesize said it could not follow'):
+            synthesizeTable(database, 'spans', 200)
+
+
+def test_a_profile_shapes_rows_like_the_source_without_copying_anyone(tmp_path):
+    """--profile reads aggregates only: a label rarer than five rows, a column
+    named like personal data and a key are never read.
+    """
+    import sqlite3
+
+    from bauta.configuration import connectionConfig
+    from bauta.database import Database
+    from bauta.generate.synthesize import profileTable
+
+    path = tmp_path / 'source.db'
+    with sqlite3.connect(path) as connection:
+        connection.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT, total INT, email TEXT, note TEXT, reference TEXT)')
+        statuses = ['open'] * 60 + ['closed'] * 36 + ['VIP ANN SMITH'] * 2 + [None] * 2
+        connection.executemany('INSERT INTO orders VALUES (?, ?, ?, ?, ?, ?)',
+                               [(index, status, 100 + index, 'p{}@corp.example'.format(index), 'note {}'.format(index), 'R-{}'.format(index))
+                                for index, status in enumerate(statuses)])
+    connection.close()
+
+    with Database(connectionSettings=connectionConfig(type='sqlite', path=str(path))) as database:
+        profile = profileTable(database, 'orders')
+
+    assert profile['STATUS'].labels == (('open', 60), ('closed', 36)) and profile['STATUS'].nullShare == pytest.approx(0.02)
+    assert (profile['TOTAL'].low, profile['TOTAL'].high) == (100, 199)
+    # Too many values to be labels: none of them read.
+    assert profile['REFERENCE'].labels == ()
+    assert 'EMAIL' not in profile and 'NOTE' not in profile and 'ID' not in profile

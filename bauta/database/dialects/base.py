@@ -12,7 +12,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple, Type,
 
 from ..driver import Connection, Cursor
 from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType
-from .names import catalogName, catalogTableName, unqualifiedName
+from .names import catalogName, catalogTableName, quoteIdentifier, unqualifiedName
 
 
 class ForeignKey(NamedTuple):
@@ -70,25 +70,31 @@ def _groupForeignKeys(rows: Sequence[Sequence[Any]]) -> List[ForeignKey]:
         ]
 
 
-def _uniqueColumnGroups(rows: Sequence[Sequence[Any]]) -> List[Tuple[str, ...]]:
-    """Folds (keyName, column) rows, ordered by position within each key, into
-    each key's columns, leaving out a key with a NULL column -- an
-    expression, or a prefix of a column -- and a column list already seen.
+def _namedColumnGroups(rows: Sequence[Sequence[Any]]) -> List[Tuple[str, Tuple[str, ...]]]:
+    """Folds (name, column) rows of a key or an index, ordered by position
+    within each, into (name, columns), leaving out one with a NULL column --
+    an expression, or a prefix of a column -- and a column list already seen.
     """
 
     grouped: Dict[str, List[Optional[str]]] = {}
     for name, column in rows:
         grouped.setdefault(name, []).append(column)
 
-    groups: List[Tuple[str, ...]] = []
-    for columns in grouped.values():
+    groups: List[Tuple[str, Tuple[str, ...]]] = []
+    for name, columns in grouped.items():
         if any(column is None for column in columns):
             continue
         group = tuple(str(column) for column in columns)
-        if group not in groups:
-            groups.append(group)
+        if group not in [held for _, held in groups]:
+            groups.append((str(name), group))
 
     return groups
+
+
+def _uniqueColumnGroups(rows: Sequence[Sequence[Any]]) -> List[Tuple[str, ...]]:
+    """The column lists of _namedColumnGroups, for keys, whose names don't matter."""
+
+    return [columns for _, columns in _namedColumnGroups(rows)]
 
 
 _TABLE_NAME_PART = r'(?:"(?:[^"]|"")*"|\[[^\]]*\]|`(?:[^`]|``)*`|[^\s.(]+)'
@@ -174,19 +180,13 @@ def _mergeUpdateInsertClause(targetAlias: str, sourceAlias: str, allColumns: Lis
     return 'ON ({}) {}WHEN NOT MATCHED THEN INSERT ({}) VALUES ({})'.format(onClause, whenMatched, insertColumns, insertValues)
 
 
-def _holdsAny(rows: Sequence[Sequence[Any]], kinds: Tuple[type, ...]) -> bool:
-    """Whether any value in `rows` is one of `kinds`, a subclass included.
+def _holdsOnly(rows: Sequence[Sequence[Any]], kinds: Tuple[type, ...]) -> bool:
+    """Whether every value in `rows` is one of `kinds`, a subclass included.
 
     Every chunk of every load is asked this at least once. The distinct types
     are gathered in C and only those few are checked, rather than calling
     isinstance on every value of every row.
     """
-
-    return any(issubclass(kind, kinds) for kind in set(map(type, itertools.chain.from_iterable(rows))))
-
-
-def _holdsOnly(rows: Sequence[Sequence[Any]], kinds: Tuple[type, ...]) -> bool:
-    """Whether every value in `rows` is one of `kinds`; see _holdsAny."""
 
     return all(issubclass(kind, kinds) for kind in set(map(type, itertools.chain.from_iterable(rows))))
 
@@ -296,6 +296,46 @@ class DatabaseDialect(ABC):
         """Release rows left unread by an abandoned stream, so `connection` stays
         usable. Closing the cursor is enough everywhere but MySQL.
         """
+
+
+    def limitStatements(self, connection: Connection, cursor: Cursor, seconds: float) -> None:
+        """Has the server stop any statement on this session that runs past
+        `seconds`; the caller commits. Every server dialect overrides it.
+        """
+
+        raise NotImplementedError('{} has no statement timeout'.format(type(self).__name__))
+
+
+    def readOnlySessionStatement(self) -> Optional[str]:
+        """The statement that makes a session refuse writes on the server, run
+        as a readOnly connection opens; None where there is none (Oracle and
+        SQL Server, which make a transaction read-only, not a session, and
+        DuckDB, which decides as the file opens).
+        """
+
+        return None
+
+
+    # Whether swap() exchanges the tables in one transaction. Where it doesn't
+    # (Oracle, which commits each rename), a process killed between renames
+    # leaves them part-way; see Database.recoverInterruptedSwap.
+    ATOMIC_SWAP = True
+
+
+    def renameStatement(self, fromTable: str, toTable: str) -> str:
+        """Renames one table, both named as statements spell them."""
+
+        return _renameStatement(fromTable, toTable)
+
+
+    def isUniqueKeyClash(self, error: BaseException) -> bool:
+        """Whether an upsert failed because a row matched a different row by
+        a unique key other than the primary key, where this dialect has to
+        detect that itself. Only MySQL and MariaDB do; the others refuse such
+        a row with their own unique-violation error.
+        """
+
+        return False
 
 
     @abstractmethod
@@ -422,6 +462,77 @@ class DatabaseDialect(ABC):
         """
 
         return _uniqueColumnGroups(self._catalog(cursor, self.uniqueKeysQuery(), table))
+
+    def plainIndexesQuery(self) -> Optional[str]:
+        """One table's indexes that are neither its primary key nor unique,
+        over plain columns, as rows of (name, column) ordered by name and
+        position, a column that is an expression or a prefix coming back
+        NULL; or None where none are copied (SQLite, whose index names are
+        the database's, and DuckDB, which won't swap an indexed table).
+        """
+
+        return None
+
+    def plainIndexes(self, cursor: Cursor, table: str) -> List[Tuple[str, Tuple[str, ...]]]:
+        """(name, columns) for each index plainIndexesQuery finds, a column
+        list once, leaving out one over an expression or a prefix.
+        """
+
+        query = self.plainIndexesQuery()
+
+        return [] if query is None else _namedColumnGroups(self._catalog(cursor, query, table))
+
+    def sourceIndexes(self, cursor: Cursor, table: str) -> List[Tuple[str, Tuple[str, ...]]]:
+        """(name, columns) for each plain index `schema` recreates in a copy:
+        plainIndexes, and SQLite's too, which a swap's stage is not given.
+        """
+
+        return self.plainIndexes(cursor, table)
+
+    def checkConstraintsQuery(self) -> Optional[str]:
+        """One table's CHECK constraints, as rows of their definition in the
+        catalog's own words, or None where none can be read.
+        """
+
+        return None
+
+    def checkConstraints(self, cursor: Cursor, table: str) -> List[str]:
+        """The definitions of the table's CHECK constraints, for synthesize."""
+
+        query = self.checkConstraintsQuery()
+
+        return [] if query is None else [str(row[0]) for row in self._catalog(cursor, query, table) if row[0] is not None]
+
+    def tableGrantsQuery(self) -> Optional[str]:
+        """One table's own grants, as rows of (privilege, grantee, grantable),
+        leaving out its owner's, or None where the database has none to give.
+        Grants on a schema or a database cover a stage table already.
+        """
+
+        return None
+
+    def tableGrants(self, cursor: Cursor, table: str) -> List[Tuple[str, str, bool]]:
+
+        query = self.tableGrantsQuery()
+        if query is None:
+            return []
+
+        return [(str(privilege), str(grantee), bool(grantable) and grantable not in ('NO', 'N')) for privilege, grantee, grantable
+                in self._catalog(cursor, query, table)]
+
+    def granteeName(self, grantee: str) -> str:
+        """A grantee as a GRANT names it: quoted, as the catalog spells it,
+        but for PUBLIC, which is a keyword.
+        """
+
+        return grantee if grantee.upper() == 'PUBLIC' else quoteIdentifier(self.databaseType, grantee)
+
+    def grantStatement(self, table: str, privilege: str, grantee: str, grantable: bool) -> str:
+        """GRANT `privilege` on `table`, as a statement names it, to `grantee`
+        as the catalog spells it.
+        """
+
+        return 'GRANT {} ON {} TO {}{}'.format(privilege, table, self.granteeName(grantee), ' WITH GRANT OPTION' if grantable else '')
 
     def addKeys(self, cursor: Cursor, table: str, catalogTable: str, primaryKey: Sequence[str], uniqueKeys: Sequence[Sequence[str]]) -> None:
         """Gives `table`, as a statement names it, a primary key and unique

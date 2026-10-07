@@ -21,7 +21,7 @@ from ..masking import keyFingerprint, sealManifest, verifyManifest
 from ..jobs.memory import RunInProgressError, exclusiveRun
 from ..jobs.runner import RunResult, runDataJobs
 from ..log.scrubbing import describeError
-from .common import (DEFAULT_TABLES, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, NOTIFY_URL_VARIABLE, _Connections, Location,
+from .common import (DEFAULT_TABLES, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, NOTIFY_URL_VARIABLE, _Connections, _refuseReadOnlyLocations, Location,
                      UsageError, _checkColumnCounts, _checkMaskingCoverage, _describeLocation, _discoveryRulesFile, _history, _loadConnections,
                      _loadDataJobs, _memoryBackend, _memoryLocation, _readJobs, _resolveConfigurationPaths, _resolveLocation, _selectJobs, _settingsFor,
                      _sourceQueryColumns, _toolVersion)
@@ -106,6 +106,7 @@ def _commandRun(arguments: argparse.Namespace, log: Log) -> int:
     if arguments.dry_run:
         return _dryRunDataJobs(jobsFile, connectionConfiguration, log)
 
+    _refuseReadOnlyLocations(arguments, jobsFile, connectionConfiguration)
     memory, lockFile = _memoryBackend(arguments, jobsFile, connectionConfiguration)
     lockFile.parent.mkdir(parents=True, exist_ok=True)
 
@@ -282,7 +283,7 @@ def _readManifest(arguments: argparse.Namespace) -> Tuple[str, Dict[str, Any]]:
 
     assert location is not None
     try:
-        runId, manifest = DatabaseManifests(_settingsFor(location, connectionConfiguration),
+        runId, manifest = DatabaseManifests(_settingsFor(location, connectionConfiguration, writing=False),
                                             table=location.table or DEFAULT_TABLES['manifest']).read(arguments.run)
     except KeyError as error:
         raise UsageError(error.args[0]) from error
@@ -386,6 +387,7 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
         for path in document.origins.values():
             counts[path] += 1
         print('jobs from {} file(s): {}'.format(len(counts), ', '.join('{} ({})'.format(path, count) for path, count in counts.items())))
+    _refuseReadOnlyLocations(arguments, jobsFile, connectionConfiguration)
     print('run state: {}'.format(_describeLocation(_memoryLocation(arguments, jobsFile))))
     for setting, missing in (('history', 'not recorded'), ('manifest', 'not written')):
         location = _resolveLocation(arguments, setting, getattr(jobsFile, setting))
@@ -545,7 +547,7 @@ def _commandHistory(arguments: argparse.Namespace, log: Log) -> int:
             raise UsageError('name the history to read: --history FILE, --history-connection ALIAS, or `history` in the jobs file')
 
     assert location is not None
-    history = _history(location, connectionConfiguration)
+    history = _history(location, connectionConfiguration, writing=False)
 
     records = history.read(limit=arguments.limit, job=arguments.job)
     sys.stdout.write(json.dumps(records, indent=2) + '\n' if arguments.format == 'json' else renderHistory(records))

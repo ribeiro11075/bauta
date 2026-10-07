@@ -30,7 +30,7 @@ def strategyFor(column, values=(), category=None, table='things', keyReference=N
     ('ssn', 'key'),
     ('password_hash', 'hash'),
     ('street_address', 'fakeStreetAddress'),
-    ('ip_address', 'hash'),
+    ('ip_address', 'ip'),
     ('city', 'fakeCity'),
     ('notes', 'null'),
     ('company_name', 'fakeCompany'),
@@ -78,7 +78,9 @@ def test_a_bare_name_column_is_a_person_only_in_a_table_of_people():
     (['a@b.com', 'c@d.org', 'e@f.net'], 'email'),
     (['123-45-6789', '987-65-4321'], 'key'),
     (['4111 1111 1111 1111', '5500-0000-0000-0004'], 'digits'),
-    (['10.0.0.1', '192.168.1.20'], 'hash'),
+    (['10.0.0.1', '192.168.1.20'], 'ip'),
+    (['2001:db8::1', 'fe80::1/64'], 'ip'),
+    (['08:00:2b:01:02:03', '08-00-2B-01-02-04', '0800.2b01.0205'], 'key'),
     (['+1 (555) 010-9999', '555.010.1234'], 'digits'),
     (['x' * 100, 'y' * 90], 'null'),
     (['2026-01-01', '2026-02-03'], 'keep'),
@@ -157,6 +159,23 @@ def test_coordinates_are_moved_by_a_distance_and_a_longitude_at_its_rows_latitud
     assert stores['long_term_debt'] == {'strategy': 'keep'}
     # Two latitudes: which one a longitude goes with isn't guessed.
     assert 'latitudeColumn' not in routes['end_lng']
+
+
+@pytest.mark.parametrize('column, values, expected', [
+    ('lat', [40712776, -33868800], {'strategy': 'coordinate', 'axis': 'latitude', 'meters': 1000, 'scale': 1000000}),
+    ('longitude', [-741234567, 1512093000], {'strategy': 'coordinate', 'axis': 'longitude', 'meters': 1000, 'scale': 10000000}),
+    ('lat', [10 ** 15], {'strategy': 'null'}),
+    ('lat', [40.71, -33.87], {'strategy': 'coordinate', 'axis': 'latitude', 'meters': 1000}),
+    ])
+def test_a_coordinate_column_of_scaled_degrees_is_proposed_with_its_scale(column, values, expected):
+    """A column of microdegrees named `lat` was proposed `coordinate` as if it
+    held degrees, which moved each point under a millimetre.
+    """
+    suggestion = suggestColumn('stores', column, None, values)
+
+    assert suggestion.policy == expected
+    if 'scale' in expected:
+        assert 'check that scale' in suggestion.reason
     assert strategyFor('latitude', ['north'], TEXT) == 'keep'
 
 
@@ -368,7 +387,8 @@ def test_mask_keys_leaves_a_text_key_as_it_already_was():
 
 def test_an_inet_column_named_for_an_ip_address_is_masked():
     """psycopg returns inet as IPv4Address, which the name rule's check of
-    what the column holds used to reject, leaving the column kept.
+    what the column holds used to reject, leaving the column kept; then it
+    was hashed, which an inet column refused. `ip` keeps it an address.
     """
     import ipaddress
 
@@ -376,7 +396,9 @@ def test_an_inet_column_named_for_an_ip_address_is_masked():
 
     suggestion = suggestColumn('orders', 'ip_address', None, [ipaddress.ip_address('10.0.0.{}'.format(i)) for i in range(5)])
 
-    assert suggestion.policy == {'strategy': 'hash'}
+    assert suggestion.policy == {'strategy': 'ip'}
+    assert suggestColumn('orders', 'client_ip', None, ['10.0.0.1', 'unknown']).policy == {'strategy': 'hash'}
+    assert suggestColumn('devices', 'mac_address', None, ['08:00:2b:01:02:03']).policy == {'strategy': 'key', 'charset': 'hex'}
 
 
 def test_an_email_inside_a_json_document_is_masked_at_its_path():

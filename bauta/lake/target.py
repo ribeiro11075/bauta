@@ -39,10 +39,22 @@ SNAPSHOT_PREFIX = 'snapshot='
 # the snapshot complete.
 SUCCESS_FILE = '_SUCCESS'
 
+# In a run's staging directory while it appends: the table and every file it
+# is moving into it, written before the first move and removed after the
+# last. A run killed in between leaves it, and the next run of the table
+# takes those files back out; see FileTarget._takeBackInterruptedAppends.
+PUBLISHING_FILE = '_PUBLISHING'
+
 
 class FileTarget(ColumnarTarget):
     """A table of files under a files connection's root; nothing is visible
     until finish() publishes the run's parts.
+
+    An append moves its parts into the table one at a time, so a run failing
+    among the moves has published some of them, and the next run, starting
+    from the same watermark, would append those rows again. abort() takes
+    back what this run moved, and a run killed outright is undone by the
+    next run of the table from its PUBLISHING_FILE.
     """
 
     def __init__(self, job: str, jobConfig: DataJobConfig, settings: FilesConnection) -> None:
@@ -56,10 +68,13 @@ class FileTarget(ColumnarTarget):
         self.stagingPath = self.store.path(STAGING_DIRECTORY, self.runId)
         self.loadName = self.store.location(self.singleFilePath if jobConfig.singleFile else self.tablePath + '/')
         self._parts: Optional[Parts] = None
+        # The files this run has moved into the table, for abort() to take back.
+        self._published: List[str] = []
 
 
     def _prepare(self) -> None:
 
+        self._takeBackInterruptedAppends()
         self.store.ensureDirectory(self.stagingPath)
         logger.debug('Writing {} parts in {}'.format(self.job, self.store.location(self.stagingPath)))
 
@@ -95,7 +110,7 @@ class FileTarget(ColumnarTarget):
         if self.jobConfig.singleFile:
             self._publishSingleFile(parts)
         elif self.jobConfig.insertStrategy == InsertStrategy.APPEND:
-            self._publishInto(self.tablePath, parts)
+            self._publishInto(self.tablePath, parts, intent=True)
             logger.info('Appended {} part(s), {} row(s), to {}'.format(len(parts), rowCount, self.loadName))
         else:
             self._publishSnapshot(parts, rowCount)
@@ -103,16 +118,65 @@ class FileTarget(ColumnarTarget):
         self._removeStaging()
 
 
-    def _publishInto(self, directory: str, parts: List[Tuple[str, int]]) -> List[Dict[str, Any]]:
+    def _publishInto(self, directory: str, parts: List[Tuple[str, int]], intent: bool = False) -> List[Dict[str, Any]]:
+        """Moves the parts into `directory`. With `intent`, for an append, the
+        files are first listed in PUBLISHING_FILE, which is removed once the
+        last is moved. A snapshot needs none: it is invisible until its
+        _SUCCESS is written, and an intent outliving that would take back a
+        complete snapshot.
+        """
 
         self.store.ensureDirectory(directory)
+        destinations = [posixpath.join(directory, posixpath.basename(path)) for path, _ in parts]
+        intentPath = posixpath.join(self.stagingPath, PUBLISHING_FILE)
+        if intent:
+            self.store.writeBytes(intentPath, json.dumps({'job': self.job, 'table': self.tablePath, 'files': destinations}).encode('utf-8'))
+
         published = []
-        for path, rows in parts:
-            destination = posixpath.join(directory, posixpath.basename(path))
+        for (path, rows), destination in zip(parts, destinations):
             self.store.move(path, destination)
+            self._published.append(destination)
             published.append({'file': posixpath.basename(destination), 'rows': rows})
 
+        if intent:
+            self.store.deleteFile(intentPath)
+
         return published
+
+
+    def _takeBackInterruptedAppends(self) -> None:
+        """Removes from the table what an earlier append moved into it before
+        it was killed, which its PUBLISHING_FILE lists, and that run's staging
+        directory with it. Only this job's: no two runs of one job overlap, so
+        its intent is a dead run's, where another job appending to the same
+        table may be publishing now -- taking that one's back deleted the parts
+        it had just published.
+
+        That run recorded nothing, so this one starts from the same watermark
+        and appends those rows again; left in place, they would be there twice.
+        """
+
+        stagingRoot = self.store.path(STAGING_DIRECTORY)
+        for run in self.store.directories(stagingRoot):
+            intentPath = posixpath.join(stagingRoot, run, PUBLISHING_FILE)
+            if run == self.runId or not self.store.exists(intentPath):
+                continue
+            try:
+                intent = json.loads(self.store.readBytes(intentPath))
+            except (OSError, ValueError):
+                continue
+            if intent.get('table') != self.tablePath or intent.get('job') != self.job:
+                continue
+
+            files = [path for path in intent.get('files', []) if isinstance(path, str) and posixpath.dirname(path) == self.tablePath]
+            removed = 0
+            for path in files:
+                if self.store.exists(path):
+                    self.store.deleteFile(path)
+                    removed += 1
+            self.store.deleteDirectory(posixpath.join(stagingRoot, run))
+            logger.warning('{}: an earlier run was stopped while appending to {}; removed the {} part(s) it had published, whose rows '
+                           'this run reads again'.format(self.job, self.loadName, removed), extra={'job': self.job})
 
 
     def _publishSingleFile(self, parts: List[Tuple[str, int]]) -> None:
@@ -182,12 +246,30 @@ class FileTarget(ColumnarTarget):
 
 
     def abort(self) -> None:
-        """What a failed run wrote is in staging only; remove it."""
+        """Removes what a failed run wrote: its staging, and any part it had
+        already moved into the table. A file it can't remove stays listed in
+        PUBLISHING_FILE, with the staging, for the next run to take back.
+        """
 
         if self._parts is not None:
             self._parts.discard()
         self._buffered = []
-        self._removeStaging()
+
+        left = []
+        for path in self._published:
+            try:
+                self.store.deleteFile(path)
+            except Exception as error:
+                left.append(path)
+                logger.warning('{}: could not take back {} after the run failed; the next run will -- {}'.format(
+                    self.job, self.store.location(path), describeError(error)), extra={'job': self.job})
+        if self._published:
+            logger.info('{}: took back the {} part(s) it had published to {} before failing'.format(
+                self.job, len(self._published) - len(left), self.loadName), extra={'job': self.job})
+        self._published = []
+
+        if not left:
+            self._removeStaging()
 
 
 def checkWritable(settings: FilesConnection) -> None:

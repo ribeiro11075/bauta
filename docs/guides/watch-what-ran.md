@@ -67,6 +67,6 @@ HAVING max(finished_at) < <now, in seconds since 1970> - 3 * 3600
 }
 ```
 
-Slack, Mattermost and Microsoft Teams incoming webhooks show `text` as it is; anything else can read the rest. The URL usually carries a token, so prefer the environment variable to the flag. Error messages come from the database drivers. Values they quote are replaced with `<redacted>` for every message format the tests know, but not every format a driver can write (see [the security model](../concepts/security.md#where-unmasked-data-goes)); keep that in mind when choosing the channel.
+Slack, Mattermost and Microsoft Teams incoming webhooks show `text` as it is; anything else can read the rest. A post that fails on the network, times out, or is answered with a server error (5xx) or a rate limit (429) is sent once more, three seconds later; any other answer, a wrong URL or a revoked token, is logged at once. Either way the run's exit code is the jobs', not the notification's. The URL usually carries a token, so prefer the environment variable to the flag. Error messages come from the database drivers. Values they quote are replaced with `<redacted>` for every message format the tests know, but not every format a driver can write (see [the security model](../concepts/security.md#where-unmasked-data-goes)); keep that in mind when choosing the channel.
 
 History and notifications never affect a run's outcome. If one fails, the failure is logged and the run carries on.

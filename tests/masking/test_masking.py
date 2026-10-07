@@ -140,10 +140,17 @@ def test_a_key_that_is_a_pattern_is_refused_without_quoting_it(key):
 
 
 def test_key_strength_counts_repetition_and_the_alphabet_against_a_key():
+    """A fresh random key was asserted to estimate over 200 bits, and about one
+    in 290 doesn't -- repeated characters count against it -- so the test
+    failed at random, about one CI run in 25. Over 200 is checked on a key
+    that is; what matters of random ones, that none is ever warned about, on
+    many, against the bound that warns.
+    """
     import secrets
     from bauta.masking import KEY_RECOMMENDED_BITS, keyStrengthBits
 
-    assert keyStrengthBits(secrets.token_urlsafe(32)) > 200
+    assert keyStrengthBits('Zk8_qV2xN7mWcT4pLr9sHd6yBf3jGe1uKa5oXn0iQwE') > 200
+    assert min(keyStrengthBits(secrets.token_urlsafe(32)) for _ in range(5000)) > KEY_RECOMMENDED_BITS
     assert keyStrengthBits('Password1234567!') < KEY_RECOMMENDED_BITS
     assert keyStrengthBits('abcdefgh' * 4) < keyStrengthBits(secrets.token_urlsafe(24))
     assert keyStrengthBits('') == 0
@@ -206,6 +213,16 @@ def test_hash_honours_length_and_prefix():
 def test_hash_refuses_a_length_too_short_to_stay_unique():
     with pytest.raises(ValueError, match='between 12 and 64'):
         validateColumnPolicy({'strategy': 'hash', 'length': 8})
+
+
+def test_email_refuses_a_length_too_short_to_stay_unique():
+    """8 hex characters, 32 bits, was allowed: two of 100,000 addresses
+    masked alike more often than not, and a unique email column refused the
+    load. 12 is hash's minimum too.
+    """
+    with pytest.raises(ValueError, match='between 12 and 40'):
+        validateColumnPolicy({'strategy': 'email', 'length': 8})
+    validateColumnPolicy({'strategy': 'email', 'length': 24})
 
 
 # --- email -------------------------------------------------------------------
@@ -1477,6 +1494,49 @@ def test_coordinate_options_are_checked():
             validateColumnPolicy(policy)
     with pytest.raises(MaskingError, match='needs a number, got str'):
         _maskedTogether({'lat': {'strategy': 'coordinate', 'axis': 'latitude'}}, [('51.5',)])
+    with pytest.raises(ValueError, match='between 1'):
+        validateColumnPolicy({'strategy': 'coordinate', 'axis': 'latitude', 'scale': 0})
+
+
+@pytest.mark.parametrize('axis, value', [('latitude', 40712776), ('latitude', 95.0), ('latitude', decimal.Decimal('1E+30')),
+                                         ('longitude', -181), ('longitude', 1512093000)])
+def test_a_coordinate_outside_its_axis_fails_rather_than_barely_moving(axis, value):
+    """A column of microdegrees was moved as if it held degrees: 40712776
+    under `meters: 1000` came back 40712775.99, nine tenths of a millimetre
+    away, which an integer column then rounded back to the very value. Out of
+    range is no position to move, so it fails, naming the column, not the value.
+    """
+    with pytest.raises(MaskingError) as raised:
+        _maskedTogether({'place': {'strategy': 'coordinate', 'axis': axis, 'meters': 1000}}, [(value,)])
+
+    assert 'column "place"' in str(raised.value) and 'set scale' in str(raised.value)
+    assert str(value) not in str(raised.value)
+
+
+def test_scaled_coordinates_move_by_the_distance_and_keep_their_type():
+    policies = {'lat': {'strategy': 'coordinate', 'axis': 'latitude', 'meters': 2000, 'scale': 1000000},
+                'lng': {'strategy': 'coordinate', 'axis': 'longitude', 'meters': 2000, 'latitudeColumn': 'lat', 'scale': 1000000}}
+    point = (51501350, -141890)
+
+    ((masked),) = _maskedTogether(policies, [point])
+
+    assert all(isinstance(value, int) for value in masked)
+    for moved in _metres((51.50135, -0.14189), (masked[0] / 1e6, masked[1] / 1e6), 51.50135):
+        assert 999 <= abs(moved) <= 2001
+    ((decimals),) = _maskedTogether(policies, [(decimal.Decimal('51501350.5'), decimal.Decimal('-141890.5'))])
+    assert all(value.as_tuple().exponent == -1 for value in decimals)
+    with pytest.raises(MaskingError, match='even divided by its scale'):
+        _maskedTogether(policies, [(90000001, 0)])
+
+
+def test_coordinates_in_range_mask_as_they_did_before_scale_existed():
+    """The range check refuses only what was never a position: every value
+    in range keeps its mask, as the recorded vectors also check.
+    """
+    policies = {'lat': {'strategy': 'coordinate', 'axis': 'latitude'}}
+
+    assert _maskedTogether(policies, [(51.50135,)]) == _maskedTogether(policies, [(51.50135,)])
+    assert _maskedTogether(policies, [(float('nan'),)])[0][0] != _maskedTogether(policies, [(float('nan'),)])[0][0]
 
 
 # --- fake names from the larger lists ------------------------------------------------
@@ -1687,6 +1747,51 @@ def test_json_refuses_what_is_not_a_document_without_echoing_it():
         assert 'ann' not in str(error.value)
 
 
+def test_json_masks_a_value_by_what_its_key_names_where_no_policy_says_otherwise():
+    """Fields a policy didn't name were redacted, which finds identifiers by
+    their shape: a name, a date of birth and an address have none, so
+    {"name": "Ann Smith", "dob": "1984-03-02", "address": "12 Main St"}
+    was copied as it stood.
+    """
+    document = {'name': 'Ann Smith', 'dob': '1984-03-02', 'address': '12 Main St', 'homeAddresses': ['1 Elm St', '2 Oak Rd'],
+                'billing': {'city': 'Springfield', 'postcode': '62704'}, 'company_name': 'Acme Ltd', 'gender': 'F',
+                'visits': 3, 'vip': True, 'nickname': ''}
+
+    ((masked,),) = _json({'fields': {'visits': 'keep'}}, [document])
+
+    for path in (('name',), ('dob',), ('address',), ('billing', 'city'), ('billing', 'postcode'), ('company_name',)):
+        before, after = document, masked
+        for part in path:
+            before, after = before[part], after[part]
+        assert after != before and isinstance(after, str), path
+    assert datetime.date.fromisoformat(masked['dob'])
+    assert all(after != before for before, after in zip(document['homeAddresses'], masked['homeAddresses']))
+    assert masked['gender'] is None
+    assert (masked['visits'], masked['vip'], masked['nickname']) == (3, True, '')
+
+
+def test_a_json_value_masked_by_its_key_masks_as_a_column_of_that_name():
+    ((document, column),) = _json({'fields': {'x': 'null'}}, [({'ssn': '123-45-6789'}, '123-45-6789')], extra={'ssn': {'strategy': 'key'}})
+
+    assert document['ssn'] == column != '123-45-6789'
+
+
+def test_json_masks_only_with_otherwise_where_it_is_set():
+    document = {'name': 'Ann Smith', 'dob': '1984-03-02'}
+
+    ((kept,),) = _json({'fields': {'x': 'null'}, 'otherwise': 'keep'}, [document])
+    ((redacted,),) = _json({'fields': {'x': 'null'}, 'otherwise': {'strategy': 'redact'}}, [document])
+
+    assert kept == document and redacted == document
+
+
+def test_a_json_value_its_key_cannot_mask_fails_naming_the_path_not_the_value():
+    with pytest.raises(MaskingError, match='at contact.dob as its key says') as error:
+        _json({'fields': {'x': 'null'}}, [{'contact': {'dob': 'sometime in 1984'}}])
+
+    assert '1984' not in str(error.value)
+
+
 def test_a_json_document_masks_the_same_as_text_as_it_did_parsed():
     """PostgreSQL's json and jsonb now arrive as their text, as MySQL's do,
     where psycopg handed over dicts. The json strategy must mask a document
@@ -1718,3 +1823,55 @@ def test_a_json_number_left_unmasked_is_written_as_it_came():
 
     assert masked.startswith('{"n": 12345678901234567890.123, "p": 1.10, "e": 1.5E+3, "email": "u')
     assert masked.endswith('"list": [2.50, {"x": -0.0}]}')
+
+
+# --- ip --------------------------------------------------------------------------------
+
+
+def test_ip_masks_each_address_to_another_of_its_family_one_to_one():
+    """No strategy kept an address valid: digits and key made 589.439.074.458,
+    and hash a hex token, which a PostgreSQL inet column refused.
+    """
+    import ipaddress
+
+    addresses = [str(ipaddress.IPv4Address(number)) for number in range(3232235520, 3232235520 + 3000)] + ['2001:db8::{:x}'.format(index)
+                                                                                                         for index in range(300)]
+    masked = [value for value, in _maskedTogether({'ip': {'strategy': 'ip'}}, [(address,) for address in addresses])]
+
+    assert len(set(masked)) == len(addresses)
+    assert all(ipaddress.ip_address(after).version == ipaddress.ip_address(before).version for before, after in zip(addresses, masked))
+    assert masked == [value for value, in _maskedTogether({'ip': {'strategy': 'ip'}}, [(address,) for address in addresses])]
+
+
+def test_ip_keeps_the_type_a_driver_gave_and_a_prefix_it_names():
+    import ipaddress
+
+    values = [ipaddress.ip_address('172.16.254.3'), ipaddress.ip_interface('10.1.2.3/24'), ipaddress.ip_network('10.20.0.0/16'),
+              '10.1.2.3/24', b'\x0a\x00\x00\x01', 3232235777]
+
+    masked = [value for value, in _maskedTogether({'ip': {'strategy': 'ip', 'keepPrefix': 16}}, [(value,) for value in values])]
+
+    assert [type(after) for after in masked] == [type(before) for before in values]
+    assert str(masked[0]).startswith('172.16.') and masked[0] != values[0]
+    assert masked[1].network.prefixlen == 24 and str(masked[1]).startswith('10.1.')
+    assert masked[2] == values[2]
+    assert masked[3].startswith('10.1.') and masked[3].endswith('/24')
+    assert masked[4][:2] == b'\x0a\x00' and masked[5] >> 16 == 3232235777 >> 16
+
+
+def test_ip_refuses_what_is_not_an_address_without_echoing_it():
+    for value, message in (('10.1.2', 'could not read a text value'), (1.5, 'got float'), (b'abc', 'got bytes')):
+        with pytest.raises(MaskingError, match=message) as error:
+            _maskedTogether({'ip': {'strategy': 'ip'}}, [(value,)])
+        assert '10.1.2' not in str(error.value)
+
+
+def test_a_name_held_as_an_object_is_masked_through_its_parts():
+    """{"name": {"first": "Ann", "last": "Lee"}} was copied as it stood: the
+    key that named the value was not carried into the object, whose own keys
+    name nothing. One it can't mask goes to `otherwise`, not a failure.
+    """
+    ((masked,),) = _json({'fields': {'x': 'null'}}, [{'name': {'first': 'Ann', 'last': 'Lee'}, 'byEmail': {'ann@corp.example': {'visits': 3}}}])
+
+    assert 'Ann' not in masked['name'].values() and 'Lee' not in masked['name'].values()
+    assert list(masked['byEmail'].values()) == [{'visits': 3}]

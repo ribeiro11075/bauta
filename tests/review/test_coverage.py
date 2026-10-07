@@ -93,3 +93,30 @@ def test_the_text_report_names_every_state():
     assert 'copied as it stands by copyCountries' in text
     assert 'not copied, declared -- never copied' in text
     assert 'NOT COVERED: 0.' in text
+
+
+def test_a_table_only_mentioned_by_a_query_is_not_covered():
+    """Any mention of a table's name counted: a comment, a string, or a
+    subquery that only filters made a table no job copies read as covered,
+    the one mistake coverage exists to catch.
+    """
+    jobs = {
+        'comment': _job(sourceQuery='select id from orders -- users are no longer copied', targetTableFinal='orders'),
+        'literal': _job(sourceQuery="select id from events where kind = 'payments'", targetTableFinal='events'),
+        'filter': _job(sourceQuery='select o.id from invoices o where o.uid in (select id from accounts)', targetTableFinal='invoices'),
+        }
+
+    states = _states(coverageReport('prod', ['orders', 'users', 'events', 'payments', 'invoices', 'accounts'], jobs))
+
+    assert states == {'orders': COPIED, 'events': COPIED, 'invoices': COPIED, 'users': UNCOVERED, 'payments': UNCOVERED, 'accounts': UNCOVERED}
+
+
+def test_tables_read_through_joins_and_common_table_expressions_are_covered():
+    query = ('with recent as (select * from orders where placed > current_date) '
+             'select r.id, c.name from recent r join customers c on c.id = r.customer_id')
+
+    assert _states(coverageReport('prod', ['orders', 'customers'], {'join': _job(sourceQuery=query)})) == {'orders': COPIED, 'customers': COPIED}
+
+
+def test_a_query_that_cannot_be_read_falls_back_to_any_mention():
+    assert _states(coverageReport('prod', ['orders'], {'odd': _job(sourceQuery='select id from (orders')})) == {'orders': COPIED}

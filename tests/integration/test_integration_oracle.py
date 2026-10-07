@@ -75,6 +75,33 @@ def test_a_swap_stopped_part_way_leaves_both_tables_where_they_were(connectionSe
     liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(stageTable))
 
 
+@pytest.mark.parametrize('renamesDone, expected', [(1, 'undid it'), (2, 'finished it')])
+def test_a_swap_killed_between_renames_is_put_right_by_the_next_run(liveDatabase, peopleTable, renamesDone, expected):
+    """A job killed between renames -- out of memory, or a timeout's SIGKILL
+    -- runs no undo. Killed after the second, the target was missing, and
+    every later run failed with ORA-00942 while the loaded rows sat under
+    the temporary name until someone renamed it back by hand.
+    """
+    stageTable, tempTable = peopleTable + '_stage', peopleTable + '_tmp'
+    liveDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR(50), amount INT)'.format(stageTable))
+    liveDatabase.insert(table=peopleTable, data=[(1, 'old', 1)])
+    liveDatabase.insert(table=stageTable, data=[(2, 'loaded', 2)])
+    try:
+        liveDatabase.alter('ALTER TABLE {} RENAME TO {}'.format(stageTable, tempTable))
+        if renamesDone == 2:
+            liveDatabase.alter('ALTER TABLE {} RENAME TO {}'.format(peopleTable, stageTable))
+
+        assert expected in liveDatabase.recoverInterruptedSwap(peopleTable, stageTable)
+
+        assert not liveDatabase.tableExists(tempTable)
+        assert liveDatabase.query('SELECT id FROM {}'.format(peopleTable)) == ([(2,)] if renamesDone == 2 else [(1,)])
+        assert liveDatabase.query('SELECT id FROM {}'.format(stageTable)) == ([(1,)] if renamesDone == 2 else [(2,)])
+        assert liveDatabase.recoverInterruptedSwap(peopleTable, stageTable) is None
+    finally:
+        for table in (stageTable, tempTable):
+            liveDatabase.alter('DROP TABLE IF EXISTS {}'.format(table))
+
+
 def test_a_binary_double_holds_what_a_number_cannot(liveDatabase):
     """oracledb binds a float as a NUMBER, which holds neither NaN nor the
     infinities, nor anything past 1e126: -1e308 failed with DPY-4003 and NaN
