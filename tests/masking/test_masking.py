@@ -1108,12 +1108,18 @@ def test_redact_takes_time_in_proportion_to_the_text():
     import time
 
     def seconds(count):
+        # The fastest of three: one run a busy machine stalls says nothing of
+        # redact, and a CI runner once took three times as long for one.
         text = ' '.join('u{}@corp.com call 555-010-{:04d}'.format(index, index % 10000) for index in range(count))
-        started = time.perf_counter()
-        maskOne('redact', text)
-        return time.perf_counter() - started
+        fastest = float('inf')
+        for _ in range(3):
+            started = time.perf_counter()
+            maskOne('redact', text)
+            fastest = min(fastest, time.perf_counter() - started)
+        return fastest
 
     seconds(100)
+    # 16 times the text in about 16 times as long; quadratic would be 256.
     assert seconds(16000) < 40 * max(seconds(1000), 0.001)
 
 
