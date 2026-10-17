@@ -35,6 +35,7 @@ Every run then writes a record of what was masked, how, and under which key fing
 ```json
 {
   "generatedAt": "2026-09-16T13:25:57+00:00",
+  "runId": "0b6c1f0e-4d1e-4f7a-9a43-2f0c9f6a1d52",
   "jobs": [
     {
       "job": "maskCustomers",
@@ -68,6 +69,7 @@ Every run then writes a record of what was masked, how, and under which key fing
 - The manifest is written even when the run fails. It never contains a value or the key.
 - `configuration` names the jobs file and its SHA-256, so a reviewer can tell which policy produced the run. When the jobs file [includes others](../reference/configuration.md#splitting-the-jobs-across-files), `includes` lists each of them with its own SHA-256, since the jobs file's digest alone no longer covers every policy.
 - `maskedBy` is `python`, or the native masker and its version.
+- `runId` is the run's, as [history](watch-what-ran.md#run-history) records it, so the manifest and the history of one run can be matched. After a `run --job`, each job's entry carries its own `runId`, `generatedAt` and `maskedBy`, since the file then holds entries from several runs.
 
 From Python, `RunResult.maskingManifest(jobsFile.jobs)` returns the manifest before sealing, without `tool`, `configuration` or `integrity`; `sealManifest` adds the last.
 

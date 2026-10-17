@@ -25,6 +25,7 @@ GUIDES = {
     'validate': ('Validation', '../configuration.md#validation'),
     'jobs': ('Run on a schedule', '../../guides/run-on-a-schedule.md'),
     'history': ('Watch what ran', '../../guides/watch-what-ran.md#run-history'),
+    'status': ('Watch what ran', '../../guides/watch-what-ran.md#whats-running-now'),
     'audit': ('Prove the copy is safe', '../../guides/prove-the-copy-is-safe.md#reviewing-policies-audit'),
     'coverage': ('Prove the copy is safe', '../../guides/prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover'),
     'verify-manifest': ('Keep a masking manifest', '../../guides/keep-a-manifest.md#sealing-and-verifying'),
@@ -35,6 +36,7 @@ GUIDES = {
     'synthesize': ('Generate data', '../../guides/generate-data.md'),
     'clear': ('Copy a subset', '../../guides/copy-a-subset.md#clear-emptying-the-copy-before-a-refresh'),
     'bench': ('Make it faster', '../../guides/make-it-faster.md#measure-a-job'),
+    'studio': ('Studio', '../../guides/studio.md'),
     }
 
 HEADER = '<!-- Generated from the parser by website/commands.py. Change the flag, then run `python website/commands.py`. -->\n'
@@ -56,7 +58,7 @@ def _summaries() -> Dict[str, str]:
 
 def _options(parser: argparse.ArgumentParser) -> List[argparse.Action]:
 
-    return [action for action in parser._actions if not isinstance(action, argparse._HelpAction)]
+    return [action for action in parser._actions if not isinstance(action, (argparse._HelpAction, argparse._SubParsersAction))]
 
 
 def _flags(action: argparse.Action) -> List[str]:
@@ -64,10 +66,22 @@ def _flags(action: argparse.Action) -> List[str]:
     return list(action.option_strings) or [action.dest]
 
 
-def commonFlags() -> List[str]:
-    """The flags every subcommand takes, documented once on the index."""
+def _nested(parser: argparse.ArgumentParser) -> Dict[str, argparse.ArgumentParser]:
+    """A command's own subcommands, `bauta studio serve` say; empty for most."""
 
-    sets = [{flag for action in _options(parser) for flag in action.option_strings} for parser in _subcommands().values()]
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return dict(action.choices)
+
+    return {}
+
+
+def commonFlags() -> List[str]:
+    """The flags every subcommand takes, documented once on the index. A
+    command with subcommands of its own documents its flags itself.
+    """
+
+    sets = [{flag for action in _options(parser) for flag in action.option_strings} for parser in _subcommands().values() if not _nested(parser)]
 
     return sorted(set.intersection(*sets))
 
@@ -139,6 +153,9 @@ def _usage(name: str, parser: argparse.ArgumentParser, common: List[str]) -> str
 
 def commandPage(name: str, parser: argparse.ArgumentParser, summary: str, common: List[str]) -> str:
 
+    if _nested(parser):
+        return _nestedPage(name, parser, summary, common)
+
     own = [action for action in _options(parser) if not set(action.option_strings) & set(common)]
     title, link = GUIDES[name]
     lines = [
@@ -162,6 +179,36 @@ def commandPage(name: str, parser: argparse.ArgumentParser, summary: str, common
     lines += ['', 'It also takes the [common flags](index.md#common-flags): {}.'.format(', '.join('`{}`'.format(flag) for flag in common)), '']
 
     return '\n'.join(lines)
+
+
+def _nestedPage(name: str, parser: argparse.ArgumentParser, summary: str, common: List[str]) -> str:
+    """A command with subcommands of its own: a section for each, with the
+    flags it takes beyond the common ones it shares.
+    """
+
+    title, link = GUIDES[name]
+    lines = [HEADER, '# `bauta {}`'.format(name), '', _sentence(summary), '', 'See [{}]({}) for how to use it.'.format(title, link), '']
+    for subname, subparser in _nested(parser).items():
+        taken = {flag for action in _options(subparser) for flag in action.option_strings}
+        shared = [flag for flag in common if flag in taken]
+        own = [action for action in _options(subparser) if not set(action.option_strings) & set(common)]
+        lines += ['## `bauta {} {}`'.format(name, subname), '', _sentence(subparser.description or _summaryOf(parser, subname)), '', '```',
+                  _usage('{} {}'.format(name, subname), subparser, common), '```', '', '| Flag | Default | Effect |', '| --- | --- | --- |']
+        lines += [_row(action) for action in own]
+        lines += ['', 'It also takes these [common flags](index.md#common-flags): {}.'.format(', '.join('`{}`'.format(flag) for flag in shared)), '']
+
+    return '\n'.join(lines)
+
+
+def _summaryOf(parser: argparse.ArgumentParser, subname: str) -> str:
+
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for choice in action._choices_actions:
+                if choice.dest == subname:
+                    return choice.help or ''
+
+    return ''
 
 
 def indexPage(summaries: Dict[str, str], common: List[str]) -> str:

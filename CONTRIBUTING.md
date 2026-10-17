@@ -8,6 +8,7 @@ Thank you for helping. [docs/project/development.md](docs/project/development.md
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all,dev]"
 pytest              # no servers needed
+(cd studio/web && npm install && npm run build)   # Studio's web app, only to serve it
 ruff check
 mypy
 ```

@@ -29,6 +29,7 @@ from .dependencyGraph import JobOutcome, JobStatus
 from .memory import MemoryBackend
 from .partitions import (CoreBudget, Slice, automaticCount, boundsQuery, integerBound, isNumberBound, maskingThreadsWith, quantileQuery,
                          quantileSlices, resolveColumn, slicePredicates, splitPoints, wrappedQuery)
+from .progress import addRows
 from .targets import LoadTarget, PostLoadError, TableTarget
 from .throttle import StageTimes, readLimitFor, timedChunks
 
@@ -369,6 +370,7 @@ def _loadChunks(chunks: Iterable[List[Tuple[Any, ...]]], prepare: Callable[[int,
             write(rows)
 
         rowCount += len(rows)
+        addRows(len(rows))
         # Only once the rows have landed, or a failed job's next run would
         # start past them.
         if watermark is not None and (highWatermark is None or watermark > highWatermark):

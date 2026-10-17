@@ -26,7 +26,7 @@ A connection or file left open, by the package or by a test, fails the run: `Res
 
 ### Where the tests are
 
-`tests/` mirrors the package: the tests for `bauta/jobs/` are in `tests/jobs/`, and so on for `cli`, `configuration`, `database`, `generate`, `log`, `masking`, `review` and `transform`. Three folders don't follow a package. `tests/integration/` runs against real databases (all but the SQLite file are marked `integration`). `tests/examples/` runs every demo and the masking benchmark, and validates every shipped configuration. `tests/repository/` checks the docs' links and the packaging. Helpers sit beside the tests they serve: `masking/customStrategies.py` is a strategy defined outside the package, as a policy can name one; `jobs/crashingTransforms.py` holds transforms that make a job's process exit, hang or linger, for the runner's tests; `examples/demos.py` loads a demo by path and puts back the variables it sets; `integration/servers.py` has the Docker databases' connection settings and `serverSettings()`, which returns them or skips with the reason a server can't be reached, and `integration/conftest.py` the fixtures built on them. At the top, `conftest.py` does what every folder needs -- the repository on the import path, stand-ins for drivers that aren't installed, the logger above -- and `jobConfigs.py` builds a data job with every required setting filled in, which each suite narrows to its own defaults with `functools.partial`.
+`tests/` mirrors the package: the tests for `bauta/jobs/` are in `tests/jobs/`, and so on for `cli`, `configuration`, `database`, `generate`, `log`, `masking`, `review`, `studio` and `transform`; `tests/test_project.py` covers `bauta/project.py`. Studio's tests run through its API, and are skipped without the `studio` extra, which `dev` installs. Three folders don't follow a package. `tests/integration/` runs against real databases (all but the SQLite file are marked `integration`). `tests/examples/` runs every demo and the masking benchmark, and validates every shipped configuration. `tests/repository/` checks the docs' links and the packaging. Helpers sit beside the tests they serve: `masking/customStrategies.py` is a strategy defined outside the package, as a policy can name one; `jobs/crashingTransforms.py` holds transforms that make a job's process exit, hang or linger, for the runner's tests; `examples/demos.py` loads a demo by path and puts back the variables it sets; `integration/servers.py` has the Docker databases' connection settings and `serverSettings()`, which returns them or skips with the reason a server can't be reached, and `integration/conftest.py` the fixtures built on them. At the top, `conftest.py` does what every folder needs -- the repository on the import path, stand-ins for drivers that aren't installed, the logger above -- and `jobConfigs.py` builds a data job with every required setting filled in, which each suite narrows to its own defaults with `functools.partial`.
 
 
 ## The native masker
@@ -118,7 +118,7 @@ COVERAGE_FILE=$PWD/.coverage pytest -m "integration or not integration" --cov
 `pyproject.toml` gives ranges, not pins, so the package installs beside other tools that have their own. Two files in `constraints/` pin them:
 
 - **`lowest.txt`** is the bottom of every range. CI installs it on Python 3.10 and runs everything, the integration suite included, so a lower bound that stops working fails there first.
-- **`image.txt`** pins every package `bauta[all]` installs, to one tested set of newer versions. CI's other integration run installs it.
+- **`image.txt`** pins every package `bauta[all,studio]` installs, to one tested set of newer versions. CI's other integration run installs it.
 
 **Known vulnerabilities.** `.github/workflows/audit.yml` runs `pip-audit` over `image.txt` and `cargo audit` over `mask-rs/Cargo.lock` on every change and every Monday, since an advisory is published against code that hasn't changed. `lowest.txt` isn't audited: its versions are old on purpose. To run them locally:
 
@@ -128,6 +128,19 @@ cargo install --locked cargo-audit && (cd mask-rs && cargo audit)
 ```
 
 `tests/repository/test_packaging.py` checks that `lowest.txt` matches the lower bounds and that `image.txt` is within the ranges. To raise a lower bound, change both `pyproject.toml` and `lowest.txt`. To move the pinned set to newer versions, edit the direct pins in `image.txt` and regenerate the rest with the command at its top.
+
+
+## Studio's web app
+
+Studio's API is Python, under `bauta/studio/`, and tested with the rest. Its web app is React and TypeScript, under `studio/web/`, built with Node (the release uses Node 24). The package ships it built: the release workflow runs `npm ci && npm run build`, which writes `bauta/studio/static/`, before building the wheel. A clone has no build until you make one:
+
+```
+cd studio/web && npm install && npm run build      # into bauta/studio/static, which `bauta studio serve` serves
+npm run dev                                        # or Vite on :5173, passing /api to a `bauta studio serve` on :8710
+npm run typecheck
+```
+
+To try it on something, `python studio/demo/setup.py demo-workspace` makes a small SQLite shop with five jobs, a few runs of history, a failing job and a column for discovery to find; its docstring has the commands to add an account and serve it.
 
 
 ## The documentation site

@@ -82,16 +82,22 @@ all = ["bauta[mysql,postgresql,oracle,mssql,mariadb,sqlite,duckdb,files,iceberg,
 # must compute identical masks, and masking.py ignores any other version. Left
 # out of `all`, which would otherwise need Rust wherever no wheel is published.
 native = ["bauta-rs==0.2.6"]
+# bauta Studio, the web console: `bauta studio serve`. The web app itself is
+# built into bauta/studio/static, so nothing here needs Node.
+# ruamel.yaml changes one job in a jobs file and keeps its comments and layout.
+studio = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "sqlalchemy>=2.0.18", "argon2-cffi>=23.1", "ruamel.yaml>=0.18"]
 # The documentation site (mkdocs.yml), pinned like dev so a build is the same
 # everywhere; website/ holds its theme and hooks
 docs = ["mkdocs==1.6.1", "mkdocs-material==9.7.7", "mike==2.2.0"]
-dev = ["pytest==9.1.1", "mypy==2.3.1", "ruff==0.16.9", "pytest-cov==7.1.0", "types-PyYAML==6.0.12.20260906", "build==1.6.1", "twine==7.0.0"]
+dev = ["pytest==9.1.1", "mypy==2.3.1", "ruff==0.16.9", "pytest-cov==7.1.0", "types-PyYAML==6.0.12.20260906", "build==1.6.1", "twine==7.0.0",
+       "bauta[studio]", "httpx==0.28.1"]
 
 [tool.setuptools.packages.find]
 include = ["bauta", "bauta.*"]
 
 [tool.setuptools.package-data]
-bauta = ["py.typed"]
+# studio/static is the built web app: `npm run build` in studio/web.
+bauta = ["py.typed", "studio/static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

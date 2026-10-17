@@ -20,11 +20,13 @@ from typing import Any, Optional, Sequence
 
 from ..configuration import ConfigurationError
 from ..log.scrubbing import describeError
-from .common import (CONFIG_DIRECTORY_VARIABLE, EXIT_BAD_CONFIGURATION, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, MANIFEST_KEY_VARIABLE,
+from ..project import CONFIG_DIRECTORY_VARIABLE
+from .common import (EXIT_BAD_CONFIGURATION, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, MANIFEST_KEY_VARIABLE,
                      NOTIFY_URL_VARIABLE, UsageError, _configureLogging, _toolVersion)
 from .generate import _commandClear, _commandDiscover, _commandSchema, _commandSubset, _commandSynthesize
 from .review import _commandAudit, _commandBench, _commandCoverage, _commandVerifyReferences
-from .run import _commandHistory, _commandJobs, _commandRun, _commandValidate, _commandVerifyManifest
+from .studio import _commandStudio
+from .run import _commandHistory, _commandJobs, _commandRun, _commandStatus, _commandValidate, _commandVerifyManifest
 
 __all__ = [
     'EXIT_BAD_CONFIGURATION',
@@ -233,6 +235,29 @@ def _buildParser() -> argparse.ArgumentParser:
     historyParser.add_argument('--limit', type=_positiveInteger, default=20, help='how many records (default: 20)')
     historyParser.add_argument('--format', default='text', choices=['text', 'json'], help='default: text')
     historyParser.set_defaults(handler=_commandHistory)
+
+    statusParser = subparsers.add_parser('status', help='show what run is doing now: each live run and where its jobs stand')
+    _addCommonArguments(statusParser)
+    statusParser.add_argument('--format', default='text', choices=['text', 'json'], help='default: text')
+    statusParser.set_defaults(handler=_commandStatus)
+
+    studioParser = subparsers.add_parser('studio', help='run bauta Studio, a web console for a team, on your own infrastructure')
+    studioCommands = studioParser.add_subparsers(dest='studio_command', required=True, metavar='{serve,create-user}')
+    studioServe = studioCommands.add_parser('serve', help='run Studio')
+    studioServe.add_argument('--host', default='127.0.0.1', help='address to listen on (default: 127.0.0.1, this machine only)')
+    studioServe.add_argument('--port', type=int, default=8710, help='default: 8710')
+    studioServe.add_argument('--forwarded-allow-ips', default='127.0.0.1', help='proxies trusted to say the client\'s address and scheme')
+    studioUser = studioCommands.add_parser('create-user', help='add an account; the way the first admin is made')
+    studioUser.add_argument('--email', required=True, help='the account\'s email, which is its sign-in')
+    studioUser.add_argument('--name', help='shown beside what they do')
+    studioUser.add_argument('--role', default='admin', choices=['viewer', 'operator', 'admin'], help='default: admin')
+    for studioCommand in (studioParser, studioServe, studioUser):
+        studioCommand.add_argument('--config', default=argparse.SUPPRESS, help='bauta\'s configuration directory (default: $BAUTA_STUDIO_CONFIG, '
+                                                                        '$BAUTA_CONFIG or ./configuration)')
+        studioCommand.add_argument('--data', default=argparse.SUPPRESS, help='Studio\'s own data: accounts, activity, run logs, backups '
+                                                                      '(default: $BAUTA_STUDIO_DATA or ./studio-data)')
+        _addLoggingArguments(studioCommand)
+    studioParser.set_defaults(handler=_commandStudio)
 
     jobsParser = subparsers.add_parser('jobs', help='show the job graph and which jobs are due')
     _addCommonArguments(jobsParser)

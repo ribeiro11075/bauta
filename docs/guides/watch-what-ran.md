@@ -52,6 +52,29 @@ HAVING max(finished_at) < <now, in seconds since 1970> - 3 * 3600
 ```
 
 
+## What's running now
+
+`bauta status` shows each run in progress and where each of its jobs stands: waiting for a predecessor or a free worker, running since when, or completed, failed or skipped, with its rows or its error.
+
+```
+bauta status
+bauta status --format json
+```
+
+```
+Run 0b6c1f0e-4d1e-4f7a-9a43-2f0c9f6a1d52, started 2026-10-16 02:00:03 UTC: running, process 48121
+  1 completed, 1 running, 1 waiting
+  JOB                          STATUS     STARTED (UTC)              ROWS  ERROR
+  loadCustomers                completed  2026-10-16 02:00:03       12000
+  loadOrders                   running    2026-10-16 02:00:41           -
+  loadInvoices                 waiting    -                             -
+```
+
+While a cycle runs, `run` keeps a small JSON file for it in a directory beside its run-state lock -- `memory.yaml.running/` beside `memory.yaml.run.lock` -- rewritten as each job starts or is decided, and removed when the cycle ends. It holds what the table above shows and nothing more: job names, times, row counts and errors cut as history cuts them, never a value from a table. Runs side by side, as `run --job` allows, each have their own. A file left by a run whose process is gone -- killed with `kill -9`, or on a machine that lost power -- is shown as `ended without finishing` rather than running; history, not this, records what ran. With run state in a table, the lock and this directory are on the machine running `run`, so `status` sees runs started there.
+
+Each cycle has one run id, from the moment it starts: the file's, history's `runId`, and a manifest table's `run_id` are the same, so a run seen here is the one history records once it ends. In [the library](../reference/python-api.md#a-configuration-directory), `Project.running()` reads the same files, and `runDataJobs(onProgress=...)` is told each change as it happens.
+
+
 ## Notifications
 
 `--notify-url URL`, or `$BAUTA_NOTIFY_URL`, posts JSON to a webhook when a cycle doesn't succeed: a job failed or was skipped, or a signal stopped the run. `--notify-on always` posts after every cycle.

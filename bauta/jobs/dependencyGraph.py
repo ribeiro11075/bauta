@@ -200,3 +200,30 @@ class DependencyGraph:
 
         self._notStarted.remove(job)
         self.finish(JobOutcome(job=job, status=JobStatus.SKIPPED, error=reason))
+
+
+# A job's place in the schedule, as `bauta jobs` names it.
+DUE = 'due'
+THROTTLED = 'throttled'
+INACTIVE = 'inactive'
+
+
+def jobSchedule(jobs: Mapping[str, BaseJobConfig], lastRun: Dict[str, float], watermarks: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Each job, by name, with where it stands now: `due` this cycle,
+    `throttled` inside its `refresh` window, or `inactive`; the predecessors
+    it waits for; when it last ran and, for a job with `refresh`, when it is
+    next due, in seconds since 1970; and its watermark, if it keeps one.
+    """
+
+    graph = DependencyGraph(jobs=jobs, memory=lastRun)
+    schedule = []
+    for name, job in sorted(jobs.items()):
+        state = INACTIVE if not job.active else DUE if name in graph.activeJobs else THROTTLED
+        last = lastRun.get(name)
+        refresh = getattr(job, 'refresh', None)
+        schedule.append({'job': name, 'state': state, 'waitsFor': list(graph.activePredecessors.get(name, job.predecessors)),
+                         'lastRunAt': last, 'refreshMinutes': refresh,
+                         'nextDueAt': last + refresh * 60 if last is not None and refresh else None,
+                         'watermark': (watermarks or {}).get(name)})
+
+    return schedule

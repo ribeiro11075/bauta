@@ -35,3 +35,12 @@ mask-rs/target/
 
 # The documentation site, built by mkdocs
 /site/
+
+# bauta Studio: the web app's dependencies, and its build, which the
+# release builds into the package
+studio/web/node_modules/
+studio/web/*.tsbuildinfo
+bauta/studio/static/
+# what Studio and its demo keep when run from a clone
+studio-data/
+demo-workspace/

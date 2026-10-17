@@ -20,5 +20,6 @@ pip install "bauta[postgresql,oracle]"
 | `fpe` | cryptography, for the `fpe` masking strategy | nothing |
 | `native` | `bauta-rs`, the native masker (below) | nothing on Linux (x86-64, ARM) or macOS; elsewhere, [Rust](https://rustup.rs) 1.83 or newer |
 | `all` | every driver above | nothing |
+| `studio` | FastAPI, Uvicorn, SQLAlchemy and argon2, for [Studio](../guides/studio.md), the web console; its web app comes built in the package | nothing |
 
 **The native masker (optional).** `bauta-rs` masks in Rust: about ten times the throughput on one core, with identical masks. It can also mask on several cores: `jobs.yaml`'s `maskingThreads` is `1` by default, a number up to the cores available, or `auto` to divide half the cores between the jobs running (see [masking threads](../guides/make-it-faster.md#masking-threads)). `pip install "bauta[postgresql,native]"` installs the version that matches, which is the only one Bauta uses. Without it, everything works, only slower. See [the native masker](../guides/make-it-faster.md#the-native-masker).

@@ -10,7 +10,7 @@ dialects don't share, so they're reported for the caller to break.
 """
 from __future__ import annotations
 
-from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from ..configuration import findCycle
 from ..database.dialects import ForeignKey
@@ -326,3 +326,62 @@ def _topologicalOrder(tables: Set[str], parentEdges: Dict[str, List[ForeignKey]]
         remaining -= set(ready)
 
     return order
+
+
+class SubsetDraft(NamedTuple):
+    """A subset ready to review: its plan, a job to draft for each table in
+    load order, with a masking proposal if one was asked for, and the rows
+    each table's query returns if they were counted.
+    """
+
+    plan: SubsetPlan
+    drafts: List[Any]
+    foreignKeys: List[ForeignKey]
+    rowCounts: Optional[Dict[str, int]]
+
+
+def subsetCountQuery(query: str) -> str:
+    """How many rows a subset query returns, counted in the database: its
+    final `SELECT *` as `SELECT COUNT(*)`, under the same WITH, since SQL
+    Server takes no WITH inside a derived table.
+    """
+
+    head, separator, selection = query.rpartition('\nSELECT * FROM ')
+    if not separator:
+        raise ValueError('not a subset query')
+
+    return '{}\nSELECT COUNT(*) FROM {}'.format(head, selection)
+
+
+def draftSubset(database: Any, root: str, where: str, followChildren: bool = True, ignore: Iterable[str] = (), mask: bool = False,
+                sampleSize: int = 1000, rules: Any = None, maskKeys: bool = False, count: bool = False) -> SubsetDraft:
+    """The subset of `database` rooted at `root` where `where`, as `bauta
+    subset` drafts it: the plan, a job per table with a proposed policy when
+    `mask`, and with `count` each table's rows, counted by the database.
+    Raises SubsetError for a schema that can't be subset as asked.
+    """
+
+    from ..database.dialects import quoteIdentifier, quoteTableName
+    from .discovery import BUILTIN_RULES, JobDraft, proposeTable
+
+    # The root's schema's keys: a subset follows references within it.
+    foreignKeys = database.getForeignKeysFor([root])
+    plan = planSubset(foreignKeys, root=root, where=where, followChildren=followChildren, ignore=ignore,
+                      materialize=database.dialect.supportsMaterializedSelections(), quote=lambda name: quoteIdentifier(database.type, name),
+                      quoteTable=lambda name: quoteTableName(database.type, name))
+
+    drafts = []
+    for table in plan.tables:
+        proposal = proposeTable(database, table, sampleSize=sampleSize, foreignKeys=foreignKeys, rules=rules or BUILTIN_RULES,
+                                maskKeys=maskKeys) if mask else None
+        drafts.append(JobDraft(table=table, sourceQuery=plan.queries[table], predecessors=plan.parents[table], proposal=proposal))
+
+    rowCounts = None
+    if count:
+        rowCounts = {}
+        for table in plan.tables:
+            _, chunks = database.stream(query=subsetCountQuery(plan.queries[table]), chunkSize=1)
+            with chunks:
+                rowCounts[table] = int(next(chunks)[0][0])
+
+    return SubsetDraft(plan=plan, drafts=drafts, foreignKeys=foreignKeys, rowCounts=rowCounts)

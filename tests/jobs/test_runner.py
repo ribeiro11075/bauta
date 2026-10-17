@@ -41,7 +41,7 @@ def test_run_data_jobs_completes_with_zero_active_jobs_when_not_forever(tmp_path
     result = runDataJobs(jobsFile=jobsFile, connectionConfiguration={}, logFile=tmp_path / 'runner.log',
                          memory=FileMemory(memoryFile=tmp_path / 'runner.yaml'), runForever=False)
 
-    assert result == RunResult(outcomes=[], interrupted=False)
+    assert result == RunResult(outcomes=[], interrupted=False, runId=result.runId) and result.runId
 
 
 class _FakeDatabase:

@@ -20,6 +20,7 @@ from .dependencyGraph import JobOutcome, JobStatus
 from .memory import MemoryBackend
 from .partitions import CoreBudget
 from .pipeline import _runDataJob, setCoreBudget
+from .progress import setProgressSink
 from .throttle import setSharedReadLimits
 
 logger = logging.getLogger(LOGGER_NAME)
@@ -139,6 +140,7 @@ def _jobProcess(connection: Any, parentAlive: Any, logLevel: int, job: str, jobC
     if environment is not None:
         _adoptEnvironment(environment)
     forwarder = _initializeWorker(connection, parentAlive, logLevel)
+    setProgressSink(lambda rows: forwarder.send('progress', rows))
     setMaskingThreads(maskingThreads)
     if budget is not None:
         setCoreBudget(budget)
@@ -169,6 +171,8 @@ class _JobProcess:
         self.deadline = self.startedAt + jobConfig.timeoutSeconds if jobConfig.timeoutSeconds else None
         self._outcome: Optional[JobOutcome] = None
         self._closed = False
+        # Rows written so far, as the job last said; see jobs.progress.
+        self.rows = 0
 
         self._connection, sendingEnd = PROCESS_CONTEXT.Pipe(duplex=False)
         # Nothing is ever sent on this second pipe: the child watches it for
@@ -206,6 +210,8 @@ class _JobProcess:
                 return
             if kind == 'log':
                 handleForwardedRecord(payload)
+            elif kind == 'progress':
+                self.rows = payload
             elif kind == 'outcome':
                 self._outcome = payload
 

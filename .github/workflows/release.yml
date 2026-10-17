@@ -30,6 +30,15 @@ jobs:
           tag = os.environ['GITHUB_REF_NAME']
           assert tag == 'v' + python == 'v' + rust, 'tag {} does not match bauta {} and bauta-rs {}'.format(tag, python, rust)
           EOF
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '24'
+      - name: Build Studio's web app into the package
+        working-directory: studio/web
+        run: |
+          npm ci
+          npm run build
+          test -f ../../bauta/studio/static/index.html
       - name: Build
         run: |
           python -m pip install build==1.6.1 twine==7.0.0

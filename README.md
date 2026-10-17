@@ -14,7 +14,8 @@
 - **Incremental loads:** extract only what changed since the last successful run.
 - **A dependency graph:** jobs run in order, concurrently where they can, each in its own process with an optional timeout.
 - **Operable:** webhook alerts; run state, history and manifests each in a file or a table, with the seconds each job spent reading, masking and writing; a read limit per source, so a copy takes no more of production than it was given; and passwords from a command for cloud IAM tokens.
-- **No infrastructure:** a `pip install`, some YAML, and a command you run from cron.
+- **Studio, a web console for the team (preview):** sign in to watch runs as they go, start, rerun and cancel them, review new columns, read each job's trend, hand a reviewer a run's evidence, and edit jobs -- on your own infrastructure, with roles and a record of who did what. See [Studio](docs/guides/studio.md).
+- **No infrastructure:** a `pip install`, some YAML, and a command you run from cron. Studio is optional, and one more command.
 
 
 ## Documentation
@@ -79,6 +80,7 @@ python example/native-masking/demo.py    # Python against Rust, and Rust on one 
 bauta run                run every job that's due, once
 bauta validate           check the configuration, without connecting
 bauta jobs               show the job graph and which jobs are due
+bauta status             show what's running now, and where each job stands
 bauta history            show recent job outcomes
 
 bauta discover           propose a masking policy for tables
@@ -92,6 +94,8 @@ bauta coverage           list a source database's tables and what the jobs do wi
 bauta verify-manifest    check a masking manifest is unaltered, and who signed it
 bauta verify-references  count rows in the copy whose foreign key points at nothing
 bauta bench              measure how fast each job reads and masks from its real source, writing nothing
+
+bauta studio serve       run Studio, the web console (pip install "bauta[studio]")
 
 bauta --version          print the version, and which masker it would use
 ```
@@ -122,6 +126,9 @@ Every command and flag is on its own page under [commands](docs/reference/comman
 | `bauta/review/` | `audit`, `coverage` and `verify-references`: reports that move no data |
 | `bauta/log/` | logging, and the scrubbing that keeps values out of every message |
 | `bauta/cli/` | the `bauta` command, one module per group of subcommands |
+| `bauta/project.py` | a configuration directory as the command reads it, and its checks as data: what the commands and Studio share |
+| `bauta/studio/` | Studio, the web console: its API, accounts, and what it keeps; installed with the `studio` extra |
+| `studio/` | Studio's web app, in React (`studio/web/`), built into `bauta/studio/static`, and a demo to try it on (`studio/demo/`) |
 | `mask-rs/` | the optional native masker, in Rust — see [its README](mask-rs/README.md) |
 | `example/` | runnable demos, each with its `configuration/`, and a starter configuration — see [its README](example/README.md) |
 | `docs/` | the documentation above |

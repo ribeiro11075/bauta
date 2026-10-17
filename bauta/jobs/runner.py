@@ -9,9 +9,10 @@ import logging
 import os
 import signal
 import time
+import uuid
 from multiprocessing.connection import wait as waitForAny
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, List, Mapping, NamedTuple, Optional, Union
+from typing import Any, Callable, Dict, Generator, List, Mapping, NamedTuple, Optional, Tuple, Union
 
 from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile
 from ..log import LOGGER_NAME, Log
@@ -89,6 +90,8 @@ class RunResult(NamedTuple):
 
     outcomes: List[JobOutcome]
     interrupted: bool = False
+    # The cycle's own, shared with its RunProgress, history and manifest.
+    runId: Optional[str] = None
 
     @property
     def completed(self) -> List[JobOutcome]:
@@ -124,7 +127,35 @@ class RunResult(NamedTuple):
         skipped job still belongs in the manifest but has no outcome to describe it.
         """
 
-        return buildMaskingManifest(self.outcomes, _declaredMasking(jobs))
+        manifest = buildMaskingManifest(self.outcomes, _declaredMasking(jobs))
+        if self.runId is not None:
+            # The cycle's, as its history records it.
+            manifest['runId'] = self.runId
+
+        return manifest
+
+
+class RunProgress(NamedTuple):
+    """Where a cycle stands, as `onProgress` is told it: each of its jobs,
+    those running with when each started and the rows each has written so far,
+    and the outcomes of those decided -- completed, failed or skipped. A job in
+    none of them is waiting. `finished` is said once, as the cycle ends.
+    """
+
+    runId: str
+    startedAt: float
+    jobs: List[str]
+    running: Dict[str, float]
+    outcomes: List[JobOutcome]
+    finished: bool = False
+    # Rows each running job has written so far, as it last said: see
+    # jobs.progress. A job that has written none yet isn't in it.
+    rows: Optional[Dict[str, int]] = None
+
+
+def newRunId() -> str:
+
+    return str(uuid.uuid4())
 
 
 def _declaredMasking(jobs: Mapping[str, DataJobConfig]) -> Dict[str, Dict[str, Any]]:
@@ -193,7 +224,7 @@ def _coreBudget(dependencyGraph: DependencyGraph, job: str, jobConfig: Any, mask
 
 def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfiguration: Dict[str, ConnectionConfig],
               memory: MemoryBackend, termination: Dict[str, bool], logLevel: int, maskingThreads: Union[str, int] = 1,
-              readLimits: Optional[Dict[str, Any]] = None) -> None:
+              readLimits: Optional[Dict[str, Any]] = None, progress: Optional[Callable[[Dict[str, float], Dict[str, int]], None]] = None) -> None:
     """Runs one cycle's jobs to completion, each as soon as its predecessors
     finish and one of the `workers` slots is free.
 
@@ -205,10 +236,16 @@ def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfigur
 
     `readLimits` are handed to every job, so all of them reading from a
     limited connection share its limit; see throttle.sharedReadLimits.
+    `progress` is told the running jobs, with when each started and the rows
+    each has written, whenever one starts, writes more, or a job is decided.
     """
 
     running: List[_JobProcess] = []
+    startedAt: Dict[str, float] = {}
     native = maskingModule.nativeVersion() is not None
+    # The running jobs with their rows, and the count decided, as last
+    # reported to `progress`.
+    reported: Optional[Tuple[Tuple[Tuple[str, int], ...], int]] = None
 
     try:
         while not dependencyGraph.finished:
@@ -227,6 +264,14 @@ def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfigur
                                     extra={'job': job})
                     running.append(_JobProcess(job, jobConfig, connectionConfiguration, memory, logLevel, threads, budget,  # type: ignore[arg-type]
                                                readLimits))
+                    startedAt[job] = time.time()
+
+            if progress is not None:
+                state = (tuple((process.job, process.rows) for process in running), len(dependencyGraph.outcomes))
+                if state != reported:
+                    reported = state
+                    progress({process.job: startedAt[process.job] for process in running},
+                             {process.job: process.rows for process in running if process.rows})
 
             if not running:
                 # Nothing running and nothing startable means every job is
@@ -257,13 +302,16 @@ def _runCycle(dependencyGraph: DependencyGraph, workers: int, connectionConfigur
 def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig], memory: MemoryBackend,
                 logFile: Optional[Path] = None, runForever: bool = False, logLevel: int = logging.INFO,
                 logFormat: str = 'text', acceptKeyChange: bool = False,
-                onCycle: Optional[Callable[['RunResult'], None]] = None) -> RunResult:
+                onCycle: Optional[Callable[['RunResult'], None]] = None,
+                onProgress: Optional[Callable[[RunProgress], None]] = None) -> RunResult:
     """Runs data jobs, honoring each job's `refresh` window and `predecessors`:
     one pass, or with runForever until SIGINT or SIGTERM. See "Single runs,
     not a daemon" in docs/concepts/how-it-works.md.
 
-    `onCycle` receives each cycle's RunResult, for history or alerts;
-    an exception from it is logged, not raised. A masked upsert job whose key
+    `onCycle` receives each cycle's RunResult, for history or alerts, and
+    `onProgress` a RunProgress as the cycle starts, as each job starts or is
+    decided, and as it finishes, for watching it; an exception from either is
+    logged, not raised. Both carry the cycle's run id. A masked upsert job whose key
     changed stops the run before it starts, unless acceptKeyChange.
 
     `memory` stays the caller's to close; each job's process closes its own
@@ -303,14 +351,28 @@ def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, Conne
 
         while True:
             dependencyGraph = DependencyGraph(jobs=jobsFile.jobs, memory=memory.read(), connectionLimits=connectionLimits(connectionConfiguration))
-            logger.info('Starting cycle with {} active job(s)'.format(len(dependencyGraph.activeJobs)))
+            runId, cycleStartedAt = newRunId(), time.time()
+            logger.info('Starting cycle {} with {} active job(s)'.format(runId, len(dependencyGraph.activeJobs)), extra={'runId': runId})
 
-            _runCycle(dependencyGraph, jobsFile.workers, connectionConfiguration, memory, termination, logLevel, jobsFile.maskingThreads, readLimits)
+            def progress(running: Dict[str, float], rows: Dict[str, int], finished: bool = False) -> None:
+                if onProgress is None:
+                    return
+                try:
+                    onProgress(RunProgress(runId=runId, startedAt=cycleStartedAt, jobs=list(dependencyGraph.activeJobs), running=running,
+                                           outcomes=list(dependencyGraph.outcomes), finished=finished, rows=rows))
+                except Exception as error:
+                    logger.error('Reporting the run\'s progress failed: {}'.format(describeError(error)), exc_info=error)
+
+            try:
+                _runCycle(dependencyGraph, jobsFile.workers, connectionConfiguration, memory, termination, logLevel, jobsFile.maskingThreads,
+                          readLimits, progress)
+            finally:
+                progress({}, {}, finished=True)
             _logCycleSummary(dependencyGraph)
 
             if onCycle is not None:
                 try:
-                    onCycle(RunResult(outcomes=list(dependencyGraph.outcomes), interrupted=termination['terminating']))
+                    onCycle(RunResult(outcomes=list(dependencyGraph.outcomes), interrupted=termination['terminating'], runId=runId))
                 except Exception as error:
                     logger.error('Reporting on the cycle failed: {}'.format(describeError(error)), exc_info=error)
 
@@ -321,4 +383,4 @@ def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, Conne
 
         logger.info('Finished data job runner')
 
-    return RunResult(outcomes=list(dependencyGraph.outcomes), interrupted=termination['terminating'])
+    return RunResult(outcomes=list(dependencyGraph.outcomes), interrupted=termination['terminating'], runId=runId)

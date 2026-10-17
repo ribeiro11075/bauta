@@ -6,6 +6,7 @@ field added to a model without being written up. These are cheap to check, so
 they're checked.
 """
 import importlib.util
+import argparse
 import re
 from pathlib import Path
 
@@ -119,12 +120,16 @@ def test_every_documented_flag_exists():
         documented.update(re.findall(r'\| `(--[a-z-]+)', document.read_text()))
 
     real = set()
-    for action in _buildParser()._actions:
-        real.update(action.option_strings)
-        if action.dest == 'command':
-            for subparser in action.choices.values():
-                for option in subparser._actions:
-                    real.update(option.option_strings)
+
+    def collect(parser):
+        # Down into a command's own subcommands: `bauta studio serve`.
+        for action in parser._actions:
+            real.update(action.option_strings)
+            if isinstance(action, argparse._SubParsersAction):
+                for subparser in action.choices.values():
+                    collect(subparser)
+
+    collect(_buildParser())
 
     missing = documented - real
 

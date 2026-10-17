@@ -744,3 +744,27 @@ def clearTables(database: Any, tables: Sequence[str]) -> List[Tuple[str, int]]:
         raise
 
     return cleared
+
+
+# The suffix a stage table takes when nothing else names it: `orders_stage`.
+DEFAULT_STAGE_SUFFIX = '_stage'
+
+
+def createStageTable(database: Any, table: str, suffix: str = DEFAULT_STAGE_SUFFIX) -> Tuple[str, bool]:
+    """A stage table for `table` in `database`, created from `table`'s own
+    definition, as `bauta schema --stage-suffix` creates one with the target
+    as its own source: the same columns and types, no keys to other tables.
+    Returns its name, and whether it was created; one already there is left
+    as it is. Raises SchemaError if `table` can't be read.
+    """
+
+    definition = readTable(database, table, [])
+    statements = createStatements(database.type, database.type, [definition], includeForeignKeys=False, stageSuffix=suffix, stagesOnly=True)
+    name = definition.name + suffix
+    if database.tableExists(name):
+        return name, False
+    for statement in statements:
+        if statement.sql and not statement.isIndex:
+            database.alter(statement.sql)
+
+    return name, True

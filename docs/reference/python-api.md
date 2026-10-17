@@ -6,6 +6,7 @@ You load configuration however you like and hand it over as plain data. Each dri
 
 - [API stability](#api-stability)
 - [Configuration models](#configuration-models)
+- [A configuration directory](#a-configuration-directory)
 - [Running jobs](#running-jobs)
 - [Results](#results)
 - [Memory backends](#memory-backends)
@@ -31,6 +32,47 @@ Everything importable from `bauta` itself is the public API, and this page descr
 | `DiscoveryRulesFile` | A validated `discovery.yaml`, for `discoveryRules`. |
 
 A `Transformer` is any callable taking one value and returning one; a job names it in `sourceQueryColumnTransforms`. `TransformError` is a transformer that raised, and `TransformResolutionError` a reference that doesn't resolve.
+
+
+## A configuration directory
+
+`Project` is a configuration directory as the `bauta` command reads it, for a program that works with one the way the command does -- a console, or a check of your own -- rather than loading each file itself.
+
+```python
+from bauta import Project
+
+project = Project.load('configuration')          # or Project.load() for $BAUTA_CONFIG, else ./configuration
+
+project.jobsFile, project.connections            # the validated DataJobsFile, and each alias's ConnectionConfig
+project.validationProblems()                     # what `bauta validate` finds, as a list; [] if nothing
+project.dryRunProblems()                         # what `run --dry-run` finds, connecting but moving no rows
+project.audit(connect=True)                      # `audit --format json`'s report, as a dict
+project.coverage(connection='production')        # `coverage --format json`'s report, as a dict
+
+history = project.history()                      # the RunHistory `run` records into, or None
+records = history.read(limit=50) if history else []
+manifest = project.readManifest()                # (where it was read from, its JSON), or None
+```
+
+`Project.load(directory=None, jobsPath=None, connectionsPath=None)` reads `jobs.yaml`, with its includes, and `connections.yaml`, validated as `bauta validate` validates them. It raises `ConfigurationError` for an invalid file and `bauta.project.UsageError` for one that isn't there. `document` is the jobs file as read: `files` every file its `include` brought in, and `origins` the file each job came from.
+
+| Method | What it returns |
+| --- | --- |
+| `running()` | What `run` is doing now: a record per live cycle, as [`bauta status --format json`](../guides/watch-what-ran.md#whats-running-now) prints them, the latest first; empty if nothing is running. Each has `alive`: `False` for a run whose process is gone, and `None` for one on another machine. |
+| `lockFile()` | The file `run` holds as its lock, beside its run state. |
+| `location(setting)` | Where the jobs file keeps `'memory'`, `'history'` or `'manifest'`: a `Path`, relative paths taken from the jobs file's directory, or a `TableLocation`. `None` for history or a manifest it doesn't keep; run state defaults to `memory.yaml` beside the jobs file. |
+| `history()` | The `RunHistory` to read, `FileHistory` or `DatabaseHistory`, or `None`. |
+| `readManifest(runId=None)` | The manifest `run` last wrote, or a table's for `runId`, as `(where, manifest)`; `None` if none is kept or written yet. Check it with `verifyManifest`. |
+| `validationProblems()` | The offline checks `validate` makes beyond loading: transformers that don't resolve, connection settings a driver would refuse, masking settings this machine can't honour. |
+| `dryRunProblems(jobs=None)` | What `run --dry-run` finds for `jobs`, a mapping of name to `DataJobConfig` (default: all), logging what it checks as it goes. |
+| `audit(jobs=None, connect=False, sample=1000, rulesPath=None)` | The [audit](../guides/prove-the-copy-is-safe.md#reviewing-policies-audit) report for the jobs named (default: all), offline unless `connect`. |
+| `coverage(connection=None, schema=None, jobs=None, rulesPath=None)` | The [coverage](../guides/prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover) report for `connection`, by default the one every job reads from. |
+| `verifyReferences(jobs=None)` | What [`verify-references`](../guides/copy-a-subset.md#verify-references-checking-the-copys-references) finds for the active jobs, or `jobs`: `(results, notes)`, a `ReferenceResult` per foreign key that applies to a copy, and an `UncheckedNote` per target where none did. `bauta.review.references.referencesReport(results, generatedAt, notes)` makes them JSON. |
+| `drift(jobs=None, sample=1000, maskKeys=False, rulesPath=None)` | What [`discover --update`](../guides/propose-a-policy.md) finds: a `JobDrift` for each masked job whose policy no longer names exactly the columns its query returns -- `added`, a proposal for each new column, and `removed`. Empty if none has drifted. `bauta.generate.drift.applyDrift(text, drift)` writes one into its file's text. |
+| `schedule()` | Where each job stands, as `bauta jobs` shows it: `state` (`due`, `throttled`, `inactive`), `waitsFor`, `lastRunAt` and `nextDueAt` in seconds since 1970, `refreshMinutes` and `watermark`. |
+| `memory()` | The `MemoryBackend` `run` keeps run state in, for reading in a `with` block. |
+
+`audit` and `coverage` use `discovery.yaml` from the directory when there is one, or `rulesPath`. None of these writes anything, and no report holds a value from a table or a key.
 
 
 ## Running jobs
@@ -71,10 +113,11 @@ if __name__ == '__main__':
 ```python
 runDataJobs(jobsFile, connectionConfiguration, memory,
             logFile=None, runForever=False, logLevel=logging.INFO, logFormat='text',
-            acceptKeyChange=False, onCycle=None)
+            acceptKeyChange=False, onCycle=None, onProgress=None)
 ```
 
 - **`onCycle`** is called with each cycle's `RunResult` as the cycle ends, including under `runForever`. See [below](#history-manifests-and-notifications). An exception it raises is logged, not raised.
+- **`onProgress`** is called with a `RunProgress` as each cycle starts, as each of its jobs starts or is decided, and once more as it ends, for watching a run as it goes; see [below](#results). An exception it raises is logged, not raised. The CLI uses it for [`bauta status`](../guides/watch-what-ran.md#whats-running-now), through `bauta.jobs.status.RunStatus(directory)`.
 - **`acceptKeyChange=True`** runs upsert jobs whose masking key changed since their last run; see [the key](../guides/mask-a-table.md#the-key).
 - **`runForever=False`** makes one pass and returns. `True` keeps running, honouring `refresh`, until `SIGINT` or `SIGTERM`. Either signal stops new jobs from starting and lets running ones finish; see [stopping](../concepts/how-it-works.md#single-runs-not-a-daemon).
 - **`logFile`** is optional. Without one, attach a stream yourself: `Log(level=...).addStreamHandler(sys.stderr)`. Workers' records are written by the calling process's handlers, whichever those are.
@@ -97,6 +140,7 @@ Validation raises `ConfigurationError`. `runDataJobs` also raises it before star
 | `rowCount` | Rows moved across all jobs. |
 | `outcomes` | Every `JobOutcome`, in completion order. |
 | `interrupted` | `True` if a signal stopped the run. The CLI exits with 130. |
+| `runId` | The cycle's id, made as it starts: the one its `RunProgress` carried, and the CLI's history and manifest record. |
 
 | `JobOutcome` | Meaning |
 | --- | --- |
@@ -113,6 +157,15 @@ Validation raises `ConfigurationError`. `runDataJobs` also raises it before star
 `RunResult.maskingManifest(jobsFile.jobs)` builds the [masking manifest](../guides/keep-a-manifest.md#what-it-records) for the run.
 
 A run with `runForever=True` returns only once it has been stopped, with the last cycle's outcomes.
+
+| `RunProgress` | Meaning |
+| --- | --- |
+| `runId`, `startedAt` | The cycle's id, and when it started, in seconds since 1970. |
+| `jobs` | Every job the cycle holds. |
+| `running` | The jobs running now, each with when it started. |
+| `outcomes` | A `JobOutcome` for each job decided so far: completed, failed or skipped. A job in neither `running` nor `outcomes` is waiting. |
+| `finished` | `True` for the last call, as the cycle ends. |
+| `rows` | The rows each running job has written so far, as it last said, about once a second; a job that has written none isn't in it. |
 
 
 ## Memory backends
@@ -213,6 +266,9 @@ with Database(connectionSettings=connections['prod']) as database:
 | `bauta.generate.subset.relatedTables(foreignKeys, roots, followChildren=True)` | Every table a subset from `roots` would copy. |
 | `bauta.generate.schema`: `readTable`, `createStatements`, `renderScript` | A table's shape, CREATE TABLE statements for a target dialect, and the script form. |
 | `bauta.generate.schema.clearTables(database, tables)` | Empties tables children-first, in one transaction. |
+| `bauta.generate.subset.draftSubset(database, root, where, followChildren=True, ignore=(), mask=False, sampleSize=1000, rules=None, maskKeys=False, count=False)` | What `bauta subset` drafts, from an open `Database`: a `SubsetDraft` with the `plan`, a `JobDraft` per table (with a masking proposal when `mask`) for `bauta.generate.discovery.renderJobs`, and with `count` each table's `rowCounts`, counted by the database. |
+| `bauta.generate.schema.createStageTable(database, table, suffix='_stage')` | A stage table for `table`, made in the same database from `table`'s own definition, as `bauta schema --stage-suffix` makes one with the target as its own source. Returns its name and whether it was created; one already there is left as it is. |
+| `bauta.generate.subset.subsetCountQuery(query)` | A subset query's rows as `SELECT COUNT(*)`, under the same `WITH`, which every database runs, SQL Server included. |
 | `planSubset(foreignKeys, root, where, followChildren=True, ignore=(), materialize=False, quote=None, quoteTable=None)` | A `SubsetPlan`: tables in load order, a query for each, each table's parents, and the foreign keys ignored. Raises `SubsetError` on a cycle, or on a chain deeper than 16 tables. Pass `materialize=database.dialect.supportsMaterializedSelections()`, and (from `bauta.database.dialects`) `quote=lambda name: quoteIdentifier(database.type, name)` and `quoteTable=lambda name: quoteTableName(database.type, name)`, so reserved-word columns and tables work. |
 | `synthesizeTable(database, table, rows, seed=0, rules=...)`, `planTable(...)` | Fill a table with generated rows, returning how many; or just describe how, with a row generator. Raise `SynthesisError`. |
 

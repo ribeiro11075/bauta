@@ -15,12 +15,13 @@ from .generate.discovery import DiscoveryRules, TableProposal, discoveryRules, p
 from .generate.subset import SubsetError, SubsetPlan, planSubset
 from .generate.synthesize import SynthesisError, planTable, synthesizeTable
 from .log import Log
+from .project import Project
 from .masking import (LOCALES, STRATEGIES, MaskingError, MaskingPlan, Strategy, buildMaskingManifest, keyFingerprint, resolveStrategy, sealManifest,
                       verifyManifest)
 from .jobs.memory import DATABASE_MEMORY_SCHEMA, DatabaseMemory, FileMemory, MemoryBackend, RunInProgressError, exclusiveRun
 from .jobs.reporting import DATABASE_HISTORY_SCHEMA, DATABASE_MANIFEST_SCHEMA, DatabaseHistory, DatabaseManifests, FileHistory, RunHistory, notify
 from .review.audit import auditJobs, renderAudit
-from .jobs.runner import RunResult, runDataJobs
+from .jobs.runner import RunProgress, RunResult, runDataJobs
 from .transform import Transformer, TransformError, TransformResolutionError
 
 __all__ = [
@@ -71,12 +72,14 @@ __all__ = [
     'notify',
     'planSubset',
     'planTable',
+    'Project',
     'proposeTable',
     'renderAudit',
     'resolveStrategy',
     'runDataJobs',
     'RunHistory',
     'RunInProgressError',
+    'RunProgress',
     'RunResult',
     'sealManifest',
     'STRATEGIES',

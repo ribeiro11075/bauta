@@ -12,6 +12,8 @@
 | [`bauta bench`](bench.md) | Measure how fast each job reads and masks from its real source, writing nothing. |
 | [`bauta verify-manifest`](verify-manifest.md) | Check that a manifest is unaltered, and who signed it. |
 | [`bauta history`](history.md) | Show recent job outcomes recorded with run --history. |
+| [`bauta status`](status.md) | Show what run is doing now: each live run and where its jobs stand. |
+| [`bauta studio`](studio.md) | Run bauta Studio, a web console for a team, on your own infrastructure. |
 | [`bauta jobs`](jobs.md) | Show the job graph and which jobs are due. |
 | [`bauta discover`](discover.md) | Propose a masking policy for tables, from their schema and a sample. |
 | [`bauta subset`](subset.md) | Generate jobs that copy a referentially complete subset. |

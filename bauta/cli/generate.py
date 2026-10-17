@@ -10,11 +10,11 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..configuration import isLake
 from ..database import Database
-from ..database.dialects import catalogTable, quoteIdentifier, quoteTableName
+from ..database.dialects import catalogTable
 from ..log import Log
 from ..log.scrubbing import describeError
-from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadConnections, _loadDataJobs, _memoryBackend,
-                     _readJobs, _requireDatabase, _resolveConfigurationPaths, _selectJobs, _writeOutput)
+from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadConnections, _loadDataJobs, _loadProject, _memoryBackend,
+                     _requireDatabase, _selectJobs, _writeOutput)
 
 
 def _generatedHeading(command: str, source: str, target: str) -> List[str]:
@@ -130,36 +130,19 @@ def _discoverUpdate(arguments: argparse.Namespace, log: Log) -> int:
     change wasn't applied, so it can gate a pipeline as coverage does.
     """
 
-    from ..generate.drift import DriftError, _wholeTable, applyDrift, findDrift, renderDrift
+    from ..generate.drift import DriftError, applyDrift, renderDrift
 
     for flag, given in (('--connection', arguments.connection), ('--table', arguments.table), ('--all-tables', arguments.all_tables),
                         ('--target', arguments.target), ('--output', arguments.output)):
         if given:
             raise UsageError('{} names what to discover afresh; --update reads the jobs file instead'.format(flag))
 
-    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
-    jobsPath, _ = _resolveConfigurationPaths(arguments)
-    document = _readJobs(jobsPath)
-    rules = _discoveryRules(arguments)
-    jobs = {name: job for name, job in _selectJobs(jobsFile.jobs, arguments.job, log).items()
-            if job.masking is not None and not isLake(connectionConfiguration.get(job.sourceConnection))}
-
-    drifts = []
-    for alias in sorted({job.sourceConnection for job in jobs.values()}):
-        _requireDatabase(connectionConfiguration, alias)
-        with Database(connectionSettings=connectionConfiguration[alias]) as database:
-            # The keys of each schema a job reads whole, where a new key
-            # column finds the domain its reference shares.
-            wholeTables = [table for table in (_wholeTable(job.sourceQuery) for job in jobs.values() if job.sourceConnection == alias) if table]
-            try:
-                foreignKeys = database.getForeignKeysFor(wholeTables)
-            except NotImplementedError:
-                foreignKeys = []
-            for name in sorted(name for name, job in jobs.items() if job.sourceConnection == alias):
-                drift = findDrift(database, name, jobs[name], rules=rules, sampleSize=arguments.sample, maskKeys=arguments.mask_keys,
-                                  foreignKeys=foreignKeys)
-                if drift.any():
-                    drifts.append(drift)
+    project = _loadProject(arguments)
+    _selectJobs(project.jobsFile.jobs, arguments.job, log)
+    document = project.document
+    jobs = [name for name in (arguments.job or project.jobsFile.jobs)
+            if project.jobsFile.jobs[name].masking is not None and not isLake(project.connections.get(project.jobsFile.jobs[name].sourceConnection))]
+    drifts = project.drift(jobs=arguments.job, sample=arguments.sample, maskKeys=arguments.mask_keys, rules=_discoveryRules(arguments))
 
     if not drifts:
         print('{} masked job(s) checked: every policy names exactly the columns its sourceQuery returns'.format(len(jobs)))
@@ -198,8 +181,8 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
     or the target requires masking.
     """
 
-    from ..generate.discovery import JobDraft, proposeTable, renderJobs
-    from ..generate.subset import SubsetError, planSubset
+    from ..generate.discovery import renderJobs
+    from ..generate.subset import SubsetError, draftSubset
 
     connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
@@ -219,27 +202,18 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
                             'without it, add one to each job before running them'.format(arguments.connection))
 
     with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
-        # The root's schema's keys: a subset follows references within it.
-        foreignKeys = database.getForeignKeysFor([arguments.root])
-
         try:
-            plan = planSubset(foreignKeys, root=arguments.root, where=arguments.where, followChildren=not arguments.no_children,
-                              ignore=arguments.ignore_foreign_key or [], materialize=database.dialect.supportsMaterializedSelections(),
-                              quote=lambda name: quoteIdentifier(database.type, name),
-                              quoteTable=lambda name: quoteTableName(database.type, name))
+            draft = draftSubset(database, root=arguments.root, where=arguments.where, followChildren=not arguments.no_children,
+                                ignore=arguments.ignore_foreign_key or [], mask=mask, sampleSize=arguments.sample, rules=rules,
+                                maskKeys=arguments.mask_keys)
         except SubsetError as error:
             raise UsageError(str(error)) from error
 
-        log.logging.info('Subset covers {} table(s): {}'.format(len(plan.tables), ', '.join(plan.tables)))
-        for foreignKey in plan.ignored:
-            log.logging.warning('Ignoring foreign key {}.{} -> {}; rows may reference ones outside the subset'.format(
-                foreignKey.table, ','.join(foreignKey.columns), foreignKey.referencedTable))
-
-        drafts = []
-        for table in plan.tables:
-            proposal = proposeTable(database, table, sampleSize=arguments.sample, foreignKeys=foreignKeys, rules=rules,
-                                    maskKeys=arguments.mask_keys) if mask else None
-            drafts.append(JobDraft(table=table, sourceQuery=plan.queries[table], predecessors=plan.parents[table], proposal=proposal))
+    plan, drafts = draft.plan, draft.drafts
+    log.logging.info('Subset covers {} table(s): {}'.format(len(plan.tables), ', '.join(plan.tables)))
+    for foreignKey in plan.ignored:
+        log.logging.warning('Ignoring foreign key {}.{} -> {}; rows may reference ones outside the subset'.format(
+            foreignKey.table, ','.join(foreignKey.columns), foreignKey.referencedTable))
 
     heading = _generatedHeading('subset', arguments.connection, arguments.target) + [
         'Rooted at {} where {}.'.format(arguments.root, arguments.where),

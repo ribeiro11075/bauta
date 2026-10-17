@@ -1,12 +1,16 @@
-# Every package `bauta[all]` installs, pinned to one tested set.
+# Every package `bauta[all,studio]` installs, pinned to one tested set.
 # CI's integration job runs against these. After changing a version,
 # regenerate the rest with:
 #
-#   uv pip compile pyproject.toml --extra all -c <this file's direct pins> \
+#   uv pip compile pyproject.toml --extra all --extra studio -c <this file's direct pins> \
 #       --python-version 3.14 --python-platform linux --no-header --no-annotate
 #
 # tests/repository/test_packaging.py checks every pin here is within pyproject.toml's ranges.
+annotated-doc==0.0.5
 annotated-types==0.8.0
+anyio==4.15.1
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
 boto3==1.43.103
 botocore==1.43.103
 cachetools==7.2.0
@@ -16,13 +20,17 @@ charset-normalizer==3.5.1
 click==8.5.0
 cryptography==50.0.1
 duckdb==1.5.5
+fastapi==0.143.3
 fsspec==2026.9.0
+h11==0.16.0
+httptools==0.9.0
 idna==3.20
 jmespath==1.1.0
 markdown-it-py==4.2.0
 mdurl==0.1.2
 mmh3==5.3.0
 mysql-connector-python==26.7.0
+opentelemetry-api==1.45.1
 oracledb==26.0.0
 psycopg==3.3.6
 psycopg-binary==3.3.6
@@ -36,16 +44,23 @@ pymssql==2.4.1
 pyparsing==3.3.3
 pyroaring==1.1.0
 python-dateutil==2.9.0.post0
+python-dotenv==1.2.4
 pytz==2026.4
 pyyaml==6.0.3
 requests==2.34.2
 rich==15.0.0
+ruamel.yaml==0.19.1
 s3transfer==0.19.2
 six==1.17.0
 sqlalchemy==2.1.1
+starlette==1.8.0
 strictyaml==1.7.3
 tenacity==9.1.4
 typing-extensions==4.16.0
 typing-inspection==0.4.4
 urllib3==2.8.0
+uvicorn==0.54.0
+uvloop==0.23.0
+watchfiles==1.3.0
+websockets==17.2
 zstandard==0.25.0

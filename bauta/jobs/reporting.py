@@ -14,7 +14,6 @@ import socket
 import time
 import urllib.error
 import urllib.request
-import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
@@ -22,7 +21,7 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 from ..configuration import ConnectionConfig
 from ..database import Database
 from .memory import exclusiveLock
-from .runner import RunResult
+from .runner import RunResult, newRunId
 
 HTTP_TIMEOUT_SECONDS = 10
 
@@ -269,9 +268,10 @@ def renderHistory(records: Sequence[Mapping[str, Any]]) -> str:
     return '\n'.join(lines) + '\n'
 
 
-def newRunId() -> str:
+def runIdOf(result: RunResult) -> str:
+    """The cycle's run id, or a new one for a RunResult made without one."""
 
-    return str(uuid.uuid4())
+    return result.runId or newRunId()
 
 
 # Manifests --------------------------------------------------------------------

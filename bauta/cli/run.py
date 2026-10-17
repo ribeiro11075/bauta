@@ -11,20 +11,21 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
-from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, FilesConnection, IcebergConnection, InsertStrategy, isLake
-from ..database import DIALECTS
-from ..jobs.dependencyGraph import DependencyGraph
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobsFile
+from ..jobs.dependencyGraph import DUE, jobSchedule
 from ..log import Log
 from ..masking import keyFingerprint, sealManifest, verifyManifest
 from ..jobs.memory import RunInProgressError, exclusiveRun
 from ..jobs.runner import RunResult, runDataJobs
+from ..jobs.status import RunStatus
+from ..project import dryRunProblems, lockFileFor, runningDirectoryFor
 from ..log.scrubbing import describeError
-from .common import (DEFAULT_TABLES, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, NOTIFY_URL_VARIABLE, _Connections, _refuseReadOnlyLocations, Location,
-                     UsageError, _checkColumnCounts, _checkMaskingCoverage, _describeLocation, _discoveryRulesFile, _history, _loadConnections,
-                     _loadDataJobs, _memoryBackend, _memoryLocation, _readJobs, _resolveConfigurationPaths, _resolveLocation, _selectJobs, _settingsFor,
-                     _sourceQueryColumns, _toolVersion)
+from .common import (DEFAULT_TABLES, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, NOTIFY_URL_VARIABLE, _refuseReadOnlyLocations, Location,
+                     UsageError, _describeLocation, _discoveryRulesFile, _history, _loadConnections,
+                     _loadDataJobs, _memoryBackend, _memoryLocation, _readJobs, _loadProject, _resolveConfigurationPaths, _resolveLocation, _selectJobs, _settingsFor,
+                     _toolVersion)
 
 
 def _cycleReporter(arguments: argparse.Namespace, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig],
@@ -33,7 +34,7 @@ def _cycleReporter(arguments: argparse.Namespace, jobsFile: DataJobsFile, connec
     flags and the jobs file ask. None if they ask for nothing.
     """
 
-    from ..jobs.reporting import RunHistory, newRunId, notify
+    from ..jobs.reporting import RunHistory, notify, runIdOf
 
     historyLocation = _resolveLocation(arguments, 'history', jobsFile.history)
     history: Optional[RunHistory] = _history(historyLocation, connectionConfiguration) if historyLocation else None
@@ -52,7 +53,7 @@ def _cycleReporter(arguments: argparse.Namespace, jobsFile: DataJobsFile, connec
 
     def report(result: RunResult) -> None:
         if history is not None:
-            attempt('record the run history', lambda: history.append(result, newRunId()))
+            attempt('record the run history', lambda: history.append(result, runIdOf(result)))
         if notifyUrl:
             attempt('send the notification', lambda: notify(notifyUrl, result, always=arguments.notify_on == 'always'))
 
@@ -117,7 +118,8 @@ def _commandRun(arguments: argparse.Namespace, log: Log) -> int:
                                  memory=memory, runForever=arguments.forever,
                                  logLevel=getattr(logging, arguments.log_level.upper()), logFormat=arguments.log_format,
                                  acceptKeyChange=arguments.accept_key_change,
-                                 onCycle=_cycleReporter(arguments, jobsFile, connectionConfiguration, log))
+                                 onCycle=_cycleReporter(arguments, jobsFile, connectionConfiguration, log),
+                                 onProgress=RunStatus(runningDirectoryFor(lockFile)))
     except RunInProgressError as error:
         log.logging.error(str(error))
         return EXIT_JOBS_DID_NOT_SUCCEED
@@ -161,9 +163,9 @@ def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile
             _writeAtomically(destination, json.dumps(sealManifest(manifest, signingKey=signingKey), indent=2) + '\n')
         where = str(destination)
     else:
-        from ..jobs.reporting import DatabaseManifests, newRunId
+        from ..jobs.reporting import DatabaseManifests, runIdOf
 
-        runId = newRunId()
+        runId = runIdOf(result)
         manifest = sealManifest(manifest, signingKey=signingKey)
         DatabaseManifests(_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['manifest']).write(manifest, runId)
         where = '{}, run {}'.format(_describeLocation(location), runId)
@@ -215,7 +217,7 @@ def _mergedManifest(location: Path, manifest: Dict[str, Any], signingKey: Option
     """
 
     for entry in manifest['jobs']:
-        entry.update(generatedAt=manifest['generatedAt'], maskedBy=manifest['maskedBy'])
+        entry.update(generatedAt=manifest['generatedAt'], maskedBy=manifest['maskedBy'], runId=manifest.get('runId'))
 
     if not location.exists():
         return manifest, location
@@ -244,7 +246,8 @@ def _mergedManifest(location: Path, manifest: Dict[str, Any], signingKey: Option
         return manifest, unmerged
 
     ran = {entry['job'] for entry in manifest['jobs']}
-    carried = [dict(entry, generatedAt=entry.get('generatedAt', earlier.get('generatedAt')), maskedBy=entry.get('maskedBy', earlier.get('maskedBy')))
+    carried = [dict(entry, generatedAt=entry.get('generatedAt', earlier.get('generatedAt')), maskedBy=entry.get('maskedBy', earlier.get('maskedBy')),
+                    runId=entry.get('runId', earlier.get('runId')))
                for entry in earlier.get('jobs', []) if entry.get('job') not in ran]
 
     return dict(manifest, jobs=sorted(carried + manifest['jobs'], key=lambda entry: str(entry['job']))), location
@@ -343,38 +346,9 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
     CI and in a pre-commit hook. `run --dry-run` is the online counterpart.
     """
 
-    from ..transform import resolveTransformer
-
-    jobsFile, connectionConfiguration = _loadDataJobs(arguments)
-
-    problems = []
-    for name, job in jobsFile.jobs.items():
-        for column, references in job.sourceQueryColumnTransforms.items():
-            for reference in references:
-                try:
-                    resolveTransformer(reference)
-                except Exception as error:
-                    problems.append('{}: {} -> {}'.format(name, column, error))
-
-    for alias, settings in sorted(connectionConfiguration.items()):
-        if isLake(settings):
-            continue
-        assert not isinstance(settings, (FilesConnection, IcebergConnection))
-        try:
-            DIALECTS[settings.type].connectArguments(settings, resolvePassword=False)
-        except ConfigurationError as error:
-            problems.append('{}: {}'.format(alias, error))
-
-    from ..masking import effectiveMaskingThreads, requireNativeProblem
-
-    try:
-        effectiveMaskingThreads(jobsFile.maskingThreads)
-    except ValueError as error:
-        problems.append(str(error))
-    if any(job.masking is not None and job.active for job in jobsFile.jobs.values()):
-        problem = requireNativeProblem(jobsFile.requireNative)
-        if problem:
-            problems.append(problem)
+    project = _loadProject(arguments)
+    jobsFile, connectionConfiguration = project.jobsFile, project.connections
+    problems = project.validationProblems()
 
     if problems:
         raise ConfigurationError('invalid configuration:\n' + '\n'.join(problems))
@@ -418,111 +392,20 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
     return EXIT_SUCCESS
 
 
-def _checkTargetTables(name: str, job: DataJobConfig, connections: _Connections, log: Log, problems: List[str]) -> Optional[List[str]]:
-    """A database target's columns, having checked it is there, keyed for an
-    upsert, and has a stage table holding them all; None, with the problem
-    added, when the target can't be read.
-    """
-
-    try:
-        with connections.use(job.targetConnection) as database:
-            columns = database.getAllColumnNames(table=job.targetTableFinal)
-            log.logging.info('{}: target {} has {} column(s)'.format(name, job.targetTableFinal, len(columns)))
-
-            if job.insertStrategy == InsertStrategy.UPSERT and not database.getPrimaryColumnNames(table=job.targetTableFinal):
-                problems.append('{}: target {} has no primary key, so insertStrategy: upsert cannot match rows'.format(name, job.targetTableFinal))
-    except Exception as error:
-        problems.append('{}: target {} is not readable -- {}'.format(name, job.targetTableFinal, describeError(error)))
-        return None
-
-    # The stage table is where the rows actually land, so a run fails at
-    # once without it.
-    if job.targetTableStage:
-        try:
-            with connections.use(job.targetConnection) as database:
-                staged = {column.upper() for column in database.getAllColumnNames(table=job.targetTableStage)}
-            log.logging.info('{}: stage table {} has {} column(s)'.format(name, job.targetTableStage, len(staged)))
-            missing = [column for column in columns if column.upper() not in staged]
-            if missing:
-                problems.append('{}: stage table {} is missing column(s) {}, which the load writes'.format(
-                    name, job.targetTableStage, ', '.join(missing)))
-        except Exception as error:
-            problems.append('{}: stage table {} is not readable -- {}'.format(name, job.targetTableStage, describeError(error)))
-
-    return columns
-
-
 def _dryRunDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig], log: Log) -> int:
     """Everything `validate` does, plus what needs a connection: that each alias
     connects or can be written, target tables exist, upsert targets have a
     primary key, and each query's columns fit its target and masking policy.
     """
 
-    problems: List[str] = []
-    unreachable = set()
-    aliases = sorted({job.sourceConnection for job in jobsFile.jobs.values()} | {job.targetConnection for job in jobsFile.jobs.values()})
-
-    with _Connections(connectionConfiguration) as connections:
-
-        for alias in aliases:
-            settings = connectionConfiguration[alias]
-            if isLake(settings):
-                from ..lake import checkWritable
-
-                try:
-                    checkWritable(settings)
-                    log.logging.info('{}: writable ({})'.format(alias, settings.describeTarget()))
-                except Exception as error:
-                    unreachable.add(alias)
-                    problems.append('{}: cannot write to {} -- {}'.format(alias, settings.describeTarget(), describeError(error)))
-                continue
-            try:
-                with connections.use(alias) as database:
-                    encrypted = {True: 'encrypted', False: 'NOT encrypted', None: 'encryption unknown'}[database.isEncrypted()]
-                    log.logging.info('{}: connected ({}, {})'.format(alias, connectionConfiguration[alias].type.value, encrypted))
-            except Exception as error:
-                unreachable.add(alias)
-                problems.append('{}: cannot connect to {} -- {}'.format(
-                    alias, connectionConfiguration[alias].describeTarget(), describeError(error)))
-
-        for name, job in jobsFile.jobs.items():
-            if job.targetConnection in unreachable:
-                continue
-
-            # A lake has no table to read before the first run: it takes the
-            # columns the query returns.
-            lake = isLake(connectionConfiguration[job.targetConnection])
-            columns = None if lake else _checkTargetTables(name, job, connections, log, problems)
-            if (not lake and columns is None) or job.sourceConnection in unreachable:
-                continue
-
-            try:
-                returned = _sourceQueryColumns(job, connections)
-            except Exception as error:
-                problems.append('{}: sourceQuery could not be checked -- {}'.format(name, describeError(error)))
-                continue
-
-            # The same comparison the load makes, made before it writes: a target
-            # that gained or lost a column against a query that didn't is the
-            # ordinary way a working job stops working.
-            problem = _checkColumnCounts(name, job, returned, returned if columns is None else columns)
-            if problem is None and job.masking is not None:
-                problem = _checkMaskingCoverage(name, job, returned, log)
-            if problem is None and job.partitions is not None and job.partitions.column is not None:
-                from ..jobs.partitions import resolveColumn
-
-                try:
-                    resolveColumn(job.partitions.column, returned)
-                except ConfigurationError as error:
-                    problem = '{}: {}'.format(name, error)
-            if problem:
-                problems.append(problem)
+    problems = dryRunProblems(jobsFile.jobs, connectionConfiguration)
 
     if problems:
         for problem in problems:
             log.logging.error(problem)
         return EXIT_JOBS_DID_NOT_SUCCEED
 
+    aliases = {job.sourceConnection for job in jobsFile.jobs.values()} | {job.targetConnection for job in jobsFile.jobs.values()}
     print('dry run passed: {} connection(s), {} job(s), no rows moved'.format(len(aliases), len(jobsFile.jobs)))
 
     return EXIT_SUCCESS
@@ -555,6 +438,22 @@ def _commandHistory(arguments: argparse.Namespace, log: Log) -> int:
     return EXIT_SUCCESS
 
 
+def _commandStatus(arguments: argparse.Namespace, log: Log) -> int:
+    """What `run` is doing now, from the file each live cycle keeps beside the
+    run-state lock: each run, and where each of its jobs stands.
+    """
+
+    from ..jobs.status import readRunStatuses, renderRunStatuses
+
+    jobsFile, _ = _loadDataJobs(arguments)
+    jobsPath, _ = _resolveConfigurationPaths(arguments)
+    lockFile = lockFileFor(_memoryLocation(arguments, jobsFile), jobsPath, jobsFile.memory)
+    records = readRunStatuses(runningDirectoryFor(lockFile))
+    sys.stdout.write(json.dumps(records, indent=2) + '\n' if arguments.format == 'json' else renderRunStatuses(records))
+
+    return EXIT_SUCCESS
+
+
 def _commandJobs(arguments: argparse.Namespace, log: Log) -> int:
     """Prints the graph as the scheduler sees it now, including which jobs
     their refresh window holds back.
@@ -563,22 +462,15 @@ def _commandJobs(arguments: argparse.Namespace, log: Log) -> int:
     jobsFile, connectionConfiguration = _loadDataJobs(arguments)
     memory, _ = _memoryBackend(arguments, jobsFile, connectionConfiguration)
     with memory:
-        graph = DependencyGraph(jobs=jobsFile.jobs, memory=memory.read())
-        watermarks = memory.readWatermarks()
+        schedule = jobSchedule(jobsFile.jobs, memory.read(), memory.readWatermarks())
 
     print('{:<28} {:<10} {:<22} {}'.format('JOB', 'STATE', 'WAITS FOR', 'WATERMARK'))
 
-    for name, job in sorted(jobsFile.jobs.items()):
-        if not job.active:
-            state = 'inactive'
-        elif name not in graph.activeJobs:
-            state = 'throttled'
-        else:
-            state = 'due'
+    for entry in schedule:
+        print('{:<28} {:<10} {:<22} {}'.format(entry['job'], entry['state'], ', '.join(entry['waitsFor']) or '-',
+                                               '-' if entry['watermark'] is None else entry['watermark']))
 
-        waitsFor = ', '.join(graph.activePredecessors.get(name, job.predecessors)) or '-'
-        print('{:<28} {:<10} {:<22} {}'.format(name, state, waitsFor, watermarks.get(name, '-')))
-
-    print('\n{} of {} job(s) due this cycle. "throttled" means inside its `refresh` window.'.format(len(graph.activeJobs), len(jobsFile.jobs)))
+    print('\n{} of {} job(s) due this cycle. "throttled" means inside its `refresh` window.'.format(
+        sum(entry['state'] == DUE for entry in schedule), len(jobsFile.jobs)))
 
     return EXIT_SUCCESS

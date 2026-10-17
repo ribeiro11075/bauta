@@ -105,6 +105,7 @@ nav:
       - guides/run-on-a-schedule.md
       - guides/run-from-an-orchestrator.md
       - guides/watch-what-ran.md
+      - guides/studio.md
       - guides/rotate-the-key.md
       - guides/make-it-faster.md
   - Reference:
@@ -117,6 +118,8 @@ nav:
           - run: reference/commands/run.md
           - validate: reference/commands/validate.md
           - jobs: reference/commands/jobs.md
+          - status: reference/commands/status.md
+          - studio: reference/commands/studio.md
           - history: reference/commands/history.md
           - discover: reference/commands/discover.md
           - subset: reference/commands/subset.md

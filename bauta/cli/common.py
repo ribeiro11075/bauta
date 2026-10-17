@@ -1,26 +1,24 @@
-"""What the commands share: finding and loading the configuration, where run
-state, history and the manifest live, and one connection per alias.
+"""What the commands share: reading the flags into a configuration, where run
+state, history and the manifest live, and how output is written. Loading and
+checking a configuration is bauta.project's, which the commands share with
+anything else that works with one; the names here are the flags' way to it.
 """
 from __future__ import annotations
 
 import argparse
-import contextlib
 import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import yaml
-
-from ..configuration import (Configuration, ConfigurationError, parseYaml, ConnectionConfig, DatabaseConfig, DataJobConfig, DataJobsFile, FilesConnection, IcebergConnection, isLake,
-                             JobsDocument, StorageLocation, TableLocation, expandEnvironmentVariables, readJobsFile)
-from ..database import Database
-from ..database.values import decodedJson
-from ..log import Log
-from ..masking import MaskingError
+from ..configuration import Configuration, ConnectionConfig, DataJobConfig, DataJobsFile, StorageLocation, TableLocation
+from ..database.sessions import Connections, sourceQueryColumns, sourceQuerySample, targetColumns
 from ..jobs.memory import DatabaseMemory, FileMemory, MemoryBackend
-
+from ..log import Log
+from ..project import (CONNECTIONS_FILE, DEFAULT_TABLES, JOBS_FILE, Location, Project, UsageError, checkColumnCounts,
+                       checkMaskingCoverage, configDirectory, describeLocation, loadConnections, loadYaml, lockFileFor, openHistory, readJobs, requireAlias,
+                       requireDatabase, resolveLocation, settingsFor)
 
 EXIT_SUCCESS = 0
 
@@ -34,38 +32,10 @@ EXIT_BAD_CONFIGURATION = 2
 EXIT_INTERRUPTED = 130
 
 
-CONFIG_DIRECTORY_VARIABLE = 'BAUTA_CONFIG'
-
-
 MANIFEST_KEY_VARIABLE = 'BAUTA_MANIFEST_KEY'
 
 
 NOTIFY_URL_VARIABLE = 'BAUTA_NOTIFY_URL'
-
-
-class UsageError(Exception):
-    """A problem with how the command was invoked, rather than with a job."""
-
-
-def _loadYaml(path: Path) -> Any:
-    """Load a YAML file, expanding ${NAME} from the environment."""
-
-    try:
-        with open(path) as file:
-            return expandEnvironmentVariables(parseYaml(file))
-    except FileNotFoundError as error:
-        raise UsageError('no such file: {}'.format(path)) from error
-    except yaml.YAMLError as error:
-        raise UsageError('{} is not valid YAML: {}'.format(path, error)) from error
-
-
-def _readJobs(jobsPath: Path) -> JobsDocument:
-    """The jobs file with the files its `include` names merged in."""
-
-    return readJobsFile(jobsPath, load=_loadYaml)
-
-
-CONNECTIONS_FILE = 'connections.yaml'
 
 
 def _configDirectory(arguments: argparse.Namespace) -> Path:
@@ -73,68 +43,44 @@ def _configDirectory(arguments: argparse.Namespace) -> Path:
     common case is a bare `bauta run`.
     """
 
-    return Path(arguments.config or os.environ.get(CONFIG_DIRECTORY_VARIABLE) or 'configuration')
+    return configDirectory(arguments.config)
 
 
 def _resolveConfigurationPaths(arguments: argparse.Namespace) -> Tuple[Path, Path]:
     """Explicit --jobs/--connections win; otherwise both come from the config directory."""
 
-    configDirectory = _configDirectory(arguments)
-    jobsPath = Path(arguments.jobs) if arguments.jobs else configDirectory / 'jobs.yaml'
-    connectionsPath = Path(arguments.connections) if arguments.connections else configDirectory / CONNECTIONS_FILE
+    directory = _configDirectory(arguments)
+    jobsPath = Path(arguments.jobs) if arguments.jobs else directory / JOBS_FILE
+    connectionsPath = Path(arguments.connections) if arguments.connections else directory / CONNECTIONS_FILE
 
     return jobsPath, connectionsPath
-
-
-Location = Union[Path, TableLocation]
-
-
-DEFAULT_TABLES = {'memory': 'bauta_memory', 'history': 'bauta_history', 'manifest': 'bauta_manifest'}
 
 
 def _resolveLocation(arguments: argparse.Namespace, setting: str, configured: Optional[StorageLocation] = None) -> Optional[Location]:
     """Where run state, history or the manifest goes: the setting's file flag
     (--memory, say), else its database flag (--memory-connection), else what the
-    jobs file says, else None. A file the jobs file names is relative to it,
-    not the working directory, so cron, a shell and CI find the same one
-    wherever they start. --<setting>-table renames the table either way.
+    jobs file says, relative to it, else None. --<setting>-table renames the
+    table either way. See project.resolveLocation.
     """
 
-    fileFlag = getattr(arguments, setting, None)
-    databaseFlag = getattr(arguments, setting + '_connection', None)
-    table = getattr(arguments, setting + '_table', None)
+    jobsPath, _ = _resolveConfigurationPaths(arguments)
 
-    if fileFlag:
-        return Path(fileFlag)
-    if databaseFlag:
-        return TableLocation(connection=databaseFlag, table=table or DEFAULT_TABLES[setting])
-    if isinstance(configured, TableLocation):
-        return TableLocation(connection=configured.connection, table=table or configured.table or DEFAULT_TABLES[setting])
-    if configured:
-        jobsPath, _ = _resolveConfigurationPaths(arguments)
-        return Path(os.path.normpath(jobsPath.parent / configured))
-
-    return None
+    return resolveLocation(jobsPath, setting, configured, path=getattr(arguments, setting, None),
+                           connection=getattr(arguments, setting + '_connection', None), table=getattr(arguments, setting + '_table', None))
 
 
-def _describeLocation(location: Location) -> str:
-
-    return str(location) if isinstance(location, Path) else 'table {} in {}'.format(location.table, location.connection)
-
-
-def _settingsFor(location: TableLocation, connectionConfiguration: Dict[str, ConnectionConfig], writing: bool = True) -> ConnectionConfig:
-    """The connection a table location is in. One that is `readOnly` is
-    refused for writing, naming what was to be kept there: run state on one
-    failed later, as `no such table: bauta_memory`.
-    """
-
-    _requireAlias(connectionConfiguration, location.connection)
-    settings = connectionConfiguration[location.connection]
-    if writing and getattr(settings, 'readOnly', False):
-        raise UsageError('{} is in connection "{}", which is readOnly: keep it in a file, or in a table of another connection'.format(
-            _describeLocation(location), location.connection))
-
-    return settings
+_loadYaml = loadYaml
+_readJobs = readJobs
+_describeLocation = describeLocation
+_settingsFor = settingsFor
+_history = openHistory
+_requireAlias = requireAlias
+_requireDatabase = requireDatabase
+_Connections = Connections
+_sourceQueryColumns = sourceQueryColumns
+_sourceQuerySample = sourceQuerySample
+_targetColumns = targetColumns
+_checkColumnCounts = checkColumnCounts
 
 
 def _refuseReadOnlyLocations(arguments: argparse.Namespace, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig]) -> None:
@@ -168,24 +114,13 @@ def _memoryBackend(arguments: argparse.Namespace, jobsFile: DataJobsFile,
     """
 
     location = _memoryLocation(arguments, jobsFile)
+    jobsPath, _ = _resolveConfigurationPaths(arguments)
+    lockFile = lockFileFor(location, jobsPath, jobsFile.memory)
 
     if isinstance(location, TableLocation):
-        jobsPath, _ = _resolveConfigurationPaths(arguments)
-        wouldBe = jobsFile.memory if isinstance(jobsFile.memory, str) else 'memory.yaml'
-        memory = DatabaseMemory(connectionSettings=_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['memory'])
-        return memory, Path(os.path.normpath(jobsPath.parent / wouldBe)).with_name('memory.run.lock')
+        return DatabaseMemory(connectionSettings=_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['memory']), lockFile
 
-    return FileMemory(memoryFile=location), location.with_name(location.name + '.run.lock')
-
-
-def _history(location: Location, connectionConfiguration: Dict[str, ConnectionConfig], writing: bool = True) -> Any:
-
-    from ..jobs.reporting import DatabaseHistory, FileHistory
-
-    if isinstance(location, Path):
-        return FileHistory(location)
-
-    return DatabaseHistory(connectionSettings=_settingsFor(location, connectionConfiguration, writing), table=location.table or DEFAULT_TABLES['history'])
+    return FileMemory(memoryFile=location), lockFile
 
 
 def _configureLogging(arguments: argparse.Namespace) -> Log:
@@ -208,25 +143,22 @@ def _loadConnections(arguments: argparse.Namespace) -> Dict[str, ConnectionConfi
 
     _, connectionsPath = _resolveConfigurationPaths(arguments)
 
-    return Configuration.validateConnectionConfiguration(_loadYaml(connectionsPath), directory=str(connectionsPath.parent))
+    return loadConnections(connectionsPath)
+
+
+def _loadProject(arguments: argparse.Namespace) -> Project:
+    """The configuration the flags name, loaded and validated."""
+
+    jobsPath, connectionsPath = _resolveConfigurationPaths(arguments)
+
+    return Project.load(directory=_configDirectory(arguments), jobsPath=jobsPath, connectionsPath=connectionsPath)
 
 
 def _loadDataJobs(arguments: argparse.Namespace) -> Tuple[DataJobsFile, Dict[str, ConnectionConfig]]:
 
-    jobsPath, connectionsPath = _resolveConfigurationPaths(arguments)
-    connectionConfiguration = Configuration.validateConnectionConfiguration(_loadYaml(connectionsPath), directory=str(connectionsPath.parent))
-    jobsFile = Configuration.validateJobConfiguration(_readJobs(jobsPath).content, DataJobsFile)
-    Configuration.validateJobGraph(jobsFile.jobs, connections=connectionConfiguration)
+    project = _loadProject(arguments)
 
-    unknown = ['{}: connection "{}" is not a known connection alias'.format(setting, location.connection)
-               for setting, location in jobsFile.tableLocations().items() if location.connection not in connectionConfiguration]
-    unknown += ['{}: connection "{}" is a files or Iceberg connection; {} is kept in a database table or a file'.format(
-                    setting, location.connection, setting)
-                for setting, location in jobsFile.tableLocations().items() if isLake(connectionConfiguration.get(location.connection))]
-    if unknown:
-        raise ConfigurationError('Invalid configuration in {}:\n'.format(jobsPath) + '\n'.join(unknown))
-
-    return jobsFile, connectionConfiguration
+    return project.jobsFile, project.connections
 
 
 def _selectJobs(jobs: Dict[str, DataJobConfig], requested: Optional[List[str]], log: Log) -> Dict[str, DataJobConfig]:
@@ -260,123 +192,10 @@ def _toolVersion() -> str:
         return 'unknown'
 
 
-class _Connections:
-    """One open connection per alias, for a command that asks many things of the
-    same few databases -- a dry run, `audit --connect` -- rather than one per
-    question, each running passwordCommand again.
-
-    A connection whose statement failed is closed and forgotten, since
-    PostgreSQL refuses anything more on it until rolled back; the next use
-    opens a fresh one.
-    """
-
-    def __init__(self, connectionConfiguration: Mapping[str, ConnectionConfig]) -> None:
-        self._settings = connectionConfiguration
-        self._open: Dict[str, Database] = {}
-
-
-    @contextlib.contextmanager
-    def use(self, alias: str) -> Generator[Database, None, None]:
-
-        database = self._open.get(alias)
-        if database is None:
-            database = self._open[alias] = Database(connectionSettings=self._settings[alias])
-
-        try:
-            yield database
-        except BaseException:
-            self._open.pop(alias, None)
-            with contextlib.suppress(Exception):
-                database.close()
-            raise
-
-
-    def __enter__(self) -> '_Connections':
-
-        return self
-
-
-    def __exit__(self, *exception: Any) -> None:
-
-        for database in self._open.values():
-            with contextlib.suppress(Exception):
-                database.close()
-        self._open.clear()
-
-
-def _sourceQueryColumns(job: DataJobConfig, connections: _Connections) -> List[str]:
-    """The columns a job's sourceQuery returns, by reading and discarding one
-    row, since rewriting arbitrary SQL isn't portable.
-    """
-
-    with connections.use(job.sourceConnection) as database:
-        query = job.sourceQuery
-        parameters = None
-        if job.watermarkColumn:
-            query, parameters = database.bindWatermark(query, job.watermarkInitial)
-        columns, chunks = database.stream(query=query, chunkSize=1, parameters=parameters)
-        chunks.close()
-
-    return columns
-
-
-def _sourceQuerySample(job: DataJobConfig, connections: _Connections, rows: int) -> Tuple[List[str], List[Tuple[Any, ...]]]:
-    """The columns a job's sourceQuery returns, and up to `rows` of its rows
-    from the start, without reading the rest. They stay in memory: nothing
-    that reads them may report a value.
-    """
-
-    with connections.use(job.sourceConnection) as database:
-        query = job.sourceQuery
-        parameters = None
-        if job.watermarkColumn:
-            query, parameters = database.bindWatermark(query, job.watermarkInitial)
-        columns, chunks = database.stream(query=query, chunkSize=max(1, rows), parameters=parameters)
-        with chunks:
-            sampled = next(chunks, []) if rows else []
-
-    # JSON parsed, since it is classified rather than loaded; see decodedJson.
-    return columns, decodedJson(sampled, getattr(chunks, 'description', None), database.type)
-
-
-def _targetColumns(job: DataJobConfig, connections: _Connections) -> List[str]:
-    """The target's columns, in the order a load fills them."""
-
-    with connections.use(job.targetConnection) as database:
-        return database.getAllColumnNames(table=job.targetTableFinal)
-
-
-def _checkColumnCounts(name: str, job: DataJobConfig, returned: Sequence[str], targetColumns: Sequence[str]) -> Optional[str]:
-    """Whether sourceQuery returns as many columns as the load fills.
-
-    `targetColumns` on the job names the ones it fills; without it the load
-    fills every column the target has.
-    """
-
-    filled = list(job.targetColumns) if job.targetColumns else list(targetColumns)
-
-    if len(returned) == len(filled):
-        return None
-
-    return ('{}: sourceQuery returns {} column(s) {} and the load fills {} in {} ({}). '
-            'List the ones the query fills in targetColumns, in the query\'s order'.format(
-                name, len(returned), list(returned), len(filled), job.targetTableFinal, ', '.join(filled)))
-
-
 def _checkMaskingCoverage(name: str, job: DataJobConfig, returned: Sequence[str], log: Log) -> Optional[str]:
     """Whether the job's masking policy covers every column its query returns."""
 
-    from ..masking import MaskingPlan
-
-    assert job.masking is not None
-    try:
-        plan = MaskingPlan(key=job.masking.key.get_secret_value(), columns=job.masking.columns, defaultStrategy=job.masking.defaultStrategy)
-        plan.bind(returned)
-        log.logging.info('{}: masking policy covers all {} column(s), key {}'.format(name, len(returned), plan.fingerprint))
-    except MaskingError as error:
-        return '{}: {}'.format(name, error)
-
-    return None
+    return checkMaskingCoverage(name, job, returned)
 
 
 def _writeOutput(text: str, output: Optional[str]) -> None:
@@ -419,24 +238,3 @@ def _discoveryRules(arguments: argparse.Namespace) -> Any:
     from ..generate.discovery import discoveryRules
 
     return discoveryRules(_discoveryRulesFile(arguments)[1])
-
-
-def _requireAlias(connectionConfiguration: Dict[str, ConnectionConfig], alias: str) -> None:
-
-    if alias not in connectionConfiguration:
-        raise UsageError('no connection alias {!r}. Known aliases: {}'.format(alias, ', '.join(sorted(connectionConfiguration))))
-
-
-def _requireDatabase(connectionConfiguration: Dict[str, ConnectionConfig], alias: str) -> DatabaseConfig:
-    """The alias's settings, which must be a database's: the commands that
-    read catalogs or generate tables have nothing to ask of a directory.
-    """
-
-    _requireAlias(connectionConfiguration, alias)
-    settings = connectionConfiguration[alias]
-    if isLake(settings):
-        raise UsageError('{} is a {} connection; this command works with databases. A job writing to it names it as its '
-                         'targetConnection'.format(alias, settings.type.value))
-    assert not isinstance(settings, (FilesConnection, IcebergConnection))
-
-    return settings
