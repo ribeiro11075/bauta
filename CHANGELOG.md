@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## 0.3.0 — 2026-10-17
+## 0.2.7 — 2026-10-17
 
 bauta Studio, a web console a team runs on its own infrastructure, as part of bauta and under the same licence: sign in to watch runs as they go, start, rerun and cancel them, prove the copy is safe and hand a reviewer a run's evidence, review new columns and build subsets, and edit jobs, each change validated and recorded with who made it. The CLI gains what Studio is built on, and is unchanged without it: `bauta status` shows what's running now, with the rows each job has written so far; one run id follows a cycle from its first log line to its history and manifest; and `bauta.project` gives a program the configuration directory and the commands' checks as data. Nothing in this release is breaking, and no mask changes.
 
