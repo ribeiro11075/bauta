@@ -5,7 +5,9 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.3.0 — 2026-10-17
+
+bauta Studio, a web console a team runs on its own infrastructure, as part of bauta and under the same licence: sign in to watch runs as they go, start, rerun and cancel them, prove the copy is safe and hand a reviewer a run's evidence, review new columns and build subsets, and edit jobs, each change validated and recorded with who made it. The CLI gains what Studio is built on, and is unchanged without it: `bauta status` shows what's running now, with the rows each job has written so far; one run id follows a cycle from its first log line to its history and manifest; and `bauta.project` gives a program the configuration directory and the commands' checks as data. Nothing in this release is breaking, and no mask changes.
 
 ### Added
 - **bauta Studio, a web console for a team, run on your own infrastructure**: `pip install "bauta[studio]"`, then `bauta studio serve`. People sign in -- viewers, operators, admins -- to watch runs as they go, with the rows each job has written so far; start, rerun and cancel them; see where each job stands on its schedule and which have gone stale; read each job's trend of rows and duration; check coverage, the audit and every manifest, and download a run's evidence for a reviewer; accept the policies discover proposes for new columns; and edit the jobs files, as text or a form, each change validated, kept and recorded with who made it. It runs `bauta run` as cron does, under the same lock, and never shows a key, a password or a value from a table. See [Studio](docs/guides/studio.md). It also checks coverage, the connected audit, discovery and references every night and lists what is new since the last check; builds a subset, previewed with each table's rows; measures a job's read and mask speed against its source; and compares two runs job by job.
