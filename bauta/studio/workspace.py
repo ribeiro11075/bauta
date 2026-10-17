@@ -121,7 +121,11 @@ def summarizeRun(runId: str, jobs: List[Dict[str, Any]], live: Optional[Dict[str
     for job in jobs:
         counts[job['status']] = counts.get(job['status'], 0) + 1
 
-    return {'runId': runId, 'status': 'stopped' if live is not None and live.get('alive') is False else _runStatus(jobs),
+    # A live run is running while its process is, even once every job is
+    # decided: it has history and its manifest still to write.
+    status = _runStatus(jobs) if live is None else 'stopped' if live.get('alive') is False else 'running'
+
+    return {'runId': runId, 'status': status,
             'startedAt': (live or {}).get('startedAt') or (min(started) if started else None),
             'finishedAt': None if live is not None else (max(finished) if finished else None),
             'jobCount': len(jobs), 'counts': counts, 'rowCount': sum(job.get('rowCount') or 0 for job in jobs),

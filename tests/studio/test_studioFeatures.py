@@ -77,9 +77,15 @@ def _plantLive(settings, runId, pid, host=None):
 
 
 def test_cancelling_a_live_run_sends_it_sigterm_and_is_recorded(signIn, settings):
-    # Standing in for `bauta run`: a process whose command line names bauta.
-    process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', 'bauta'])
+    from bauta.studio.launcher import commandOf, isBautaRun
+
+    # Standing in for `bauta run`: a process whose command line reads as one,
+    # once it has started.
+    process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', 'bauta', 'run'])
     try:
+        deadline = time.time() + 10
+        while not isBautaRun(commandOf(process.pid)) and time.time() < deadline:
+            time.sleep(0.05)
         _plantLive(settings, 'live-run', process.pid)
         client = signIn('operator')
 
@@ -91,6 +97,31 @@ def test_cancelling_a_live_run_sends_it_sigterm_and_is_recorded(signIn, settings
 
     activity = signIn('admin').get('/api/activity').json()['activity']
     assert any(entry['action'] == 'cancelled a run' and entry['target'] == 'live-run' for entry in activity)
+
+
+def test_only_a_bauta_run_is_taken_for_one():
+    from bauta.studio.launcher import isBautaRun
+
+    assert isBautaRun(['/usr/local/bin/bauta', 'run', '--config', 'c'])
+    assert isBautaRun(['/usr/bin/python3', '-m', 'bauta', 'run', '--job', 'x'])
+    assert not isBautaRun(['/home/me/bauta/.venv/bin/python', '-m', 'pytest'])
+    assert not isBautaRun(['/usr/local/bin/bauta', 'studio', 'serve'])
+    assert not isBautaRun(['sleep', '60'])
+    assert not isBautaRun([])
+
+
+def test_a_process_that_is_not_bauta_run_is_not_cancelled(signIn, settings):
+    process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    try:
+        _plantLive(settings, 'not-bauta', process.pid)
+
+        response = signIn('operator').post('/api/runs/not-bauta/cancel')
+
+        assert response.status_code == 409 and 'no longer the run' in response.json()['detail']
+        assert process.poll() is None
+    finally:
+        process.kill()
+        process.wait()
 
 
 def test_a_run_elsewhere_or_already_over_is_not_cancelled(signIn, settings):

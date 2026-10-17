@@ -195,3 +195,9 @@ class Database:
     def open(self) -> Session:
 
         return self._sessions()
+
+
+    def close(self) -> None:
+        """Closes every connection the database holds."""
+
+        self.engine.dispose()

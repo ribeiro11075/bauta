@@ -191,15 +191,34 @@ class CancelRefused(Exception):
     """A run that can't be cancelled from here, and why."""
 
 
-def _commandOf(pid: int) -> str:
-    """The process's command line, or '' if it can't be read: what tells a
-    run's process from another that took its id once it ended.
+def commandOf(pid: int) -> List[str]:
+    """The process's command line, as its arguments, or [] if it can't be
+    read: what tells a run's process from another that took its id since.
+    Linux's /proc first, since a slim container has no `ps`.
     """
 
     try:
-        return subprocess.run(['ps', '-p', str(pid), '-o', 'command='], capture_output=True, text=True, timeout=5).stdout.strip()
+        with open('/proc/{}/cmdline'.format(pid), 'rb') as file:
+            return [part.decode('utf-8', 'replace') for part in file.read().split(b'\0') if part]
+    except OSError:
+        pass
+    try:
+        return subprocess.run(['ps', '-p', str(pid), '-o', 'command='], capture_output=True, text=True, timeout=5).stdout.split()
     except (OSError, subprocess.SubprocessError):
-        return ''
+        return []
+
+
+def isBautaRun(arguments: List[str]) -> bool:
+    """Whether a command line is `bauta run`: the `bauta` program, or
+    `python -m bauta`, and then `run`.
+    """
+
+    for position, argument in enumerate(arguments):
+        program = os.path.basename(argument) == 'bauta' or (argument == 'bauta' and position > 0 and arguments[position - 1] == '-m')
+        if program and 'run' in arguments[position + 1:]:
+            return True
+
+    return False
 
 
 def cancelRun(live: Dict[str, Any]) -> None:
@@ -214,7 +233,7 @@ def cancelRun(live: Dict[str, Any]) -> None:
     pid = int(live['pid'])
     if not _alive(pid):
         raise CancelRefused('the run has already ended')
-    if 'bauta' not in _commandOf(pid):
+    if not isBautaRun(commandOf(pid)):
         raise CancelRefused('process {} is no longer the run'.format(pid))
 
     os.kill(pid, signal.SIGTERM)

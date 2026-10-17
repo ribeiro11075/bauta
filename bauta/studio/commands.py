@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import sys
 
@@ -28,14 +29,21 @@ def serve(arguments: argparse.Namespace) -> int:
     settings = _settings(arguments)
     settings.dataDirectory.mkdir(parents=True, exist_ok=True)
     app = createApp(settings)
-    with Database(settings.databaseUrl).open() as session:
-        if session.scalar(select(User).limit(1)) is None:
-            print('No accounts yet. Add the first admin with:\n  bauta studio create-user --email you@example.com', file=sys.stderr)
+    database = Database(settings.databaseUrl)
+    try:
+        with database.open() as session:
+            if session.scalar(select(User).limit(1)) is None:
+                print('No accounts yet. Add the first admin with:\n  bauta studio create-user --email you@example.com', file=sys.stderr)
+    finally:
+        database.close()
     if arguments.host != DEFAULT_HOST and not settings.secureCookies:
         print('Warning: cookies are not marked Secure, and Studio is listening beyond this machine. Serve it behind TLS.', file=sys.stderr)
 
     # One process: the runs Studio starts are tracked in it.
-    uvicorn.run(app, host=arguments.host, port=arguments.port, proxy_headers=True, forwarded_allow_ips=arguments.forwarded_allow_ips)
+    try:
+        uvicorn.run(app, host=arguments.host, port=arguments.port, proxy_headers=True, forwarded_allow_ips=arguments.forwarded_allow_ips)
+    finally:
+        app.state.database.close()
 
     return 0
 
@@ -62,7 +70,8 @@ def createUser(arguments: argparse.Namespace) -> int:
         return 2
 
     email = arguments.email.strip().lower()
-    with Database(settings.databaseUrl).open() as session:
+    database = Database(settings.databaseUrl)
+    with contextlib.closing(database), database.open() as session:
         if session.scalar(select(User).where(User.email == email)) is not None:
             print('{} already has an account.'.format(email), file=sys.stderr)
             return 2
