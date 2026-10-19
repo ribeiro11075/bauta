@@ -15,7 +15,7 @@ doctest = false
 
 [dependencies]
 bauta-core = { path = "../core" }
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310", "num-bigint"] }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310", "num-bigint"] }
 num-bigint = "0.4"
 # Masks a chunk's distinct values across cores; see Masker::maskColumn.
 rayon = "1.10"
