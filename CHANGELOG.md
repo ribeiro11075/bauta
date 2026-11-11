@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.9 — 2026-11-10
 
 Jobs can read tables of files, Studio's failures keep values out of its logs and activity, and its tables now upgrade in place. No mask changes.
 
