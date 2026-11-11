@@ -5,6 +5,28 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## Unreleased
+
+Jobs can read tables of files, Studio's failures keep values out of its logs and activity, and its tables now upgrade in place. No mask changes.
+
+### Breaking
+- **Studio refuses an edit that starts calling a transform from a module the jobs files don't already use**, beyond bauta's own. A transform is any callable in any installed module, so an edit naming `os:system` could run commands as Studio's account. Name allowed modules in `BAUTA_STUDIO_TRANSFORM_MODULES`, or add the transform in the file where it is managed.
+- **Studio's sign-in limit counts by email and address together**, with wider limits by address and by email. Behind a proxy on another machine, `--forwarded-allow-ips` must name it, or every sign-in counts as the proxy's address.
+
+### Added
+- **Files as a source.** A job can name a `files` connection as its `sourceConnection` and read its Parquet, CSV or JSON Lines with SQL, locally or in S3, Google Cloud Storage or Azure, through the same streaming, masking, watermarks and partitions as a database. An overwrite job's table reads as its newest complete snapshot. The query can reach nothing outside the connection's root. The `files` extra now installs DuckDB.
+- **Studio's tables upgrade in place** with Alembic, which the `studio` extra now installs. A database from 0.2.7 is recognized and kept.
+
+### Fixed
+- **Studio no longer writes a value a driver quoted into its activity log or server log.** A scheduled check's failure was kept as raw text, and an unhandled failure was written out by the server as it stood. Checks that can't reach a database now answer with the reason, scrubbed, and an unexpected failure answers without detail and is logged scrubbed.
+- **Editing in Studio works where `include` reaches outside the configuration directory.** Every edit was refused, or failed; an edit is now checked in place rather than in a copy of the directory, which also copied run state and any database kept there. Two edits at once can no longer both pass the check that the file is as it was read.
+- **Studio's sign-in can't be used to lock an account's owner out from elsewhere, or to fill its memory**, and only four passwords are checked at once.
+- **Two requests archiving the same manifest at once no longer fail one of them.**
+- **A benchmark interrupted by Studio restarting is marked failed** rather than staying `running`, which disabled its job's Measure button for good. A job is measured once at a time, and at most two at once.
+
+### Changed
+- **A release runs all of CI first**, real databases included, and nothing is published if it fails. CI builds and tests Studio's web app, and the dependency audit and Dependabot cover it.
+
 ## 0.2.7 — 2026-10-17
 
 bauta Studio, a web console a team runs on its own infrastructure, as part of bauta and under the same licence: sign in to watch runs as they go, start, rerun and cancel them, prove the copy is safe and hand a reviewer a run's evidence, review new columns and build subsets, and edit jobs, each change validated and recorded with who made it. The CLI gains what Studio is built on, and is unchanged without it: `bauta status` shows what's running now, with the rows each job has written so far; one run id follows a cycle from its first log line to its history and manifest; and `bauta.project` gives a program the configuration directory and the commands' checks as data. Nothing in this release is breaking, and no mask changes.

@@ -1,6 +1,6 @@
 # Keeps the pinned versions current: the actions (pinned to commits, with the
 # release in a comment), the dev tools and dependency ranges in pyproject.toml,
-# and the native masker's Rust crates. Grouped, so each ecosystem is one pull
+# the native masker's Rust crates, and Studio's web app. Grouped, so each ecosystem is one pull
 # request a week rather than one per package.
 version: 2
 updates:
@@ -29,6 +29,14 @@ updates:
     ignore:
       # Released with bauta at the same version, and must equal it.
       - dependency-name: bauta-rs
+
+  - package-ecosystem: npm
+    directory: /studio/web
+    schedule:
+      interval: weekly
+    groups:
+      web:
+        patterns: ["*"]
 
   - package-ecosystem: cargo
     directory: /mask-rs

@@ -6,6 +6,9 @@ import inspect
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# function_name, optionally followed by an argument list: truncate(50)
+_CALL = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\((.*)\))?\s*$', re.DOTALL)
+
 Transformer = Callable[[Any], Any]
 
 
@@ -21,10 +24,6 @@ class TransformError(Exception):
     unmasked production rows. The original exception isn't chained, since it
     may quote the value.
     """
-
-
-# function_name, optionally followed by an argument list: truncate(50)
-_CALL = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\((.*)\))?\s*$', re.DOTALL)
 
 
 def _parseArguments(reference: str, text: str) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:

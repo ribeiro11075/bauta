@@ -14,6 +14,7 @@ The behaviour behind the fields in [configuration.md](../reference/configuration
 - [Masking](#masking)
 - [Moving values between drivers](#moving-values-between-drivers)
 - [Files as a target](#files-as-a-target)
+- [Files as a source](#files-as-a-source)
 - [Iceberg tables](#iceberg-tables)
 
 
@@ -440,6 +441,37 @@ A timestamp has a space where ISO 8601 has a `T`: it is what Hive, Athena and Sp
 CSV quotes every text value, doubles a quote within one, and writes a header in every part, so each part reads on its own. JSON Lines writes every column in every line, in the table's order.
 
 A JSON document is nested only in a column that has held one -- a dictionary or list from the driver, such as PostgreSQL's `jsonb` -- and only where its text is a JSON object or array; anything else there, and every other text column, is written as a string.
+
+
+## Files as a source
+
+A job can name a `files` connection as its `sourceConnection`, and read its tables with SQL. Past the query, nothing differs from reading a database: rows are streamed a chunk at a time, transformed, and masked, every column must be covered, and watermarks and partitions work as they do elsewhere.
+
+```yaml
+copyOrders:
+  sourceConnection: lake
+  sourceQuery: SELECT id, email, total FROM "sales/orders" WHERE id > {{ watermark }}
+  watermarkColumn: id
+  watermarkInitial: 0
+  targetConnection: staging
+  targetTableFinal: orders
+  insertStrategy: upsert
+  masking:
+    key: ${MASKING_KEY}
+    columns: {id: keep, email: email, total: keep}
+```
+
+The query is DuckDB's SQL, answered by an in-memory DuckDB over the connection's files, read through pyarrow with the connection's own credentials. A table is named by its path under `root`, quoted where it holds anything but letters, digits and underscores, and is one of:
+
+- **A directory of files,** every file under it unless a part of its path begins with `_` or `.`, which is how Spark and Hive mark their own. Directories named `column=value` become columns.
+- **What an overwrite job left:** its newest complete snapshot alone, since each holds the whole table.
+- **A single file,** by its own name, or as `singleFile` names it: `orders` for `orders.parquet`.
+
+All of a connection's tables are read in its `format`, with its `delimiter` for CSV. Gzipped text is told by a name ending in `.gz`. A CSV's column types are inferred from its first rows; where they guess wrong, `CAST` in the query.
+
+The query reaches nothing but the tables under `root`: DuckDB's access to other files is turned off before it runs, so `read_csv('/etc/passwd')` is refused, and so is writing a file. A dry run asks a connection jobs only read to be listable, not writable.
+
+Files have no catalog to read, so `discover --update` and `verify-references` pass over these jobs and `coverage` refuses the connection: name the columns in the masking policy yourself, and `audit --connect` will check each against what the query returns.
 
 
 ## Iceberg tables

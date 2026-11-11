@@ -13,6 +13,10 @@ from typing import Any, Dict, List, Sequence, Union
 from ..core import MaskingError, Strategy, canonical
 from .common import _asciiDigits, _booleanOption, _inScriptOf, _integerOption, _normalizeOption, _numberOption, _textOption, _typeName, structuredText
 
+# The significant digits `number` computes in. mask-rs/core/src/number.rs
+# repeats the arithmetic at the same precision.
+_PRECISION = 60
+
 
 class KeepStrategy(Strategy):
     """Leave the column as it is. The explicit way to say a column was reviewed."""
@@ -184,11 +188,6 @@ class DigitsStrategy(Strategy):
         masked = ''.join(next(replacement) if '0' <= character <= '9' else character for character in normalized)
 
         return _inScriptOf(value, masked)
-
-
-# The significant digits `number` computes in. mask-rs/core/src/number.rs
-# repeats the arithmetic at the same precision.
-_PRECISION = 60
 
 
 class NumberStrategy(Strategy):

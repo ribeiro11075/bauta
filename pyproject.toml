@@ -70,8 +70,9 @@ sqlite = []
 duckdb = ["duckdb>=1.5", "pyarrow>=21", "pytz>=2024.1"]
 # Parquet, CSV and JSON Lines for a files connection, written through pyarrow:
 # 21 is the first with every Azure credential (a SAS token, a service
-# principal) and a copy of any size there
-files = ["pyarrow>=21"]
+# principal) and a copy of any size there. DuckDB answers a sourceQuery reading
+# them, and needs pytz as the duckdb extra says
+files = ["pyarrow>=21", "duckdb>=1.5", "pytz>=2024.1"]
 # Iceberg tables through a Glue, REST or SQL catalog; boto3 for Glue and
 # SQLAlchemy for a SQL catalog come with pyiceberg's extras
 iceberg = ["pyiceberg[pyarrow,glue,sql-sqlite]>=0.12", "pyarrow>=21"]
@@ -85,7 +86,8 @@ native = ["bauta-rs==0.2.7"]
 # bauta Studio, the web console: `bauta studio serve`. The web app itself is
 # built into bauta/studio/static, so nothing here needs Node.
 # ruamel.yaml changes one job in a jobs file and keeps its comments and layout.
-studio = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "sqlalchemy>=2.0.18", "argon2-cffi>=23.1", "ruamel.yaml>=0.18"]
+# alembic upgrades Studio's own tables in place from one release to the next.
+studio = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "sqlalchemy>=2.0.18", "alembic>=1.13", "argon2-cffi>=23.1", "ruamel.yaml>=0.18"]
 # The documentation site (mkdocs.yml), pinned like dev so a build is the same
 # everywhere; website/ holds its theme and hooks
 docs = ["mkdocs==1.6.1", "mkdocs-material==9.7.7", "mike==2.2.0"]

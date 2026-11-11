@@ -10,13 +10,16 @@ import shlex
 import subprocess
 from typing import Any, List, Union
 
+# ${NAME}, ${NAME:-default} or ${file:/path}; $${...} escapes one.
+ENVIRONMENT_VARIABLE = re.compile(r'(\$?)\$\{(?:file:([^}]+)|([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?)\}')
+PASSWORD_COMMAND_TIMEOUT_SECONDS = 60
+# A run of characters a token is written in -- base64, base64url, hex, a JWT's
+# dots -- long enough to be one rather than a word of a message.
+_TOKEN_LIKE = re.compile(r'[A-Za-z0-9+/=_.%~-]{24,}')
+
 
 class ConfigurationError(Exception):
     """Raised when user-supplied YAML configuration fails validation."""
-
-
-# ${NAME}, ${NAME:-default} or ${file:/path}; $${...} escapes one.
-ENVIRONMENT_VARIABLE = re.compile(r'(\$?)\$\{(?:file:([^}]+)|([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?)\}')
 
 
 def _expand(value: Any, missing: List[str]) -> Any:
@@ -81,9 +84,6 @@ def expandEnvironmentVariables(value: Any) -> Any:
     return expanded
 
 
-PASSWORD_COMMAND_TIMEOUT_SECONDS = 60
-
-
 class PasswordCommandError(RuntimeError):
     """passwordCommand failed. Not a ConfigurationError: the usual cause -- a
     token service that's briefly unreachable -- is worth a retry.
@@ -110,11 +110,6 @@ def splitPasswordCommand(command: Union[str, List[str]]) -> List[str]:
         raise ValueError('passwordCommand names no program to run')
 
     return arguments
-
-
-# A run of characters a token is written in -- base64, base64url, hex, a JWT's
-# dots -- long enough to be one rather than a word of a message.
-_TOKEN_LIKE = re.compile(r'[A-Za-z0-9+/=_.%~-]{24,}')
 
 
 def _withoutSecrets(stderr: str, stdout: str) -> str:

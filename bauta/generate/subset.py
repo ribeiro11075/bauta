@@ -15,14 +15,13 @@ from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Se
 from ..configuration import findCycle
 from ..database.dialects import ForeignKey
 
-
-class SubsetError(Exception):
-    """The schema can't be subset as asked: a cycle, or a chain too deep."""
-
-
 # The longest chain of selections a query may carry. N tables followed down
 # and back up need 2N - 1; MySQL refuses 33 ("Too high level of nesting").
 MAX_SELECTION_DEPTH = 32
+
+
+class SubsetError(Exception):
+    """The schema can't be subset as asked: a cycle, or a chain too deep."""
 
 
 class SubsetPlan(NamedTuple):

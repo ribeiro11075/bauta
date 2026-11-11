@@ -202,3 +202,33 @@ def test_the_dry_run_check_writes_lists_and_leaves_nothing(cloud, bucket):
 def test_the_dry_run_check_fails_for_a_bucket_that_is_not_there(cloud, bucket):
     with pytest.raises(OSError):
         checkWritable(_lake(cloud, 'bauta-missing-{}'.format(uuid.uuid4().hex[:8])))
+
+
+def test_what_a_job_wrote_there_a_job_reads_back(cloud, bucket, source):
+    """Reading goes through each cloud's own listing, where a directory is only
+    a prefix, so what works on a disk proves nothing here."""
+
+    from bauta.lake.source import FileSource
+
+    for _ in range(2):
+        _run(cloud, bucket, source)
+
+    with FileSource(_lake(cloud, bucket)) as lake:
+        _, chunks = lake.stream('select count(*), count(distinct id) from "crm/customers"', chunkSize=10)
+        with chunks:
+            assert [row for chunk in chunks for row in chunk] == [(ROWS, ROWS)]
+
+
+def test_the_dry_run_asks_a_source_only_to_be_listed(cloud, bucket):
+    from bauta.lake import checkReadable
+
+    checkReadable(_lake(cloud, bucket))
+
+    assert cloud.files(bucket) == []
+
+
+def test_the_dry_run_fails_for_a_source_bucket_that_is_not_there(cloud, bucket):
+    from bauta.lake import checkReadable
+
+    with pytest.raises(OSError):
+        checkReadable(_lake(cloud, 'bauta-missing-{}'.format(uuid.uuid4().hex[:8])))

@@ -116,6 +116,14 @@ _PATTERNS: List[Tuple['re.Pattern[str]', str]] = [(re.compile(pattern, flags), r
     # DuckDB: Type INT64 with value 99999999999 can't be cast ... -- unquoted
     (r'(with value ).*?( can\'t be cast)', 0, r'\1' + REDACTED + r'\2'),
     )]
+# The word before a quote that says the quote names something rather than
+# quoting data: `relation "orders"`, `for key 'users.email'`, `in object
+# 'dbo.orders'`. Bare `key` isn't one: DuckDB writes `Duplicate key "id: 5"`.
+_IDENTIFIER_BEFORE = re.compile(
+    r'(?:\b(?:relation|table|column|constraint|index|schema|database|catalog|type|function|procedure|view|sequence|object|role|user|'
+    r'trigger|encoding|collation|extension|file|directory|for key|of key|format specifier)|\b(?:table or view)):?\s*$', re.IGNORECASE)
+# pymssql's message: the repr of (code, bytes), the whole text in one quote.
+_PYMSSQL_MESSAGE = re.compile(r'(\(\d+, b)([\'"])(.*)\2(\)\s*)$', re.DOTALL)
 
 
 def scrubText(text: str) -> str:
@@ -129,17 +137,6 @@ def scrubText(text: str) -> str:
         text = pattern.sub(replacement, text)
 
     return text
-
-
-# The word before a quote that says the quote names something rather than
-# quoting data: `relation "orders"`, `for key 'users.email'`, `in object
-# 'dbo.orders'`. Bare `key` isn't one: DuckDB writes `Duplicate key "id: 5"`.
-_IDENTIFIER_BEFORE = re.compile(
-    r'(?:\b(?:relation|table|column|constraint|index|schema|database|catalog|type|function|procedure|view|sequence|object|role|user|'
-    r'trigger|encoding|collation|extension|file|directory|for key|of key|format specifier)|\b(?:table or view)):?\s*$', re.IGNORECASE)
-
-# pymssql's message: the repr of (code, bytes), the whole text in one quote.
-_PYMSSQL_MESSAGE = re.compile(r'(\(\d+, b)([\'"])(.*)\2(\)\s*)$', re.DOTALL)
 
 
 def _quotes(text: str) -> Iterator[Tuple[int, str]]:

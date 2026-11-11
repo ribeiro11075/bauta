@@ -62,7 +62,7 @@ lake:
   requireMasking: true
 ```
 
-A directory -- on this machine, or in Amazon S3, Google Cloud Storage or Azure Blob Storage -- that jobs write tables of files into, for a data lake or a handoff. Install it with `pip install "bauta[files]"`, which brings pyarrow; the clouds need nothing more. It is a target only: a job naming it as `sourceConnection`, and `discover`, `subset`, `schema`, `synthesize`, `coverage` and `clear`, are refused, and so is keeping run state, history or a manifest in it. A job writing to it takes `insertStrategy: append` or `overwrite` ([load](jobs.md#load)); [files as a target](../concepts/how-it-works.md#files-as-a-target) describes what a run leaves where.
+A directory -- on this machine, or in Amazon S3, Google Cloud Storage or Azure Blob Storage -- of tables of files, for a data lake or a handoff. Install it with `pip install "bauta[files]"`, which brings pyarrow and DuckDB; the clouds need nothing more. `discover`, `subset`, `schema`, `synthesize`, `coverage` and `clear` work with databases and refuse it, and so does keeping run state, history or a manifest in it. A job writing to it takes `insertStrategy: append` or `overwrite` ([load](jobs.md#load)); [files as a target](../concepts/how-it-works.md#files-as-a-target) describes what a run leaves where. A job can also name it as `sourceConnection`, and read its tables with SQL: see [files as a source](../concepts/how-it-works.md#files-as-a-source).
 
 | Setting | Required or default | Meaning |
 | --- | --- | --- |

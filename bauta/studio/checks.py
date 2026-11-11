@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..configuration import isLake
+from ..log.scrubbing import describeError
 from ..project import Project
 from .db import Activity, Check, Database, Setting
 
@@ -233,8 +234,9 @@ def runScheduled(session: Session, project: Project) -> Dict[str, str]:
             outcomes[kind] = 'done'
         except Exception as error:
             session.rollback()
-            logger.warning('The scheduled {} check failed: {}'.format(kind, error))
-            outcomes[kind] = 'failed: {}'.format(str(error)[:300])
+            described = describeError(error)
+            logger.warning('The scheduled {} check failed: {}'.format(kind, described))
+            outcomes[kind] = 'failed: {}'.format(described[:300])
     record(session, None, 'ran the scheduled checks', ', '.join(outcomes), **outcomes)
     session.commit()
 
@@ -251,4 +253,4 @@ def scheduleLoop(database: Database, loadProject: Callable[[], Project], stop: t
                 if due(session, clock()):
                     runScheduled(session, loadProject())
         except Exception as error:
-            logger.warning('The check schedule could not run: {}'.format(error))
+            logger.warning('The check schedule could not run: {}'.format(describeError(error)))

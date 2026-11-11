@@ -122,7 +122,7 @@ def test_a_limit_must_be_above_zero(value):
 
 
 def test_a_lake_takes_no_read_limit(tmp_path):
-    """Files and Iceberg are targets only: nothing reads from them."""
+    """A read limit is a database's, which production is; a lake takes none."""
     with pytest.raises((ValueError, ConfigurationError)):
         connectionConfig(type='files', root=str(tmp_path), format='parquet', maxRowsReadPerSecond=100)
 

@@ -18,6 +18,11 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from ..configuration.sqltext import codeOnly, sqlSpans
 
+_NAME = r'(\w+)'
+_NUMBER = r'(-?\d+(?:\.\d+)?)'
+_LITERAL = r"'((?:[^']|'')*)'|(-?\d+(?:\.\d+)?)"
+_FLIPPED = {'>': '<', '>=': '<=', '<': '>', '<=': '>='}
+
 
 class ColumnCheck(NamedTuple):
     """What the checks on one column allow: `choices`, where they name the
@@ -30,11 +35,6 @@ class ColumnCheck(NamedTuple):
     lowIncluded: bool = True
     high: Optional[decimal.Decimal] = None
     highIncluded: bool = True
-
-
-_NAME = r'(\w+)'
-_NUMBER = r'(-?\d+(?:\.\d+)?)'
-_LITERAL = r"'((?:[^']|'')*)'|(-?\d+(?:\.\d+)?)"
 
 
 def _normalized(definition: str) -> str:
@@ -82,7 +82,6 @@ def _normalizedCode(code: str) -> str:
     code = re.sub(r'\[(\w+)\]', r'\1', code)
 
     return code.upper()
-
 
 
 def _unwrapped(text: str) -> str:
@@ -167,9 +166,6 @@ def _choices(text: str) -> Optional[Tuple[str, Tuple[Any, ...]]]:
         listed.append(_value(each.group(2), each.group(3)))
 
     return (column, tuple(listed)) if column else None
-
-
-_FLIPPED = {'>': '<', '>=': '<=', '<': '>', '<=': '>='}
 
 
 def _bounds(text: str) -> Optional[Tuple[str, ColumnCheck]]:

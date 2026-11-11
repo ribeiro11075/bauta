@@ -14,6 +14,30 @@ from pydantic import BaseModel, BeforeValidator, ByteSize, ConfigDict, Field, Se
 
 from .environment import ConfigurationError, runPasswordCommand, splitPasswordCommand
 
+# A plain SQL identifier -- what currentSchema is written into a session
+# statement as, so nothing else may get through.
+IDENTIFIER = re.compile(r'^[A-Za-z_][A-Za-z0-9_$#]*$')
+# What a file target writes in, and how. Sizes are bytes, or text such as
+# 256MB (decimal) or 256MiB (binary). 256MB is what Snowflake suggests a file
+# to load be at most, and a size Athena and Spark split well.
+DEFAULT_FILE_SIZE = 256 * 10 ** 6
+DEFAULT_ROW_GROUP_SIZE = 128 * 10 ** 6
+DEFAULT_KEEP_SNAPSHOTS = 2
+S3_SCHEME = 's3://'
+_ABFS = re.compile(r'^abfss?://([^@/]+)@([^./]+)\.dfs\.core\.windows\.net(/.*)?$')
+# A part is published by copying it within the bucket, and S3 copies an
+# object of at most 5 GiB in one request.
+S3_LARGEST_COPY = 5 * 2 ** 30
+# An Iceberg table's snapshots kept by default, the newest included: a query
+# still reading one of them keeps its files.
+DEFAULT_KEEP_ICEBERG_SNAPSHOTS = 5
+# A namespace, written into a catalog's identifiers.
+_NAMESPACE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+# A path that names something other than a file on this machine: a driver's
+# own scheme, such as DuckDB's md: for MotherDuck. Two letters at least, so a
+# drive letter would still read as a path.
+_SCHEME_PREFIX = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:')
+
 def _dropNoneListItems(value: Any) -> Any:
     """YAML's "key:\\n-\\n" idiom (an empty list item) parses to [None] -- treat
     that, and a bare `~`/omitted key, as an empty list rather than a validation error.
@@ -72,12 +96,6 @@ class StoreType(str, Enum):
 
 # Every value a connection's `type` may take.
 CONNECTION_TYPES = tuple(connectionType.value for connectionType in DatabaseType) + tuple(storeType.value for storeType in StoreType)
-
-
-# A plain SQL identifier -- what currentSchema is written into a session
-# statement as, so nothing else may get through.
-IDENTIFIER = re.compile(r'^[A-Za-z_][A-Za-z0-9_$#]*$')
-
 
 
 class _BaseConnection(BaseModel):
@@ -330,14 +348,6 @@ class DuckDBConnection(_FileConnection, _CurrentSchema):
         return 1
 
 
-# What a file target writes in, and how. Sizes are bytes, or text such as
-# 256MB (decimal) or 256MiB (binary). 256MB is what Snowflake suggests a file
-# to load be at most, and a size Athena and Spark split well.
-DEFAULT_FILE_SIZE = 256 * 10 ** 6
-DEFAULT_ROW_GROUP_SIZE = 128 * 10 ** 6
-DEFAULT_KEEP_SNAPSHOTS = 2
-
-
 class FileFormat(str, Enum):
     PARQUET = 'parquet'
     CSV = 'csv'
@@ -370,17 +380,10 @@ class FileStore(str, Enum):
     AZURE = 'azure'
 
 
-S3_SCHEME = 's3://'
-
 # Each URL a root may begin with. Azure's abfss:// is what Databricks and
 # Synapse write, and names the account in the host.
 ROOT_SCHEMES = {S3_SCHEME: FileStore.S3, 'gs://': FileStore.GCS, 'az://': FileStore.AZURE, 'abfss://': FileStore.AZURE, 'abfs://': FileStore.AZURE}
 
-_ABFS = re.compile(r'^abfss?://([^@/]+)@([^./]+)\.dfs\.core\.windows\.net(/.*)?$')
-
-# A part is published by copying it within the bucket, and S3 copies an
-# object of at most 5 GiB in one request.
-S3_LARGEST_COPY = 5 * 2 ** 30
 
 # The settings only a root in each store takes; `endpoint` is every cloud's.
 STORE_SETTINGS = {
@@ -549,9 +552,9 @@ def _checkLocation(location: str, setting: str) -> str:
 class FilesConnection(_Lake):
     """A directory -- on this machine, or in S3, Google Cloud Storage or
     Azure Blob Storage -- that jobs write tables of files into, one directory
-    per table: `targetTableFinal` is its path under `root`. Written, never
-    read: a files connection is a target only. See "Files as a target" in
-    docs/concepts/how-it-works.md.
+    per table: `targetTableFinal` is its path under `root`. Jobs read such
+    tables too, naming them in `sourceQuery`. See "Files as a target" and
+    "Files as a source" in docs/concepts/how-it-works.md.
 
     `fileSize` is where a part is closed and the next begun; `rowGroupSize`
     is how much of a table is held in memory, before compression, and written
@@ -648,14 +651,6 @@ class IcebergCatalog(str, Enum):
     REST = 'rest'
     # A catalog kept in a database of your own: SQLite or PostgreSQL.
     SQL = 'sql'
-
-
-# An Iceberg table's snapshots kept by default, the newest included: a query
-# still reading one of them keeps its files.
-DEFAULT_KEEP_ICEBERG_SNAPSHOTS = 5
-
-# A namespace, written into a catalog's identifiers.
-_NAMESPACE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 
 class IcebergConnection(_Lake):
@@ -826,12 +821,6 @@ ConnectionConfig = Annotated[Union[PostgreSQLConnection, MySQLConnection, MariaD
 
 # Cast, since pydantic's stubs before 2.7 take a class here and not a union.
 _CONNECTION_ADAPTER: 'TypeAdapter[ConnectionConfig]' = TypeAdapter(cast(Any, ConnectionConfig))
-
-
-# A path that names something other than a file on this machine: a driver's
-# own scheme, such as DuckDB's md: for MotherDuck. Two letters at least, so a
-# drive letter would still read as a path.
-_SCHEME_PREFIX = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:')
 
 
 def isSchemePath(path: str) -> bool:

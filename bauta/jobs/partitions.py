@@ -31,6 +31,15 @@ from typing import Any, List, NamedTuple, Optional, Sequence, Tuple
 
 from ..configuration import ConfigurationError
 
+# The fewest rows a slice is worth, as `count: auto` judges it from the span of
+# the column: below it, opening another pair of connections, and the slices'
+# chunks finishing at different times, cost more than reading at once gains.
+# A table of under twice this is read as one stream.
+MINIMUM_ROWS_PER_SLICE = 250_000
+# The derived table a partitioned query is read through. A name, since MySQL,
+# SQL Server and Oracle require one; no AS, which Oracle refuses there.
+PARTITION_ALIAS = 'bauta_partition'
+
 class Slice(NamedTuple):
     """What one partition reads: the predicate on the derived table, or None
     for the query as it is, and the values the predicate binds, in order.
@@ -38,13 +47,6 @@ class Slice(NamedTuple):
 
     predicate: Optional[str]
     parameters: Tuple[Any, ...] = ()
-
-
-# The fewest rows a slice is worth, as `count: auto` judges it from the span of
-# the column: below it, opening another pair of connections, and the slices'
-# chunks finishing at different times, cost more than reading at once gains.
-# A table of under twice this is read as one stream.
-MINIMUM_ROWS_PER_SLICE = 250_000
 
 
 class CoreBudget(NamedTuple):
@@ -103,11 +105,6 @@ def maskingThreadsWith(slices: int, budget: CoreBudget) -> int:
         return 1
 
     return budget.maskingThreads
-
-
-# The derived table a partitioned query is read through. A name, since MySQL,
-# SQL Server and Oracle require one; no AS, which Oracle refuses there.
-PARTITION_ALIAS = 'bauta_partition'
 
 
 def _inner(sourceQuery: str) -> str:

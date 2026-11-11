@@ -26,43 +26,6 @@ CARD = re.compile(r'^[\d -]{13,23}$')
 # Colon or hyphen separated (08:00:2b:01:02:03), or Cisco's dotted form (0800.2b01.0203).
 MAC = re.compile(r'^(?:[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})$')
 UUID_TEXT = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
-
-
-def isCard(text: str) -> bool:
-
-    digits = re.sub(r'\D', '', text)
-
-    return bool(CARD.match(text)) and 13 <= len(digits) <= 19 and luhnValid(digits)
-
-
-def isIsoDate(text: str) -> bool:
-
-    try:
-        datetime.datetime.fromisoformat(text.strip())
-    except ValueError:
-        return False
-
-    return True
-
-
-def isIpAddress(text: str) -> bool:
-    """IPv4 or IPv6, as an address or an inet value with a /prefix. IPv6 was
-    not recognised, so a column of them was proposed `keep`.
-    """
-
-    try:
-        ipaddress.ip_interface(text.strip())
-    except ValueError:
-        return False
-
-    return True
-
-
-def isPhone(text: str) -> bool:
-
-    return bool(PHONE.match(text)) and len(re.sub(r'\D', '', text)) >= 7 and not text.isdigit()
-
-
 # (name, words any of which must be in the column name, policy, reason).
 # Column names are matched split on underscores and camelCase and joined
 # whole, so `first_name` and `FIRSTNAME` both match `firstname`.
@@ -109,6 +72,47 @@ NAME_RULES: Tuple[Tuple[str, Tuple[str, ...], Dict[str, Any], str], ...] = (
     ('freeText', ('note', 'notes', 'comment', 'comments', 'description', 'remarks', 'memo', 'bio', 'message', 'body', 'freetext'),
      {'strategy': 'null'}, 'name suggests free text, which can hold PII anywhere; redact keeps the text but only removes identifiers with a known shape'),
     )
+# Words in a table's name that say its rows are people, so a bare `name`
+# column in it is a person's name.
+PERSONAL_TABLE_WORDS = frozenset({'customer', 'customers', 'user', 'users', 'person', 'people', 'employee', 'employees', 'contact',
+                                  'contacts', 'member', 'members', 'patient', 'patients', 'client', 'clients', 'account', 'accounts',
+                                  'student', 'students', 'applicant', 'applicants', 'guest', 'guests'})
+
+
+def isCard(text: str) -> bool:
+
+    digits = re.sub(r'\D', '', text)
+
+    return bool(CARD.match(text)) and 13 <= len(digits) <= 19 and luhnValid(digits)
+
+
+def isIsoDate(text: str) -> bool:
+
+    try:
+        datetime.datetime.fromisoformat(text.strip())
+    except ValueError:
+        return False
+
+    return True
+
+
+def isIpAddress(text: str) -> bool:
+    """IPv4 or IPv6, as an address or an inet value with a /prefix. IPv6 was
+    not recognised, so a column of them was proposed `keep`.
+    """
+
+    try:
+        ipaddress.ip_interface(text.strip())
+    except ValueError:
+        return False
+
+    return True
+
+
+def isPhone(text: str) -> bool:
+
+    return bool(PHONE.match(text)) and len(re.sub(r'\D', '', text)) >= 7 and not text.isdigit()
+
 
 # (name, test on one stripped text value, policy, reason). A column matches when
 # enough of its sampled text values pass.
@@ -127,10 +131,5 @@ VALUE_RULES: Tuple[Tuple[str, Callable[[str], bool], Dict[str, Any], str], ...] 
     ('phone', isPhone, {'strategy': 'digits'}, 'sampled values look like phone numbers'),
     )
 
-# Words in a table's name that say its rows are people, so a bare `name`
-# column in it is a person's name.
-PERSONAL_TABLE_WORDS = frozenset({'customer', 'customers', 'user', 'users', 'person', 'people', 'employee', 'employees', 'contact',
-                                  'contacts', 'member', 'members', 'patient', 'patients', 'client', 'clients', 'account', 'accounts',
-                                  'student', 'students', 'applicant', 'applicants', 'guest', 'guests'})
 
 RULE_NAMES = frozenset({rule[0] for rule in NAME_RULES} | {rule[0] for rule in VALUE_RULES})

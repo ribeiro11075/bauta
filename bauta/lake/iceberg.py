@@ -48,6 +48,8 @@ _ICEBERG_SETTLED = {
     'int8': ColumnType('int32'), 'int16': ColumnType('int32'), 'uint8': ColumnType('int32'), 'uint16': ColumnType('int32'),
     'uint32': ColumnType('int64'), 'uint64': ColumnType('decimal', 20, 0),
     }
+# What pyiceberg calls an Azure location.
+_AZURE_SCHEMES = frozenset({'abfs', 'abfss', 'wasb', 'wasbs'})
 
 
 def requirePyiceberg() -> Any:
@@ -471,10 +473,6 @@ def checkIcebergWritable(settings: IcebergConnection) -> None:
         with io.new_output(probe).create() as stream:
             stream.write(b'bauta')
         io.delete(probe)
-
-
-# What pyiceberg calls an Azure location.
-_AZURE_SCHEMES = frozenset({'abfs', 'abfss', 'wasb', 'wasbs'})
 
 
 class FileIO(PyArrowFileIO):

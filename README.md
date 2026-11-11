@@ -7,6 +7,7 @@
 - **Audit:** report what every job does with data and what a reviewer should question, and seal each run's masking manifest so it can be verified later.
 - **Provable coverage:** list every table in production and what the jobs do with each, so a table nobody wrote a job for fails the build rather than going unnoticed. A database can require that nothing reaches it unmasked.
 - **Seven databases:** Oracle, SQL Server, PostgreSQL, MySQL, MariaDB, SQLite and DuckDB, as source or target in any combination.
+- **Files as a source:** Parquet, CSV or JSON Lines in a directory or a bucket, read with SQL through the same pipeline, so a lake's files are masked and copied as a database's tables are.
 - **Files as a target:** a masked copy in Parquet, CSV or JSON Lines, in a directory or in S3, Google Cloud Storage or Azure, for a data lake that Athena, Snowflake or Databricks reads: appended to incrementally or published whole as a snapshot, with nothing visible until a run succeeds.
 - **Iceberg tables:** a masked copy as Iceberg tables in any of the three clouds, through a Glue, REST or SQL catalog: each run one commit, upserts that merge by key, and old snapshots' files deleted with them.
 - **Streaming:** memory stays flat however large the table, and PostgreSQL and SQL Server targets load in bulk.

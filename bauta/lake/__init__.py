@@ -1,6 +1,7 @@
 """Tables of files, and Iceberg tables, as a data job's target: written
 through pyarrow, which the `files` extra installs, and pyiceberg, which the
-`iceberg` extra does. See "Files as a target" in docs/concepts/how-it-works.md.
+`iceberg` extra does. Tables of files are a job's source too, in .source. See
+"Files as a target" and "Files as a source" in docs/concepts/how-it-works.md.
 """
 from typing import Any
 
@@ -23,7 +24,16 @@ def checkWritable(settings: Any) -> None:
     checkFilesWritable(settings)
 
 
+def checkReadable(settings: Any) -> None:
+    """Raises unless a job could read from `settings`, a files connection."""
+
+    from .source import checkReadable as checkFilesReadable
+
+    checkFilesReadable(settings)
+
+
 __all__ = [
+    'checkReadable',
     'checkWritable',
     'FileTarget',
     'FileTypeError',

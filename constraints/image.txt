@@ -6,6 +6,7 @@
 #       --python-version 3.14 --python-platform linux --no-header --no-annotate
 #
 # tests/repository/test_packaging.py checks every pin here is within pyproject.toml's ranges.
+alembic==1.20.1
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
@@ -26,7 +27,9 @@ h11==0.16.0
 httptools==0.9.0
 idna==3.20
 jmespath==1.1.0
+mako==1.4.3
 markdown-it-py==4.2.0
+markupsafe==3.0.4
 mdurl==0.1.2
 mmh3==5.3.0
 mysql-connector-python==26.7.0

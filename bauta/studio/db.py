@@ -8,9 +8,10 @@ through BAUTA_STUDIO_DATABASE_URL otherwise.
 from __future__ import annotations
 
 import datetime
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, event
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, event, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -19,6 +20,12 @@ OPERATOR = 'operator'
 ADMIN = 'admin'
 # Each role can do everything the ones before it can.
 ROLES = [VIEWER, OPERATOR, ADMIN]
+MIGRATIONS_DIRECTORY = Path(__file__).parent / 'migrations'
+# Alembic's record of how far a database has been migrated, named as Studio's
+# tables are: the database may be shared with something else using Alembic.
+VERSION_TABLE = 'studio_alembic_version'
+# The revision that creates the tables as 0.2.7 did, without Alembic.
+BASELINE_REVISION = '0001'
 
 
 def utcnow() -> datetime.datetime:
@@ -171,11 +178,29 @@ def makeEngine(url: str) -> Engine:
         def _foreignKeys(connection: Any, record: Any) -> None:
             connection.execute('PRAGMA foreign_keys = ON')
 
-    # Tables made on first start. Before the first release this becomes
-    # Alembic migrations, so an upgrade changes a customer's tables in place.
-    Base.metadata.create_all(engine)
+    migrate(engine)
 
     return engine
+
+
+def migrate(engine: Engine) -> None:
+    """Brings the database up to this version's tables, in place, keeping what
+    it holds: creates them on first start, and applies whatever a release has
+    added since. A database 0.2.7 made has its tables but no record of them,
+    so it is marked as being at the baseline first.
+    """
+
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config()
+    config.set_main_option('script_location', str(MIGRATIONS_DIRECTORY))
+    with engine.begin() as connection:
+        config.attributes['connection'] = connection
+        tables = set(inspect(connection).get_table_names())
+        if VERSION_TABLE not in tables and User.__tablename__ in tables:
+            command.stamp(config, BASELINE_REVISION)
+        command.upgrade(config, 'head')
 
 
 class Database:

@@ -17,6 +17,11 @@ _ALPHANUMERIC_CLASSES = ('0123456789', 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJ
 # one value never share a mask. FF1 needs one alphabet for every position,
 # so `fpe` uses both cases together instead (_FPE_ALPHABETS).
 _HEX_CLASSES = ('0123456789', 'abcdef', 'ABCDEF')
+_FPE_ALPHABETS = {
+    'digits': '0123456789',
+    'hex': '0123456789abcdefABCDEF',
+    'alphanumeric': '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    }
 
 
 class KeyStrategy(Strategy):
@@ -115,13 +120,6 @@ class KeyStrategy(Strategy):
             return self._maskText(text, self.options.get('charset', 'alphanumeric'))
 
         raise MaskingError('the key strategy needs an integer or text, got {}'.format(_typeName(value)))
-
-
-_FPE_ALPHABETS = {
-    'digits': '0123456789',
-    'hex': '0123456789abcdefABCDEF',
-    'alphanumeric': '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
-    }
 
 
 class FPEStrategy(Strategy):

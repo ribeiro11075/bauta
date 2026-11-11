@@ -28,6 +28,7 @@ Give Studio the environment your cron job has. It loads the same configuration, 
 | `--data`, `$BAUTA_STUDIO_DATA` | `./studio-data` | Studio's own: accounts, the activity log, the logs of runs it starts, and the jobs files as they were before each edit. Keep it on a persistent volume. |
 | `$BAUTA_STUDIO_DATABASE_URL` | SQLite in the data directory | Any SQLAlchemy URL, PostgreSQL say, for Studio's own tables. |
 | `$BAUTA_STUDIO_INSECURE_COOKIES=1` | off | Only for plain HTTP on your own machine. |
+| `$BAUTA_STUDIO_TRANSFORM_MODULES` | none | Comma-separated modules, with what is under them, that an edit in Studio may start naming in a transform. See [what it protects](#what-it-protects). |
 
 
 ## Who can do what
@@ -62,8 +63,10 @@ Coverage, the audit against the databases, discovery and references read the sou
 
 ## What it protects
 
-- **Accounts:** argon2 password hashes; five failed sign-ins for an email in five minutes, then it is refused for a while. Sessions are random tokens kept only as their SHA-256, in an HttpOnly, SameSite=Strict cookie, marked Secure unless turned off. Changing a password or deactivating a user signs them out everywhere, and the last admin can't be removed.
+- **Accounts:** argon2 password hashes. Five failed sign-ins for an email from one address in five minutes, thirty from one address across every email, or a hundred for one email across every address, and more are refused for a while; failing from one address doesn't lock the account's owner out from another, so give `--forwarded-allow-ips` your proxy, or every sign-in counts as the proxy's. Only four passwords are checked at once. Sessions are random tokens kept only as their SHA-256, in an HttpOnly, SameSite=Strict cookie, marked Secure unless turned off. Changing a password or deactivating a user signs them out everywhere, and the last admin can't be removed.
 - **Requests from other sites:** every change needs the `X-Bauta-Studio` header, which another site can't send without a CORS preflight Studio never answers. Pages carry a strict Content-Security-Policy and can't be framed.
 - **What leaves the server:** what `bauta audit` and `bauta history` already show -- names, strategies, key fingerprints, counts, times and errors as history keeps them. Never a masking key, a password, `connections.yaml`, or a value from a table.
 - **Editing:** only `jobs.yaml` and the files it includes. A change is written only if the whole configuration still validates with it and the file hasn't changed since it was opened, in one atomic step; the file as it was is kept, and the change is recorded with its diff and who made it.
+- **Admins are trusted with the server.** Editing a job changes what SQL runs against your databases and where run state is written, as Studio's account. An edit can't start calling a transform from a module the jobs files don't already use, beyond bauta's own and `$BAUTA_STUDIO_TRANSFORM_MODULES`, since a transform is any callable in any installed module and `os:system` is one. That closes the shortest way from an edit to a command; it doesn't make an admin less than someone with that account. Give the role accordingly.
+- **Upgrades:** Studio brings its own tables up to date as it starts, keeping what they hold. Back up its database before upgrading, as you would any other.
 - **Runs:** each a `bauta run` process in a session of its own, under bauta's own lock, so a run from Studio and one from cron never overlap on the same jobs, and restarting Studio doesn't stop one.

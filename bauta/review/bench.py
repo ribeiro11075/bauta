@@ -12,7 +12,7 @@ import time
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional
 
 from ..configuration import ConnectionConfig, DataJobConfig
-from ..database import Database
+from ..database import openSource
 from ..log.scrubbing import describeError
 from ..masking import core as maskingModule
 from ..transform import Transform, resolveTransformer
@@ -68,7 +68,7 @@ def benchJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Mappin
                             for column, references in jobConfig.sourceQueryColumnTransforms.items()}
 
         started = time.perf_counter()
-        with Database(connectionSettings=settings) as source:
+        with openSource(settings) as source:
             connectSeconds = time.perf_counter() - started
 
             query, parameters = jobConfig.sourceQuery, None

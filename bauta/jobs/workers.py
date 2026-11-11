@@ -27,6 +27,18 @@ logger = logging.getLogger(LOGGER_NAME)
 
 
 START_METHOD_VARIABLE = 'BAUTA_START_METHOD'
+# How long a timed-out job gets to exit after SIGTERM before it is killed.
+TERMINATE_GRACE_SECONDS = 5.0
+# The exit code a job uses when it finds its parent gone. Nothing reads it --
+# by then there is no parent to report to -- but it tells the two apart in a
+# process listing or a core dump.
+EXIT_ORPHANED = 3
+# How long a job may take to exit once it has sent its outcome, before it is
+# stopped. It has nothing left to do by then but close its connections.
+EXIT_GRACE_SECONDS = 10.0
+# Messages read from one job's pipe before looking at the others, so a job
+# logging without pause can't starve the rest.
+MESSAGES_PER_POLL = 500
 
 
 def _processContext() -> Any:
@@ -56,26 +68,6 @@ def _processContext() -> Any:
 
 
 PROCESS_CONTEXT = _processContext()
-
-
-# How long a timed-out job gets to exit after SIGTERM before it is killed.
-TERMINATE_GRACE_SECONDS = 5.0
-
-
-# The exit code a job uses when it finds its parent gone. Nothing reads it --
-# by then there is no parent to report to -- but it tells the two apart in a
-# process listing or a core dump.
-EXIT_ORPHANED = 3
-
-
-# How long a job may take to exit once it has sent its outcome, before it is
-# stopped. It has nothing left to do by then but close its connections.
-EXIT_GRACE_SECONDS = 10.0
-
-
-# Messages read from one job's pipe before looking at the others, so a job
-# logging without pause can't starve the rest.
-MESSAGES_PER_POLL = 500
 
 
 def _exitWhenOrphaned(parentAlive: Any) -> None:

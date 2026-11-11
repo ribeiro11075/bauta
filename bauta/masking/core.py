@@ -72,6 +72,21 @@ HMAC_BLOCK_SIZE = 64
 # installed) or `mismatch` (installed, another version).
 _nativeUnavailable: Optional[str] = None
 _nativeUnavailableKind: Optional[str] = None
+REQUIRE_NATIVE_VARIABLE = 'BAUTA_REQUIRE_NATIVE'
+MASKING_THREADS_VARIABLE = 'BAUTA_MASKING_THREADS'
+# What the extension puts in `problems` for a value it doesn't mask itself.
+_NATIVE_FALLBACK = 'fallback'
+# The steps a policy's `normalize` can take, in the order they are applied,
+# whatever order it names them in.
+NORMALIZE_STEPS = ('strip', 'lower', 'integer')
+# Text that spells an integer one way only: no sign but a minus, no leading
+# zero, no spaces. `007` is left as text, since an integer column holds 7.
+_INTEGER_TEXT = re.compile(r'-?[1-9][0-9]*|0')
+# Fields of a column policy that belong to the policy itself rather than to its
+# strategy. Everything else in the mapping is a strategy option.
+POLICY_FIELDS = ('strategy', 'domain')
+_CHARACTER_CLASSES = (str.islower, str.isupper, str.isdigit)
+INTEGRITY_FIELD = 'integrity'
 
 
 @functools.cache
@@ -122,9 +137,6 @@ def nativeExtension() -> Any:
     """
 
     return _nativeModule()
-
-
-REQUIRE_NATIVE_VARIABLE = 'BAUTA_REQUIRE_NATIVE'
 
 
 def requiresNative(required: Optional[bool]) -> Optional[bool]:
@@ -180,9 +192,6 @@ def nativeVersion() -> Optional[str]:
     module = _nativeModule()
 
     return getattr(module, '__version__', None) if module is not None else None
-
-
-MASKING_THREADS_VARIABLE = 'BAUTA_MASKING_THREADS'
 
 
 def availableCores() -> int:
@@ -431,19 +440,6 @@ class KeyedHash:
 
             if result < size:
                 return result
-
-
-# What the extension puts in `problems` for a value it doesn't mask itself.
-_NATIVE_FALLBACK = 'fallback'
-
-
-# The steps a policy's `normalize` can take, in the order they are applied,
-# whatever order it names them in.
-NORMALIZE_STEPS = ('strip', 'lower', 'integer')
-
-# Text that spells an integer one way only: no sign but a minus, no leading
-# zero, no spaces. `007` is left as text, since an integer column holds 7.
-_INTEGER_TEXT = re.compile(r'-?[1-9][0-9]*|0')
 
 
 def normalizeColumn(values: Sequence[Any], steps: Sequence[str]) -> Tuple[List[Any], List[int]]:
@@ -710,10 +706,6 @@ def resolveStrategy(name: Any) -> Type[Strategy]:
 
     return strategy
 
-# Fields of a column policy that belong to the policy itself rather than to its
-# strategy. Everything else in the mapping is a strategy option.
-POLICY_FIELDS = ('strategy', 'domain')
-
 
 def validateColumnPolicy(policy: Any) -> Dict[str, Any]:
     """One column's policy in mapping form, with its options checked. Accepts
@@ -780,9 +772,6 @@ def validateKey(key: str, what: str = 'masking key') -> None:
         raise ValueError('the {} uses only {} different character(s), which makes it a pattern rather than a secret: anyone holding '
                          'its fingerprint could find it offline. Generate a random one with python -c "import secrets; '
                          'print(secrets.token_urlsafe(32))"'.format(what, len(set(key))))
-
-
-_CHARACTER_CLASSES = (str.islower, str.isupper, str.isdigit)
 
 
 def keyStrengthBits(key: str) -> float:
@@ -1064,9 +1053,6 @@ def buildMaskingManifest(outcomes: Sequence[Any], declared: Mapping[str, Mapping
     manifest['maskedBy'] = maskingImplementation()
 
     return manifest
-
-
-INTEGRITY_FIELD = 'integrity'
 
 
 class ManifestVerification(NamedTuple):

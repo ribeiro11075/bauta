@@ -6,6 +6,11 @@ from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Set
 
 from ..configuration import BaseJobConfig, ConfigurationError, findCycle
 
+# A job's place in the schedule, as `bauta jobs` names it.
+DUE = 'due'
+THROTTLED = 'throttled'
+INACTIVE = 'inactive'
+
 
 class JobStatus(str, Enum):
     COMPLETED = 'completed'
@@ -200,12 +205,6 @@ class DependencyGraph:
 
         self._notStarted.remove(job)
         self.finish(JobOutcome(job=job, status=JobStatus.SKIPPED, error=reason))
-
-
-# A job's place in the schedule, as `bauta jobs` names it.
-DUE = 'due'
-THROTTLED = 'throttled'
-INACTIVE = 'inactive'
 
 
 def jobSchedule(jobs: Mapping[str, BaseJobConfig], lastRun: Dict[str, float], watermarks: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:

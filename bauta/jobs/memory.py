@@ -40,6 +40,15 @@ else:
 
     def _unlock(file: Any) -> None:
         fcntl.flock(file.fileno(), fcntl.LOCK_UN)
+SECTIONS = ('lastRun', 'watermarks', 'maskingKeys')
+DATABASE_MEMORY_SCHEMA = """CREATE TABLE bauta_memory (
+    job VARCHAR(255) PRIMARY KEY,
+    last_run DOUBLE PRECISION,
+    watermark_value VARCHAR(255),
+    watermark_type VARCHAR(32)
+    )"""
+KEY_FINGERPRINT_SUFFIX = '#maskingKey'
+KEY_FINGERPRINT_TYPE = 'maskingKey'
 
 
 @contextlib.contextmanager
@@ -187,9 +196,6 @@ _MemoryDumper.add_representer(decimal.Decimal, _representDecimal)
 _MemoryLoader.add_constructor('!decimal', _constructDecimal)
 
 
-SECTIONS = ('lastRun', 'watermarks', 'maskingKeys')
-
-
 class FileMemory(MemoryBackend):
     """The default MemoryBackend: a YAML file, safe to share across worker processes.
 
@@ -293,18 +299,6 @@ class FileMemory(MemoryBackend):
     def recordKeyFingerprint(self, job: str, fingerprint: Optional[str]) -> None:
 
         self._write('maskingKeys', job, fingerprint)
-
-
-DATABASE_MEMORY_SCHEMA = """CREATE TABLE bauta_memory (
-    job VARCHAR(255) PRIMARY KEY,
-    last_run DOUBLE PRECISION,
-    watermark_value VARCHAR(255),
-    watermark_type VARCHAR(32)
-    )"""
-
-
-KEY_FINGERPRINT_SUFFIX = '#maskingKey'
-KEY_FINGERPRINT_TYPE = 'maskingKey'
 
 
 class DatabaseMemory(MemoryBackend):

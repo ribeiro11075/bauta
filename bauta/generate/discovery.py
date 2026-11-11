@@ -33,6 +33,14 @@ VALUE_MATCH_THRESHOLD = 0.8
 FREE_TEXT_AVERAGE_LENGTH = 60
 
 DISCOVERY_FILE = 'discovery.yaml'
+TEXT_STRATEGIES = {'email', 'hash', 'fakeFirstName', 'fakeLastName', 'fakeName', 'fakeCity', 'fakeCompany', 'fakeStreetAddress'}
+# What PostgreSQL's inet and cidr arrive as.
+_ADDRESS_VALUES = (ipaddress.IPv4Address, ipaddress.IPv6Address, ipaddress.IPv4Network, ipaddress.IPv6Network)
+# The scales a column of coordinates is tried at, smallest first: the ones
+# in use, microdegrees (10**6) and the E7 of GPS formats (10**7) above all.
+# Size alone can't always tell them apart -- an E7 longitude sampled below 18
+# degrees fits 10**6 too -- so the proposal says to check it.
+_COORDINATE_SCALES = (10 ** 5, 10 ** 6, 10 ** 7)
 
 
 class NameRule(NamedTuple):
@@ -364,13 +372,6 @@ def _isNumeric(values: Sequence[Any], category: Optional[ColumnCategory]) -> boo
     return (category or _inferCategory(values)) == ColumnCategory.NUMBER
 
 
-TEXT_STRATEGIES = {'email', 'hash', 'fakeFirstName', 'fakeLastName', 'fakeName', 'fakeCity', 'fakeCompany', 'fakeStreetAddress'}
-
-
-# What PostgreSQL's inet and cidr arrive as.
-_ADDRESS_VALUES = (ipaddress.IPv4Address, ipaddress.IPv6Address, ipaddress.IPv4Network, ipaddress.IPv6Network)
-
-
 def _compatible(strategy: str, values: Sequence[Any], category: Optional[ColumnCategory]) -> bool:
     """Whether a name-based guess fits what the column holds (`token_count` is
     not a credential). With nothing to contradict it, the name stands.
@@ -397,13 +398,6 @@ def _compatible(strategy: str, values: Sequence[Any], category: Optional[ColumnC
             for value in present)
 
     return True
-
-
-# The scales a column of coordinates is tried at, smallest first: the ones
-# in use, microdegrees (10**6) and the E7 of GPS formats (10**7) above all.
-# Size alone can't always tell them apart -- an E7 longitude sampled below 18
-# degrees fits 10**6 too -- so the proposal says to check it.
-_COORDINATE_SCALES = (10 ** 5, 10 ** 6, 10 ** 7)
 
 
 def _coordinateSuggestion(column: str, rule: Any, values: Sequence[Any]) -> Suggestion:

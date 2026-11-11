@@ -19,6 +19,23 @@ from ..jobs.fullRefresh import fullRefreshProblem
 from ..masking import MaskingError, MaskingPlan, changesValues, keyFingerprint, policyFor, resolveStrategy
 
 SEVERITIES = ('error', 'warning', 'info')
+# The strategies whose mask of a value depends on how it is held: `key` and
+# `fpe` mask 42 and '42' differently, and every keyed strategy masks 'AB12'
+# and 'AB12  ' differently. `hash` keys numbers on their digits, so only
+# padding matters to it.
+_TYPED_STRATEGIES = frozenset({'key', 'fpe'})
+_PADDED_STRATEGIES = frozenset({'key', 'fpe', 'hash'})
+_INTEGER_TEXT = re.compile(r'-?[1-9][0-9]*|0')
+# What a query says when it returns some of a table's rows, as far as reading
+# it without parsing SQL can tell. A join usually narrows too, and saying so is
+# worth the occasional job that joins only to widen its columns.
+_PARTIAL_QUERIES = (
+    (r'\bwhere\b', 'its sourceQuery has a WHERE'),
+    (r'\blimit\b', 'its sourceQuery has a LIMIT'),
+    (r'\btop\s*\(?\s*\d', 'its sourceQuery has a TOP'),
+    (r'\bfetch\s+first\b', 'its sourceQuery has a FETCH FIRST'),
+    (r'\bjoin\b', 'its sourceQuery joins another table'),
+    )
 
 
 class Finding(NamedTuple):
@@ -121,15 +138,6 @@ def _auditDomains(target: str, usages: Sequence[_Usage], findings: List[Finding]
                                         '; '.join('{} for {}'.format(noun.format(variant), _labels(group)) for variant, group in sorted(variants.items())))))
 
 
-# The strategies whose mask of a value depends on how it is held: `key` and
-# `fpe` mask 42 and '42' differently, and every keyed strategy masks 'AB12'
-# and 'AB12  ' differently. `hash` keys numbers on their digits, so only
-# padding matters to it.
-_TYPED_STRATEGIES = frozenset({'key', 'fpe'})
-_PADDED_STRATEGIES = frozenset({'key', 'fpe', 'hash'})
-_INTEGER_TEXT = re.compile(r'-?[1-9][0-9]*|0')
-
-
 def _forms(values: Sequence[Any]) -> Set[str]:
 
     forms = set()
@@ -227,18 +235,6 @@ def _auditForeignKeys(target: str, jobs: Mapping[str, DataJobConfig], usagesByJo
                                             'so the copied references will not match'.format(
                                                 target, foreignKey.table, column, child.describe(),
                                                 foreignKey.referencedTable, referencedColumn, parent.describe(), parent.job)))
-
-
-# What a query says when it returns some of a table's rows, as far as reading
-# it without parsing SQL can tell. A join usually narrows too, and saying so is
-# worth the occasional job that joins only to widen its columns.
-_PARTIAL_QUERIES = (
-    (r'\bwhere\b', 'its sourceQuery has a WHERE'),
-    (r'\blimit\b', 'its sourceQuery has a LIMIT'),
-    (r'\btop\s*\(?\s*\d', 'its sourceQuery has a TOP'),
-    (r'\bfetch\s+first\b', 'its sourceQuery has a FETCH FIRST'),
-    (r'\bjoin\b', 'its sourceQuery joins another table'),
-    )
 
 
 def _partial(job: DataJobConfig) -> Optional[str]:

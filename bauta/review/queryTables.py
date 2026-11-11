@@ -43,8 +43,9 @@ def _isName(token: str) -> bool:
 
 class _Reader:
 
-    def __init__(self, tokens: List[str]) -> None:
+    def __init__(self, tokens: List[str], foldCase: bool = True) -> None:
         self.tokens = tokens
+        self.foldCase = foldCase
         self.matching = self._matchParentheses()
 
 
@@ -191,7 +192,7 @@ class _Reader:
             expressionStart, expressionEnd = expressions[folded]
             scan.tables |= self.read(expressionStart, expressionEnd, expressions, expanding + (folded,))
         elif folded not in expressions:
-            scan.tables.add(folded)
+            scan.tables.add(folded if self.foldCase else name)
         scan.previous = folded
 
         return after
@@ -209,15 +210,16 @@ class _Scan:
         self.tables: Set[str] = set()
 
 
-def tablesRead(query: str) -> Optional[Set[str]]:
+def tablesRead(query: str, foldCase: bool = True) -> Optional[Set[str]]:
     """The tables `query` reads rows from, each upper-cased and without its
-    schema or quotes, or None where its parentheses don't balance.
+    schema or quotes, or None where its parentheses don't balance. Without
+    `foldCase`, each as the query spells it, for names that are paths.
     """
 
     # Comments and literals blanked first, so a table named in one is not read.
     tokens = _TOKEN.findall(codeOnly(query))
     try:
-        reader = _Reader(tokens)
+        reader = _Reader(tokens, foldCase)
     except ValueError:
         return None
 

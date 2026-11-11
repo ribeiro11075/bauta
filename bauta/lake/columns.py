@@ -36,6 +36,15 @@ _INTEGER_RANGES = {
 _REPORTED_DECIMAL = re.compile(r'DECIMAL\((\d+),\s*(\d+)\)', re.IGNORECASE)
 
 UNKNOWN_KINDS_ADVICE = 'declare it in targetColumnTypes'
+# The Python types a column's values are told apart by, the narrower first:
+# a bool is an int, and a datetime a date. A driver's own subclass of one --
+# a str subclass for an enum -- counts as the type it extends.
+_KINDS = (bool, int, float, decimal.Decimal, str, bytes, datetime.datetime, datetime.date, datetime.time)
+# The exact types a value can have for normalized() to leave it as it is and
+# _kind() to name it as itself. A column holding nothing else -- nearly every
+# column -- needs neither called on each value, which is most of the time a
+# chunk takes to become Arrow; the column's exact types, gathered in C, say so.
+PLAIN_KINDS = frozenset(_KINDS) | {type(None)}
 
 
 class FileTypeError(ConfigurationError):
@@ -93,12 +102,6 @@ def _scale(value: decimal.Decimal) -> int:
     return max(0, -exponent) if isinstance(exponent, int) else 0
 
 
-# The Python types a column's values are told apart by, the narrower first:
-# a bool is an int, and a datetime a date. A driver's own subclass of one --
-# a str subclass for an enum -- counts as the type it extends.
-_KINDS = (bool, int, float, decimal.Decimal, str, bytes, datetime.datetime, datetime.date, datetime.time)
-
-
 def _kind(value: Any) -> type:
 
     for kind in _KINDS:
@@ -106,13 +109,6 @@ def _kind(value: Any) -> type:
             return kind
 
     return type(value)
-
-
-# The exact types a value can have for normalized() to leave it as it is and
-# _kind() to name it as itself. A column holding nothing else -- nearly every
-# column -- needs neither called on each value, which is most of the time a
-# chunk takes to become Arrow; the column's exact types, gathered in C, say so.
-PLAIN_KINDS = frozenset(_KINDS) | {type(None)}
 
 
 def _digits(value: int) -> int:

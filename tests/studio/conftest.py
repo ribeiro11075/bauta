@@ -70,7 +70,8 @@ def app(settings):
             session.add(User(email='{}@example.com'.format(role), role=role, passwordHash=hashPassword(PASSWORD)))
         session.commit()
 
-    return application
+    yield application
+    application.state.database.close()
 
 
 @pytest.fixture

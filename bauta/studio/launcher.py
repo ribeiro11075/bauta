@@ -20,13 +20,24 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from .db import LaunchedRun, User, utcnow
+from ..log.scrubbing import describeError
+from .checks import latest
+from .db import Check, LaunchedRun, User, utcnow
 from .settings import Settings
 
 # Read back for the run page: the end of a long log is what matters.
 LOG_TAIL_BYTES = 256 * 1024
 # How `bauta run` names each cycle it starts, in its own log.
 CYCLE_STARTED = re.compile(r'Starting cycle ([0-9a-f-]{36}) with')
+# The longest a benchmark may run before it is stopped.
+BENCH_TIMEOUT_SECONDS = 1800
+# Benchmarks read real sources, up to millions of rows each, so only so many
+# run at once, and one at a time for any job.
+BENCHES_AT_ONCE = 2
+# How many of the latest benchmarks are looked through for one still running.
+BENCHES_LOOKED_AT = 200
+
+_benchStarting = threading.Lock()
 
 
 class Launcher:
@@ -140,8 +151,25 @@ class Launcher:
             return file.read().decode('utf-8', errors='replace')
 
 
-# The longest a benchmark may run before it is stopped.
-BENCH_TIMEOUT_SECONDS = 1800
+class BenchRefused(Exception):
+    """A benchmark that wasn't started, and why."""
+
+
+def _running(session: Session) -> List[Check]:
+
+    return [check for check in latest(session, 'bench', BENCHES_LOOKED_AT) if check.result.get('status') == 'running']
+
+
+def endInterruptedBenches(database: Any) -> None:
+    """Marks as failed every benchmark still `running` as Studio starts: the
+    thread waiting on each went with the last Studio, so none would ever
+    finish, and its job's Measure button would stay disabled for good.
+    """
+
+    with database.open() as session:
+        for check in _running(session):
+            check.result = dict(check.result, status='failed', problem='Studio restarted while this ran')
+        session.commit()
 
 
 def startBench(settings: Settings, database: Any, email: str, job: str, rows: int) -> Dict[str, Any]:
@@ -153,9 +181,12 @@ def startBench(settings: Settings, database: Any, email: str, job: str, rows: in
 
     import json
 
-    from .db import Check
-
-    with database.open() as session:
+    with _benchStarting, database.open() as session:
+        running = _running(session)
+        if any(check.result.get('job') == job for check in running):
+            raise BenchRefused('{} is already being measured'.format(job))
+        if len(running) >= BENCHES_AT_ONCE:
+            raise BenchRefused('{} benchmarks are already running; wait for one to finish'.format(len(running)))
         check = Check(kind='bench', email=email, result={'job': job, 'rows': rows, 'status': 'running'})
         session.add(check)
         session.commit()
@@ -175,7 +206,7 @@ def startBench(settings: Settings, database: Any, email: str, job: str, rows: in
         except subprocess.TimeoutExpired:
             result = {'status': 'failed', 'problem': 'stopped after {} seconds'.format(BENCH_TIMEOUT_SECONDS)}
         except Exception as error:
-            result = {'status': 'failed', 'problem': str(error)[:2000]}
+            result = {'status': 'failed', 'problem': describeError(error)[:2000]}
         with database.open() as session:
             check = session.get(Check, checkId)
             if check is not None:

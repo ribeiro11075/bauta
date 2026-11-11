@@ -7,12 +7,13 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 CONFIG_VARIABLE = 'BAUTA_STUDIO_CONFIG'
 DATA_VARIABLE = 'BAUTA_STUDIO_DATA'
 DATABASE_URL_VARIABLE = 'BAUTA_STUDIO_DATABASE_URL'
 INSECURE_COOKIES_VARIABLE = 'BAUTA_STUDIO_INSECURE_COOKIES'
+TRANSFORM_MODULES_VARIABLE = 'BAUTA_STUDIO_TRANSFORM_MODULES'
 SESSION_HOURS = 12
 # How many runs' history the run list reads back.
 HISTORY_RUNS = 50
@@ -24,7 +25,9 @@ class Settings:
     `bauta --config` would take it. `dataDirectory` is Studio's own: its
     database, unless `databaseUrl` names another, and the logs of the runs it
     starts. `secureCookies` is off only for plain HTTP on a developer's
-    machine; behind TLS it must stay on.
+    machine; behind TLS it must stay on. `transformModules` are the modules,
+    with what is under them, an edit here may start naming in a transform,
+    beyond bauta's own and those the jobs files already use.
     """
 
     configDirectory: Path
@@ -35,6 +38,7 @@ class Settings:
     # How a run is started: this Python's bauta, so Studio and the runs it
     # starts are always the same version.
     bautaCommand: List[str] = field(default_factory=lambda: [sys.executable, '-m', 'bauta'])
+    transformModules: Tuple[str, ...] = ()
 
     @classmethod
     def fromEnvironment(cls, configDirectory: Optional[str] = None, dataDirectory: Optional[str] = None) -> 'Settings':
@@ -43,7 +47,10 @@ class Settings:
         data = Path(dataDirectory or os.environ.get(DATA_VARIABLE) or 'studio-data').resolve()
         url = os.environ.get(DATABASE_URL_VARIABLE) or 'sqlite:///{}'.format(data / 'studio.db')
 
-        return cls(configDirectory=config, dataDirectory=data, databaseUrl=url, secureCookies=os.environ.get(INSECURE_COOKIES_VARIABLE) != '1')
+        modules = tuple(module.strip() for module in os.environ.get(TRANSFORM_MODULES_VARIABLE, '').split(',') if module.strip())
+
+        return cls(configDirectory=config, dataDirectory=data, databaseUrl=url, secureCookies=os.environ.get(INSECURE_COOKIES_VARIABLE) != '1',
+                   transformModules=modules)
 
 
     @property

@@ -14,6 +14,11 @@ from .common import _asciiDigits, _choiceOption, _inScriptOf, _typeName, luhnVal
 from .basic import DigitsStrategy, EmailStrategy
 from .keys import KeyStrategy
 
+_DATE_LIKE = re.compile(r'^(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})$')
+# A path into a JSON document: keys joined with dots, `[]` for every element
+# of an array: `contact.alt_email`, `orders[].card`, `[].email`.
+_JSON_PATH = re.compile(r'^(?:[^.\[\]]+|\[\])(?:\.[^.\[\]]+|\[\])*$')
+
 
 def _listOption(*choices: str) -> Callable[[Any], List[str]]:
 
@@ -49,9 +54,6 @@ def _validIban(text: str) -> bool:
 def _validIpv4(text: str) -> bool:
 
     return all(int(octet) <= 255 for octet in text.split('.'))
-
-
-_DATE_LIKE = re.compile(r'^(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})$')
 
 
 def _phoneLike(text: str) -> bool:
@@ -171,11 +173,6 @@ class RedactStrategy(Strategy):
         pieces.append(value[position:])
 
         return ''.join(pieces)
-
-
-# A path into a JSON document: keys joined with dots, `[]` for every element
-# of an array: `contact.alt_email`, `orders[].card`, `[].email`.
-_JSON_PATH = re.compile(r'^(?:[^.\[\]]+|\[\])(?:\.[^.\[\]]+|\[\])*$')
 
 
 def _jsonPolicy(value: Any) -> Dict[str, Any]:

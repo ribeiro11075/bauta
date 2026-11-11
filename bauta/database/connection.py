@@ -113,10 +113,10 @@ class Database(TableMaintenance):
         """
 
         if isinstance(connectionSettings, (FilesConnection, IcebergConnection)):
-            # A job writes files through bauta.lake; anything else that asks
-            # for a connection -- discover, coverage, run state -- asks for a
-            # database.
-            raise ConfigurationError('{} is a {} connection, not a database: jobs can write to it, but nothing reads from it'.format(
+            # A job reads and writes files through bauta.lake; anything else
+            # that asks for a connection -- discover, coverage, run state --
+            # asks for a database.
+            raise ConfigurationError('{} is a {} connection, not a database: only a job can read or write it'.format(
                 connectionSettings.describeTarget(), connectionSettings.type.value))
 
         self.connectionSettings: DatabaseConfig = connectionSettings
@@ -730,3 +730,17 @@ class Database(TableMaintenance):
                                                     primaryKeyColumns=primaryKeyColumns, nonPrimaryKeyColumns=nonPrimaryKeyColumns)
         with self._uniqueKeyClashes(targetTable):
             self.alter(query=query)
+
+
+def openSource(connectionSettings: ConnectionConfig) -> Database:
+    """What a job reads rows through: the database, or for a files connection,
+    its tables behind the same interface. Imported only now: bauta.lake needs
+    pyarrow, and is built on this module.
+    """
+
+    if isinstance(connectionSettings, FilesConnection):
+        from ..lake.source import FileSource
+
+        return FileSource(connectionSettings)
+
+    return Database(connectionSettings=connectionSettings)

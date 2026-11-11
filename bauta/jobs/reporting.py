@@ -26,6 +26,46 @@ from .runner import RunResult, newRunId
 HTTP_TIMEOUT_SECONDS = 10
 
 ERROR_TEXT_LIMIT = 2000
+# Each stage a job's time is split into, as history names it: see
+# throttle.StageTimes. Only a completed job has them.
+STAGE_FIELDS = {'read': 'readSeconds', 'mask': 'maskSeconds', 'write': 'writeSeconds', 'throttled': 'throttledSeconds'}
+# How much of the history file is read at a time when reading it backwards.
+TAIL_BLOCK_BYTES = 64 * 1024
+DATABASE_HISTORY_SCHEMA = """CREATE TABLE bauta_history (
+    run_id VARCHAR(36) NOT NULL,
+    job VARCHAR(255) NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    row_count NUMERIC(19),
+    attempts INT,
+    started_at DOUBLE PRECISION,
+    finished_at DOUBLE PRECISION,
+    error VARCHAR(2000),
+    read_seconds DOUBLE PRECISION,
+    mask_seconds DOUBLE PRECISION,
+    write_seconds DOUBLE PRECISION,
+    throttled_seconds DOUBLE PRECISION,
+    PRIMARY KEY (run_id, job)
+    )"""
+_HISTORY_COLUMNS = ['run_id', 'job', 'status', 'row_count', 'attempts', 'started_at', 'finished_at', 'error']
+# Not in a table made by 0.2.4 or earlier: written and read
+# only where the table has them.
+_STAGE_COLUMNS = ['read_seconds', 'mask_seconds', 'write_seconds', 'throttled_seconds']
+# One row per piece of a manifest's JSON, which is ASCII (json.dumps escapes
+# the rest), so VARCHAR holds it on every dialect where a single large-text
+# column would need a different type on each.
+DATABASE_MANIFEST_SCHEMA = """CREATE TABLE bauta_manifest (
+    run_id VARCHAR(36) NOT NULL,
+    part INT NOT NULL,
+    written_at DOUBLE PRECISION NOT NULL,
+    content VARCHAR(2000) NOT NULL,
+    PRIMARY KEY (run_id, part)
+    )"""
+MANIFEST_PART_LENGTH = 2000
+# Sent twice at most, a few seconds apart. A failure alert is sent when
+# something has already gone wrong, often on a network having a bad moment,
+# and one dropped request lost it.
+NOTIFY_ATTEMPTS = 2
+NOTIFY_RETRY_DELAY_SECONDS = 3.0
 
 
 def _timestamp(seconds: float) -> Optional[str]:
@@ -34,11 +74,6 @@ def _timestamp(seconds: float) -> Optional[str]:
         return None
 
     return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat(timespec='seconds')
-
-
-# Each stage a job's time is split into, as history names it: see
-# throttle.StageTimes. Only a completed job has them.
-STAGE_FIELDS = {'read': 'readSeconds', 'mask': 'maskSeconds', 'write': 'writeSeconds', 'throttled': 'throttledSeconds'}
 
 
 def _stageFields(stages: Optional[Mapping[str, float]]) -> Dict[str, Optional[float]]:
@@ -61,10 +96,6 @@ def historyRecords(result: RunResult, runId: str) -> List[Dict[str, Any]]:
         'error': (outcome.error or None) and outcome.error[:ERROR_TEXT_LIMIT],
         **_stageFields(outcome.stages),
         } for outcome in result.outcomes]
-
-
-# How much of the history file is read at a time when reading it backwards.
-TAIL_BLOCK_BYTES = 64 * 1024
 
 
 def _linesBackwards(path: Path, blockSize: int = TAIL_BLOCK_BYTES) -> Iterator[bytes]:
@@ -150,29 +181,6 @@ class FileHistory(RunHistory):
                         break
 
         return records
-
-
-DATABASE_HISTORY_SCHEMA = """CREATE TABLE bauta_history (
-    run_id VARCHAR(36) NOT NULL,
-    job VARCHAR(255) NOT NULL,
-    status VARCHAR(16) NOT NULL,
-    row_count NUMERIC(19),
-    attempts INT,
-    started_at DOUBLE PRECISION,
-    finished_at DOUBLE PRECISION,
-    error VARCHAR(2000),
-    read_seconds DOUBLE PRECISION,
-    mask_seconds DOUBLE PRECISION,
-    write_seconds DOUBLE PRECISION,
-    throttled_seconds DOUBLE PRECISION,
-    PRIMARY KEY (run_id, job)
-    )"""
-
-_HISTORY_COLUMNS = ['run_id', 'job', 'status', 'row_count', 'attempts', 'started_at', 'finished_at', 'error']
-
-# Not in a table made by 0.2.4 or earlier: written and read
-# only where the table has them.
-_STAGE_COLUMNS = ['read_seconds', 'mask_seconds', 'write_seconds', 'throttled_seconds']
 
 
 class DatabaseHistory(RunHistory):
@@ -275,19 +283,6 @@ def runIdOf(result: RunResult) -> str:
 
 
 # Manifests --------------------------------------------------------------------
-
-# One row per piece of a manifest's JSON, which is ASCII (json.dumps escapes
-# the rest), so VARCHAR holds it on every dialect where a single large-text
-# column would need a different type on each.
-DATABASE_MANIFEST_SCHEMA = """CREATE TABLE bauta_manifest (
-    run_id VARCHAR(36) NOT NULL,
-    part INT NOT NULL,
-    written_at DOUBLE PRECISION NOT NULL,
-    content VARCHAR(2000) NOT NULL,
-    PRIMARY KEY (run_id, part)
-    )"""
-
-MANIFEST_PART_LENGTH = 2000
 
 
 class DatabaseManifests:
@@ -392,13 +387,6 @@ def notify(url: str, result: RunResult, always: bool = False) -> bool:
             time.sleep(NOTIFY_RETRY_DELAY_SECONDS)
 
     raise AssertionError('unreachable: the last attempt returns or raises')
-
-
-# Sent twice at most, a few seconds apart. A failure alert is sent when
-# something has already gone wrong, often on a network having a bad moment,
-# and one dropped request lost it.
-NOTIFY_ATTEMPTS = 2
-NOTIFY_RETRY_DELAY_SECONDS = 3.0
 
 
 def _mayPassOnRetry(error: BaseException) -> bool:

@@ -11,7 +11,7 @@ import contextlib
 from typing import Any, Dict, Generator, List, Mapping, Tuple
 
 from ..configuration import ConnectionConfig, DataJobConfig
-from .connection import Database
+from .connection import Database, openSource
 from .values import decodedJson
 
 
@@ -33,7 +33,7 @@ class Connections:
 
         database = self._open.get(alias)
         if database is None:
-            database = self._open[alias] = Database(connectionSettings=self._settings[alias])
+            database = self._open[alias] = openSource(self._settings[alias])
 
         try:
             yield database

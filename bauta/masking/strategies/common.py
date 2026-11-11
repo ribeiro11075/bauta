@@ -12,6 +12,9 @@ from typing import Any, Callable, List, Optional
 
 from ..core import MAXIMUM_KEY_LENGTH, NORMALIZE_STEPS, MaskingError
 
+_ADDRESS_TYPES = (ipaddress.IPv4Address, ipaddress.IPv6Address, ipaddress.IPv4Interface, ipaddress.IPv6Interface,
+                  ipaddress.IPv4Network, ipaddress.IPv6Network)
+
 
 def _asciiDigits(text: str) -> str:
     """`text` with every decimal digit, in any script, written as 0-9."""
@@ -71,8 +74,6 @@ def _requireAsciiCharset(strategy: str, text: str, charset: str) -> None:
     elif any(not character.isascii() and character.isdigit() for character in text):
         raise MaskingError('the {} strategy masks only the digits 0-9, and this value has digits in another script, '
                            'which it would copy unmasked; use the digits strategy for such text'.format(strategy))
-
-
 
 
 def _integerOption(minimum: int, maximum: Optional[int] = None) -> Callable[[Any], int]:
@@ -143,10 +144,6 @@ def _normalizeOption(*allowed: str) -> Callable[[Any], List[str]]:
 def _typeName(value: Any) -> str:
 
     return type(value).__name__
-
-
-_ADDRESS_TYPES = (ipaddress.IPv4Address, ipaddress.IPv6Address, ipaddress.IPv4Interface, ipaddress.IPv6Interface,
-                  ipaddress.IPv4Network, ipaddress.IPv6Network)
 
 
 def structuredText(value: Any) -> Optional[str]:

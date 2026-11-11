@@ -12,7 +12,7 @@ import hashlib
 import secrets
 import threading
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
@@ -26,14 +26,29 @@ SESSION_COOKIE = 'bauta_studio_session'
 CSRF_HEADER = 'X-Bauta-Studio'
 SAFE_METHODS = {'GET', 'HEAD', 'OPTIONS'}
 MINIMUM_PASSWORD_LENGTH = 12
-# Failed sign-ins allowed per email in the window, before it is refused.
+# Failed sign-ins allowed in the window before more are refused: for an email
+# from one address, which is what a person mistyping hits; from one address
+# across every email, which stops trying many accounts; and for one email
+# across every address, which stops many machines trying one account while
+# leaving it too high for a stranger to lock its owner out cheaply.
 LOGIN_ATTEMPTS = 5
+LOGIN_ATTEMPTS_PER_ADDRESS = 30
+LOGIN_ATTEMPTS_PER_EMAIL = 100
 LOGIN_WINDOW_SECONDS = 300
+# Each check takes argon2's 64 MiB and tens of milliseconds, and needs no
+# account to ask for, so only so many run at once; past the wait, it is refused.
+PASSWORD_CHECKS_AT_ONCE = 4
+PASSWORD_CHECK_WAIT_SECONDS = 10.0
 
 hasher = PasswordHasher()
 # Checked against when an email is unknown, so a wrong email takes as long as
 # a wrong password and the time says nothing about who has an account.
 _DUMMY_HASH = hasher.hash(secrets.token_urlsafe(16))
+_passwordChecks = threading.BoundedSemaphore(PASSWORD_CHECKS_AT_ONCE)
+
+
+class PasswordCheckBusy(Exception):
+    """Too many sign-ins are being checked at once to check another."""
 
 
 def hashPassword(password: str) -> str:
@@ -46,10 +61,14 @@ def hashPassword(password: str) -> str:
 
 def checkPassword(user: Optional[User], password: str) -> bool:
 
+    if not _passwordChecks.acquire(timeout=PASSWORD_CHECK_WAIT_SECONDS):
+        raise PasswordCheckBusy('too many sign-ins at once; try again shortly')
     try:
         return hasher.verify(user.passwordHash if user is not None else _DUMMY_HASH, password) and user is not None
     except (VerifyMismatchError, VerificationError, InvalidHashError):
         return False
+    finally:
+        _passwordChecks.release()
 
 
 def _tokenHash(token: str) -> str:
@@ -58,41 +77,70 @@ def _tokenHash(token: str) -> str:
 
 
 class LoginThrottle:
-    """At most LOGIN_ATTEMPTS failures per email in LOGIN_WINDOW_SECONDS.
-    Held in memory: Studio runs as one process.
+    """Counts failed sign-ins by email and address together, by address, and
+    by email: see LOGIN_ATTEMPTS. An email alone was the whole key, so anyone
+    could keep an admin locked out with one request a minute. Held in memory:
+    Studio runs as one process. Only a failure is kept, and only for the
+    window, so what it holds can't grow with who asks.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        self._failures: Dict[str, List[float]] = {}
+        self._failures: Dict[Tuple[str, ...], List[float]] = {}
         self._lock = threading.Lock()
         self._clock = clock
+        self._swept = clock()
 
 
-    def _recent(self, email: str) -> List[float]:
+    @staticmethod
+    def _limits(email: str, address: str) -> List[Tuple[Tuple[str, ...], int]]:
+
+        return [(('both', email, address), LOGIN_ATTEMPTS), (('address', address), LOGIN_ATTEMPTS_PER_ADDRESS), (('email', email), LOGIN_ATTEMPTS_PER_EMAIL)]
+
+
+    def _recent(self, key: Tuple[str, ...]) -> int:
+        """How many of `key`'s failures are in the window, forgetting the rest."""
 
         now = self._clock()
-        recent = [at for at in self._failures.get(email, []) if now - at < LOGIN_WINDOW_SECONDS]
-        self._failures[email] = recent
+        recent = [at for at in self._failures.get(key, []) if now - at < LOGIN_WINDOW_SECONDS]
+        if recent:
+            self._failures[key] = recent
+        else:
+            self._failures.pop(key, None)
 
-        return recent
+        return len(recent)
 
 
-    def allowed(self, email: str) -> bool:
+    def _sweep(self) -> None:
+        """Forgets keys nobody has come back to, once a window."""
+
+        now = self._clock()
+        if now - self._swept >= LOGIN_WINDOW_SECONDS:
+            self._swept = now
+            for key in list(self._failures):
+                self._recent(key)
+
+
+    def allowed(self, email: str, address: str) -> bool:
 
         with self._lock:
-            return len(self._recent(email)) < LOGIN_ATTEMPTS
+            return all(self._recent(key) < limit for key, limit in self._limits(email, address))
 
 
-    def failed(self, email: str) -> None:
-
-        with self._lock:
-            self._recent(email).append(self._clock())
-
-
-    def succeeded(self, email: str) -> None:
+    def failed(self, email: str, address: str) -> None:
 
         with self._lock:
-            self._failures.pop(email, None)
+            self._sweep()
+            for key, _ in self._limits(email, address):
+                self._failures.setdefault(key, []).append(self._clock())
+
+
+    def succeeded(self, email: str, address: str) -> None:
+        """Clears only what this person's own typing counted: signing in to
+        one account must not reset what an address has tried against others.
+        """
+
+        with self._lock:
+            self._failures.pop(self._limits(email, address)[0][0], None)
 
 
 def startSession(session: Session, user: User, response: Response, hours: int, secure: bool) -> None:

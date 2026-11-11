@@ -138,9 +138,15 @@ Studio's API is Python, under `bauta/studio/`, and tested with the rest. Its web
 cd studio/web && npm install && npm run build      # into bauta/studio/static, which `bauta studio serve` serves
 npm run dev                                        # or Vite on :5173, passing /api to a `bauta studio serve` on :8710
 npm run typecheck
+npm test                                           # Vitest, beside what each test covers
 ```
 
 To try it on something, `python studio/demo/setup.py demo-workspace` makes a small SQLite shop with five jobs, a few runs of history, a failing job and a column for discovery to find; its docstring has the commands to add an account and serve it.
+
+
+### Studio's database
+
+Studio's tables are declared in `bauta/studio/db.py` and created and upgraded by Alembic, as it starts, from `bauta/studio/migrations/versions/`. **Changing a model needs a migration:** add a file there whose `down_revision` is the latest one's `revision`, using `render_as_batch`-friendly operations (`with op.batch_alter_table(...)`), since SQLite rebuilds a table to alter it. `tests/studio/test_studioMigrations.py` fails if the migrations and the models disagree. Never edit a released migration.
 
 
 ## The documentation site

@@ -17,6 +17,7 @@ import zipfile
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import verifyManifest
@@ -54,7 +55,12 @@ def archiveManifest(session: Session, project: Project) -> Optional[str]:
     key = manifestKey(manifest)
     if session.get(ArchivedManifest, key) is None:
         session.add(ArchivedManifest(runId=key, manifest=manifest))
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            # Kept meanwhile by the archive loop or another request, which is
+            # what this was going to do; a page polling shouldn't fail for it.
+            session.rollback()
 
     return key
 

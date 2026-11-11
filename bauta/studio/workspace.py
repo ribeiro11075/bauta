@@ -259,7 +259,8 @@ def connections(project: Project) -> List[Dict[str, Any]]:
 
 def testConnection(project: Project, alias: str) -> Dict[str, Any]:
     """Connects to `alias` and asks whether the session is encrypted, as
-    `run --dry-run` does. A files or Iceberg connection is checked writable.
+    `run --dry-run` does. A files or Iceberg connection is checked writable,
+    or readable if jobs only read it.
     """
 
     from .. import Database
@@ -269,10 +270,14 @@ def testConnection(project: Project, alias: str) -> Dict[str, Any]:
     settings = project.connections[alias]
     try:
         if isLake(settings):
-            from ..lake import checkWritable
+            from ..lake import checkReadable, checkWritable
 
-            checkWritable(settings)
-            return {'ok': True, 'detail': 'writable'}
+            if any(job.targetConnection == alias for job in project.jobsFile.jobs.values()) or not any(
+                    job.sourceConnection == alias for job in project.jobsFile.jobs.values()):
+                checkWritable(settings)
+                return {'ok': True, 'detail': 'writable'}
+            checkReadable(settings)
+            return {'ok': True, 'detail': 'readable'}
         with Database(connectionSettings=settings) as database:
             encrypted = database.isEncrypted()
         return {'ok': True, 'encrypted': encrypted, 'detail': {True: 'connected, encrypted', False: 'connected, NOT encrypted',

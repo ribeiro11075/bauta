@@ -5,12 +5,16 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+  # The release runs all of this first, so nothing is published that fails it.
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # By workflow as well, which names the caller when called: a release run by
+  # hand on master must not cancel, or be cancelled by, CI for a push there.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -39,6 +43,27 @@ jobs:
         run: mypy
       - name: Test
         run: pytest -q
+
+  # Studio's web app: otherwise a type error first showed when a release was tagged.
+  web:
+    name: Studio's web app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: studio/web/package-lock.json
+      - name: Install
+        working-directory: studio/web
+        run: npm ci
+      - name: Test
+        working-directory: studio/web
+        run: npm test
+      - name: Type-check and build
+        working-directory: studio/web
+        run: npm run build
 
   # The documentation site: --strict fails on any link or anchor that points
   # nowhere, which is how a renamed heading breaks the pages that link to it.

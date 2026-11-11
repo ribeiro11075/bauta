@@ -20,6 +20,14 @@ _RESERVED_RECORD_FIELDS = frozenset({
     'message', 'module', 'msecs', 'msg', 'name', 'pathname', 'process', 'processName', 'relativeCreated', 'stack_info',
     'taskName', 'thread', 'threadName',
     })
+# The `event` of the record a job's last failed attempt logs, with its
+# traceback; the cycle's summary reports the same failure in a line.
+ATTEMPT_FAILED = 'attemptFailed'
+# The loggers of the drivers and libraries that touch rows. Their records
+# never reach the package's logger, so its filter can't see them: a driver
+# logging a statement or an error goes wherever the host's logging sends it,
+# or to Python's last resort on stderr.
+DRIVER_LOGGERS = frozenset({'psycopg', 'psycopg_pool', 'oracledb', 'mysql', 'pymssql', 'duckdb', 'pyiceberg', 'pyarrow'})
 
 
 class JsonFormatter(logging.Formatter):
@@ -48,11 +56,6 @@ class JsonFormatter(logging.Formatter):
             payload['exception'] = record.exc_text
 
         return json.dumps(payload, default=str)
-
-
-# The `event` of the record a job's last failed attempt logs, with its
-# traceback; the cycle's summary reports the same failure in a line.
-ATTEMPT_FAILED = 'attemptFailed'
 
 
 class _OneLineFormatter(logging.Formatter):
@@ -122,13 +125,6 @@ def _installScrubbing() -> None:
 # At import, so a job process -- which imports this and builds no Log -- scrubs
 # its records before they are forwarded.
 _installScrubbing()
-
-
-# The loggers of the drivers and libraries that touch rows. Their records
-# never reach the package's logger, so its filter can't see them: a driver
-# logging a statement or an error goes wherever the host's logging sends it,
-# or to Python's last resort on stderr.
-DRIVER_LOGGERS = frozenset({'psycopg', 'psycopg_pool', 'oracledb', 'mysql', 'pymssql', 'duckdb', 'pyiceberg', 'pyarrow'})
 
 
 def _scrubDriverRecord(record: logging.LogRecord) -> None:

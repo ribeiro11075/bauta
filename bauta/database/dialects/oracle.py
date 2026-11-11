@@ -12,8 +12,10 @@ from ...configuration import DatabaseConfig, DatabaseType, OracleConnection
 from ...log import LOGGER_NAME
 from .base import ColumnCategory, DatabaseDialect, _mergeUpdateInsertClause, _renameInThreeSteps, _renameSteps, _renameStatement, settingsOf
 
-logger = logging.getLogger(LOGGER_NAME)
+# The condition Oracle stores for a NOT NULL column.
+_NOT_NULL_CHECK = re.compile(r'^\s*"?[^"\s]+"?\s+IS\s+NOT\s+NULL\s*$', re.IGNORECASE)
 
+logger = logging.getLogger(LOGGER_NAME)
 
 
 def _oracleDatetimesAsTimestamps(cursor: Cursor, value: Any, arraysize: int) -> Any:
@@ -59,10 +61,6 @@ def _oracleValues(cursor: Cursor, metadata: Any) -> Any:
         return native(cursor).var(decimal.Decimal, arraysize=native(cursor).arraysize)
 
     return None
-
-
-# The condition Oracle stores for a NOT NULL column.
-_NOT_NULL_CHECK = re.compile(r'^\s*"?[^"\s]+"?\s+IS\s+NOT\s+NULL\s*$', re.IGNORECASE)
 
 
 class OracleDialect(DatabaseDialect):

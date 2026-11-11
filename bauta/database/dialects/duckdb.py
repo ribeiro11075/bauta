@@ -28,6 +28,12 @@ _LOCK_MESSAGE = 'Could not set lock on file'
 
 # The chunk is registered under this name for the statement that loads it.
 _CHUNK_VIEW = 'bauta_chunk'
+# What a column Arrow can't type may hold and still be sent as text: DuckDB
+# casts the text to the column's type, as it casts each value row by row.
+_AS_TEXT = (int, float, decimal.Decimal, str, uuid.UUID)
+# Statements whose result is the number of rows they changed, which DuckDB
+# returns as a row rather than as the cursor's rowcount.
+_COUNTING_STATEMENT = re.compile(r'^\s*(INSERT|UPDATE|DELETE)\b', re.IGNORECASE)
 
 
 def _arrowValue(value: Any) -> Any:
@@ -36,11 +42,6 @@ def _arrowValue(value: Any) -> Any:
     """
 
     return json.dumps(value) if isinstance(value, dict) else value
-
-
-# What a column Arrow can't type may hold and still be sent as text: DuckDB
-# casts the text to the column's type, as it casts each value row by row.
-_AS_TEXT = (int, float, decimal.Decimal, str, uuid.UUID)
 
 
 def _asArrowTable(rows: Sequence[Sequence[Any]]) -> Any:
@@ -76,11 +77,6 @@ def _asArrowTable(rows: Sequence[Sequence[Any]]) -> Any:
             arrays['c{}'.format(index)] = pyarrow.array([None if value is None else str(value) for value in values], type=pyarrow.string())
 
     return pyarrow.table(arrays)
-
-
-# Statements whose result is the number of rows they changed, which DuckDB
-# returns as a row rather than as the cursor's rowcount.
-_COUNTING_STATEMENT = re.compile(r'^\s*(INSERT|UPDATE|DELETE)\b', re.IGNORECASE)
 
 
 class _Session:

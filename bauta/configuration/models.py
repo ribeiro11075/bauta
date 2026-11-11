@@ -30,6 +30,37 @@ DEFAULT_WORKERS = 1
 # uses them: `x-defaults: &defaults` above, `<<: *defaults` in each job. They
 # are dropped before validation rather than read as configuration.
 ANCHOR_KEY_PREFIX = 'x-'
+WATERMARK_PLACEHOLDER = re.compile(r'\{\{\s*watermark\s*\}\}')
+AUTOMATIC = 'auto'
+# A plain identifier: an Iceberg table's name or namespace, or a key column.
+_ICEBERG_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+# The settings only some kinds of target take.
+_TARGET_SETTINGS = {
+    'targetColumnTypes': ('files', 'iceberg'),
+    'singleFile': ('files',),
+    'targetKey': ('iceberg',),
+    'targetTableStage': ('database',),
+    'preTargetAdhocQueries': ('database',),
+    'postTargetAdhocQueries': ('database',),
+    # A files or Iceberg target publishes what one writer wrote, and has no
+    # table for several to load into at once.
+    'partitions': ('database',),
+    }
+_TARGET_NAMES = {'database': 'a database', 'files': 'a files connection', 'iceberg': 'an Iceberg connection'}
+# What a file-level `defaults:` block may supply to every job. The plumbing
+# only: which databases, how rows are written, and the retry and timeout
+# settings. A job that names any of these itself keeps its own value.
+DEFAULTABLE_JOB_FIELDS = frozenset({
+    'active', 'refresh', 'sourceConnection', 'targetConnection', 'insertStrategy',
+    'chunkSize', 'retries', 'retryDelaySeconds', 'timeoutSeconds', 'partitions',
+    })
+# Within `masking`, the key alone. A key reference is not a policy: `columns`
+# stays with its job, so a reviewer can read what one job does to its data
+# without holding the whole file in their head.
+DEFAULTABLE_MASKING_FIELDS = frozenset({'key'})
+DEFAULTS_KEY = 'defaults'
+MASKING_KEY = 'masking'
+T = TypeVar('T', bound=BaseModel)
 
 
 def isAnchorKey(name: Any) -> bool:
@@ -46,8 +77,6 @@ def _withoutAnchorKeys(value: Any) -> Any:
 
     return value
 
-
-WATERMARK_PLACEHOLDER = re.compile(r'\{\{\s*watermark\s*\}\}')
 
 def watermarkPlaceholders(query: str) -> int:
     """How many {{ watermark }} placeholders `query` has outside its comments,
@@ -187,9 +216,6 @@ class PartitionsConfig(BaseModel):
         """Whether the job chooses how many slices, or the column too."""
 
         return self.count == AUTOMATIC
-
-
-AUTOMATIC = 'auto'
 
 
 def _passesUnnamedColumns(masking: MaskingConfig) -> bool:
@@ -457,15 +483,15 @@ def _incrementalShuffleProblems(job: DataJobConfig, connections: Mapping[str, Co
 
 def _connectionProblems(job: DataJobConfig, connections: Mapping[str, ConnectionConfig]) -> List[str]:
     """What the job's connections, as configured, rule out: writing to a
-    readOnly one, reading from files or Iceberg, settings its target doesn't
-    take, and more partitions than its connections allow jobs.
+    readOnly one, reading from Iceberg, settings its target doesn't take, and
+    more partitions than its connections allow jobs.
     """
 
     source, target = connections.get(job.sourceConnection), connections.get(job.targetConnection)
     problems = []
     if getattr(target, 'readOnly', False):
         problems.append('targetConnection "{}" is readOnly, so nothing may be written to it'.format(job.targetConnection))
-    if isLake(source):
+    if isinstance(source, IcebergConnection):
         problems.append('sourceConnection "{}" is {}, which can only be written to'.format(job.sourceConnection, _TARGET_NAMES[targetKind(source)]))
     problems.extend('targetConnection "{}" {}'.format(job.targetConnection, problem) for problem in ([] if target is None else targetProblems(job, target)))
     problems.extend(partitionLimitProblems(job, connections))
@@ -495,29 +521,11 @@ def filePathProblem(path: str) -> Optional[str]:
     return None
 
 
-# A plain identifier: an Iceberg table's name or namespace, or a key column.
-_ICEBERG_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-
 _STRATEGIES = {
     'database': (InsertStrategy.SWAP, InsertStrategy.UPSERT),
     'files': (InsertStrategy.APPEND, InsertStrategy.OVERWRITE),
     'iceberg': (InsertStrategy.APPEND, InsertStrategy.OVERWRITE, InsertStrategy.UPSERT),
     }
-
-# The settings only some kinds of target take.
-_TARGET_SETTINGS = {
-    'targetColumnTypes': ('files', 'iceberg'),
-    'singleFile': ('files',),
-    'targetKey': ('iceberg',),
-    'targetTableStage': ('database',),
-    'preTargetAdhocQueries': ('database',),
-    'postTargetAdhocQueries': ('database',),
-    # A files or Iceberg target publishes what one writer wrote, and has no
-    # table for several to load into at once.
-    'partitions': ('database',),
-    }
-
-_TARGET_NAMES = {'database': 'a database', 'files': 'a files connection', 'iceberg': 'an Iceberg connection'}
 
 
 def targetKind(connection: Any) -> str:
@@ -703,23 +711,6 @@ class TableLocation(BaseModel):
 StorageLocation = Union[Annotated[str, Field(min_length=1)], TableLocation]
 
 
-# What a file-level `defaults:` block may supply to every job. The plumbing
-# only: which databases, how rows are written, and the retry and timeout
-# settings. A job that names any of these itself keeps its own value.
-DEFAULTABLE_JOB_FIELDS = frozenset({
-    'active', 'refresh', 'sourceConnection', 'targetConnection', 'insertStrategy',
-    'chunkSize', 'retries', 'retryDelaySeconds', 'timeoutSeconds', 'partitions',
-    })
-
-# Within `masking`, the key alone. A key reference is not a policy: `columns`
-# stays with its job, so a reviewer can read what one job does to its data
-# without holding the whole file in their head.
-DEFAULTABLE_MASKING_FIELDS = frozenset({'key'})
-
-DEFAULTS_KEY = 'defaults'
-MASKING_KEY = 'masking'
-
-
 def _checkDefaultsKeys(defaults: Mapping[str, Any]) -> None:
     """Rejects a setting `defaults:` may not supply, naming what it may."""
     unknown = sorted(set(defaults) - DEFAULTABLE_JOB_FIELDS - {MASKING_KEY})
@@ -863,9 +854,6 @@ def findCycle(predecessors: Mapping[str, Sequence[str]]) -> Optional[List[str]]:
                 return found
 
     return None
-
-
-T = TypeVar('T', bound=BaseModel)
 
 
 class Configuration:

@@ -59,10 +59,26 @@ def loadYaml(path: Path) -> Any:
         raise UsageError('{} is not valid YAML: {}'.format(path, error)) from error
 
 
-def readJobs(jobsPath: Path) -> JobsDocument:
-    """The jobs file with the files its `include` names merged in."""
+def readJobs(jobsPath: Path, replacing: Optional[Mapping[Path, str]] = None) -> JobsDocument:
+    """The jobs file with the files its `include` names merged in, each file
+    `replacing` names read as the text given there instead of from disk.
+    """
 
-    return readJobsFile(jobsPath, load=loadYaml)
+    if not replacing:
+        return readJobsFile(jobsPath, load=loadYaml)
+
+    texts = {os.path.realpath(path): text for path, text in replacing.items()}
+
+    def load(path: Path) -> Any:
+        text = texts.get(os.path.realpath(path))
+        if text is None:
+            return loadYaml(path)
+        try:
+            return expandEnvironmentVariables(parseYaml(text))
+        except yaml.YAMLError as error:
+            raise UsageError('{} is not valid YAML: {}'.format(path, error)) from error
+
+    return readJobsFile(jobsPath, load=load)
 
 
 def configDirectory(directory: Optional[Union[str, Path]] = None) -> Path:
@@ -176,10 +192,13 @@ class Project:
 
     @classmethod
     def load(cls, directory: Optional[Union[str, Path]] = None, jobsPath: Optional[Union[str, Path]] = None,
-             connectionsPath: Optional[Union[str, Path]] = None) -> 'Project':
+             connectionsPath: Optional[Union[str, Path]] = None, replacing: Optional[Mapping[Path, str]] = None) -> 'Project':
         """The jobs.yaml and connections.yaml in `directory` (default: as
         configDirectory says), or the files named. Raises ConfigurationError
         for an invalid one, and UsageError for one that isn't there.
+
+        `replacing` reads the jobs files it names as the text given, to ask
+        whether a change would load before writing it.
         """
 
         folder = configDirectory(directory)
@@ -187,7 +206,7 @@ class Project:
         connectionsFile = Path(connectionsPath) if connectionsPath else folder / CONNECTIONS_FILE
 
         connections = loadConnections(connectionsFile)
-        document = readJobs(jobs)
+        document = readJobs(jobs, replacing)
         jobsFile = Configuration.validateJobConfiguration(document.content, DataJobsFile)
         Configuration.validateJobGraph(jobsFile.jobs, connections=connections)
 
@@ -428,7 +447,7 @@ class Project:
             selected = {name: job for name, job in selected.items() if job.active}
         keysByAlias: Dict[str, List[Any]] = {}
         elsewhere: Dict[str, Dict[str, int]] = {}
-        for alias in sorted({job.sourceConnection for job in selected.values()}):
+        for alias in sorted({job.sourceConnection for job in selected.values() if not isLake(self.connections[job.sourceConnection])}):
             try:
                 with Database(connectionSettings=self.connections[alias]) as database:
                     keysByAlias[alias], elsewhere[alias] = readForeignKeys(database, schemasUsed(selected, alias, targets=False))
@@ -549,8 +568,8 @@ def requireDatabase(connectionConfiguration: Mapping[str, ConnectionConfig], ali
     requireAlias(connectionConfiguration, alias)
     settings = connectionConfiguration[alias]
     if isLake(settings):
-        raise UsageError('{} is a {} connection; this command works with databases. A job writing to it names it as its '
-                         'targetConnection'.format(alias, settings.type.value))
+        raise UsageError('{} is a {} connection; this command works with databases. A job reads or writes it by '
+                         'naming it as its sourceConnection or targetConnection'.format(alias, settings.type.value))
     assert not isinstance(settings, (FilesConnection, IcebergConnection))
 
     return settings
@@ -641,14 +660,17 @@ def dryRunProblems(jobs: Mapping[str, DataJobConfig], connectionConfiguration: M
         for alias in aliases:
             settings = connectionConfiguration[alias]
             if isLake(settings):
-                from .lake import checkWritable
+                from .lake import checkReadable, checkWritable
 
+                # Only a connection jobs write to is asked to be written to:
+                # what a job only reads may well be read-only to it.
+                writes = any(job.targetConnection == alias for job in jobs.values())
                 try:
-                    checkWritable(settings)
-                    logger.info('{}: writable ({})'.format(alias, settings.describeTarget()))
+                    (checkWritable if writes else checkReadable)(settings)
+                    logger.info('{}: {} ({})'.format(alias, 'writable' if writes else 'readable', settings.describeTarget()))
                 except Exception as error:
                     unreachable.add(alias)
-                    problems.append('{}: cannot write to {} -- {}'.format(alias, settings.describeTarget(), describeError(error)))
+                    problems.append('{}: cannot {} {} -- {}'.format(alias, 'write to' if writes else 'read', settings.describeTarget(), describeError(error)))
                 continue
             try:
                 with connections.use(alias) as database:

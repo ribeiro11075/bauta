@@ -12,6 +12,12 @@ permissions:
   contents: read
 
 jobs:
+  # Everything CI runs, the real databases included: a tag can be pushed on a
+  # commit CI failed, or never saw.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build bauta
     runs-on: ubuntu-latest
@@ -135,7 +141,7 @@ jobs:
   pypi:
     name: Publish to PyPI
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, native-wheels, native-sdist]
+    needs: [ci, build, native-wheels, native-sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

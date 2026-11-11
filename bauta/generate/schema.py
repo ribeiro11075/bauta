@@ -13,6 +13,51 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Se
 from ..configuration import DatabaseType
 from ..database.dialects import ColumnDefinition, ForeignKey, bareName, quoteFolded, quoteFoldedTable, quoteIdentifier, splitTableName, tooLongName
 
+INTEGER_BOOLEAN_NOTE = 'the source stores this as an integer, so it stays one'
+# DuckDB's unsigned integers that the next signed type up holds.
+_DUCKDB_UNSIGNED = {'utinyint': 'smallint', 'usmallint': 'integer', 'uinteger': 'bigint'}
+# Where a key column can't be an unbounded type -- MySQL can't index TEXT,
+# SQL Server can't index NVARCHAR(MAX), Oracle can't index a CLOB -- it gets
+# this bounded length instead.
+KEY_TEXT_LENGTH = 255
+# Oracle keeps a TIME as text. MySQL's driver returns a TIME as a timedelta,
+# whose text runs to '-35 days, 1:00:01.999999' at the type's limits.
+ORACLE_TIME_LENGTH = 32
+SQLITE_INTEGER_DIGITS = 19
+# The digits of an unsigned 64-bit integer: MySQL's BIGINT UNSIGNED and
+# DuckDB's UBIGINT reach 18446744073709551615.
+UNSIGNED_BIGINT_DIGITS = 20
+# The digits each target's integer types take. SQLite gives all three the same
+# 64-bit affinity whatever they are called, and Oracle renders them as
+# NUMBER(n), which holds every value of that many digits.
+INTEGER_DIGITS = {'smallint': 4, 'integer': 9, 'bigint': 18}
+_TARGET_INTEGER_DIGITS = {
+    DatabaseType.ORACLE: {'smallint': 5, 'integer': 10, 'bigint': 19},
+    DatabaseType.SQLITE: {'smallint': 19, 'integer': 19, 'bigint': 19},
+    }
+# The collation a key column needs on the databases whose default compares
+# text loosely, where two keys the source keeps apart would otherwise become
+# one row: `a` and `A`, `ss` and the German sharp s, and on MySQL and MariaDB
+# `a` and `a ` too. SQL Server compares trailing spaces loosely whatever the
+# collation, so there it refuses the second key instead of merging it.
+KEY_COLLATIONS = {
+    DatabaseType.MYSQL: 'utf8mb4_0900_bin',
+    DatabaseType.MARIADB: 'utf8mb4_nopad_bin',
+    DatabaseType.MSSQL: 'Latin1_General_BIN2',
+    }
+# The kinds a collation applies to.
+_COLLATED_KINDS = ('text', 'fixedText', 'uuid')
+# The column types each target refuses in an index: large objects, and text
+# or binary without a length.
+_UNINDEXABLE = {
+    DatabaseType.MYSQL: re.compile(r'TEXT|BLOB|JSON', re.IGNORECASE),
+    DatabaseType.MARIADB: re.compile(r'TEXT|BLOB|JSON', re.IGNORECASE),
+    DatabaseType.ORACLE: re.compile(r'\b[NB]?CLOB\b|\bBLOB\b|\bLONG\b', re.IGNORECASE),
+    DatabaseType.MSSQL: re.compile(r'\(MAX\)|\bN?TEXT\b|\bIMAGE\b|\bXML\b', re.IGNORECASE),
+    }
+# The suffix a stage table takes when nothing else names it: `orders_stage`.
+DEFAULT_STAGE_SUFFIX = '_stage'
+
 
 class SchemaError(Exception):
     """A schema that can't be generated or cleared as asked."""
@@ -60,9 +105,6 @@ class Statement(NamedTuple):
     sql: str
     notes: List[str]
     isIndex: bool = False
-
-
-INTEGER_BOOLEAN_NOTE = 'the source stores this as an integer, so it stays one'
 
 
 def _integerForPrecision(precision: Optional[int]) -> PortableType:
@@ -251,24 +293,6 @@ _SHARED_KINDS = {name: kind for names, kind in (
     (('json', 'jsonb'), 'json'),
     ) for name in names}
 
-# DuckDB's unsigned integers that the next signed type up holds.
-_DUCKDB_UNSIGNED = {'utinyint': 'smallint', 'usmallint': 'integer', 'uinteger': 'bigint'}
-
-
-# Where a key column can't be an unbounded type -- MySQL can't index TEXT,
-# SQL Server can't index NVARCHAR(MAX), Oracle can't index a CLOB -- it gets
-# this bounded length instead.
-KEY_TEXT_LENGTH = 255
-
-# Oracle keeps a TIME as text. MySQL's driver returns a TIME as a timedelta,
-# whose text runs to '-35 days, 1:00:01.999999' at the type's limits.
-ORACLE_TIME_LENGTH = 32
-
-SQLITE_INTEGER_DIGITS = 19
-
-# The digits of an unsigned 64-bit integer: MySQL's BIGINT UNSIGNED and
-# DuckDB's UBIGINT reach 18446744073709551615.
-UNSIGNED_BIGINT_DIGITS = 20
 
 # What each of MySQL's and MariaDB's unsigned integers is copied as: the
 # smallest type holding its whole range.
@@ -280,15 +304,6 @@ _UNSIGNED = {
     'integer': PortableType('bigint'),
     'bigint': PortableType('decimal', precision=UNSIGNED_BIGINT_DIGITS, scale=0,
                            note='BIGINT UNSIGNED runs past every signed 64-bit integer; mapped to a decimal of 20 digits'),
-    }
-
-# The digits each target's integer types take. SQLite gives all three the same
-# 64-bit affinity whatever they are called, and Oracle renders them as
-# NUMBER(n), which holds every value of that many digits.
-INTEGER_DIGITS = {'smallint': 4, 'integer': 9, 'bigint': 18}
-_TARGET_INTEGER_DIGITS = {
-    DatabaseType.ORACLE: {'smallint': 5, 'integer': 10, 'bigint': 19},
-    DatabaseType.SQLITE: {'smallint': 19, 'integer': 19, 'bigint': 19},
     }
 
 
@@ -313,21 +328,6 @@ def _decimal(name: str, precision: Optional[int], scale: Optional[int], maxPreci
         return rendered, 'the source is {}({},{}), more than this target holds; clamped to {}'.format(name, precision, scale or 0, rendered)
 
     return rendered, None
-
-
-# The collation a key column needs on the databases whose default compares
-# text loosely, where two keys the source keeps apart would otherwise become
-# one row: `a` and `A`, `ss` and the German sharp s, and on MySQL and MariaDB
-# `a` and `a ` too. SQL Server compares trailing spaces loosely whatever the
-# collation, so there it refuses the second key instead of merging it.
-KEY_COLLATIONS = {
-    DatabaseType.MYSQL: 'utf8mb4_0900_bin',
-    DatabaseType.MARIADB: 'utf8mb4_nopad_bin',
-    DatabaseType.MSSQL: 'Latin1_General_BIN2',
-    }
-
-# The kinds a collation applies to.
-_COLLATED_KINDS = ('text', 'fixedText', 'uuid')
 
 
 def renderType(targetType: DatabaseType, portable: PortableType, isKey: bool) -> Tuple[str, Optional[str]]:
@@ -621,16 +621,6 @@ def _createTable(sourceType: DatabaseType, targetType: DatabaseType, table: Tabl
     return Statement(table=name, sql=sql, notes=notes)
 
 
-# The column types each target refuses in an index: large objects, and text
-# or binary without a length.
-_UNINDEXABLE = {
-    DatabaseType.MYSQL: re.compile(r'TEXT|BLOB|JSON', re.IGNORECASE),
-    DatabaseType.MARIADB: re.compile(r'TEXT|BLOB|JSON', re.IGNORECASE),
-    DatabaseType.ORACLE: re.compile(r'\b[NB]?CLOB\b|\bBLOB\b|\bLONG\b', re.IGNORECASE),
-    DatabaseType.MSSQL: re.compile(r'\(MAX\)|\bN?TEXT\b|\bIMAGE\b|\bXML\b', re.IGNORECASE),
-    }
-
-
 def _createIndexes(sourceType: DatabaseType, targetType: DatabaseType, table: TableDefinition, unique: Sequence[Tuple[str, ...]],
                    taken: Set[str]) -> List[Statement]:
     """CREATE INDEX for each of the source table's plain indexes, so a copy
@@ -744,10 +734,6 @@ def clearTables(database: Any, tables: Sequence[str]) -> List[Tuple[str, int]]:
         raise
 
     return cleared
-
-
-# The suffix a stage table takes when nothing else names it: `orders_stage`.
-DEFAULT_STAGE_SUFFIX = '_stage'
 
 
 def createStageTable(database: Any, table: str, suffix: str = DEFAULT_STAGE_SUFFIX) -> Tuple[str, bool]:

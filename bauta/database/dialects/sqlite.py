@@ -14,6 +14,7 @@ from .names import catalogName, catalogTableName, quoteIdentifier
 
 # How long a connection keeps trying to switch a file to WAL while another holds it.
 WAL_SWITCH_SECONDS = 30.0
+_CREATE_INDEX_HEAD = re.compile(r'^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?', re.IGNORECASE)
 
 
 def _useWriteAheadLog(connection: Any) -> None:
@@ -37,9 +38,6 @@ def _useWriteAheadLog(connection: Any) -> None:
             if 'locked' not in str(error) or time.monotonic() > deadline:
                 raise
             time.sleep(0.05)
-
-
-_CREATE_INDEX_HEAD = re.compile(r'^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?', re.IGNORECASE)
 
 
 def _qualifiedIndex(createStatement: str, schema: str) -> str:

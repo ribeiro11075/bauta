@@ -18,6 +18,26 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..configuration import DatabaseType
 
+_NON_FINITE_NAMES = {'nan': 'NaN', 'inf': 'an infinity'}
+# The integers a driver binds as integers: 64 bits, signed.
+_BOUND_INTEGERS = range(-2 ** 63, 2 ** 63)
+# The json and jsonb type codes: the PostgreSQL columns a list goes to as JSON,
+# and whose values, read as their text, are JSON documents.
+POSTGRESQL_JSON_TYPES = frozenset({114, 3802})
+_POSTGRESQL_JSON = POSTGRESQL_JSON_TYPES
+# MySQL's type code for JSON. MariaDB's JSON is LONGTEXT, reported as text,
+# so nothing tells it from a text column.
+MYSQL_JSON_TYPE = 245
+# The databases whose conversions, or binds (DatabaseDialect.bindTypes),
+# depend on the column a value goes to, whose type codes cost a statement per
+# table to read.
+WANTS_COLUMN_TYPES = frozenset({DatabaseType.POSTGRESQL, DatabaseType.ORACLE})
+_NONE = type(None)
+# Rows to each distinct type signature below which finding a chunk's columns
+# by their signatures beats transposing it: NULLs scattered over many columns
+# make most rows' signatures distinct.
+_ROWS_PER_SIGNATURE = 8
+
 # A conversion takes the value and the type code of the column it is going
 # to -- known on PostgreSQL and Oracle only, see WANTS_COLUMN_TYPES -- and returns what
 # the driver is sent.
@@ -36,9 +56,6 @@ class UniqueKeyClashError(UnloadableValueError):
     than the primary key, refused rather than merged into it. Never retried.
     See MySQLDialect._onDuplicateKey.
     """
-
-
-_NON_FINITE_NAMES = {'nan': 'NaN', 'inf': 'an infinity'}
 
 
 def refuseNonFinite(refused: frozenset, rows: Sequence[Sequence[Any]], columns: Sequence[str], table: str, databaseName: str,
@@ -90,20 +107,6 @@ def jsonText(value: Any) -> str:
     """
 
     return json.dumps(value, default=str, ensure_ascii=False)
-
-
-# The integers a driver binds as integers: 64 bits, signed.
-_BOUND_INTEGERS = range(-2 ** 63, 2 ** 63)
-
-# The json and jsonb type codes: the PostgreSQL columns a list goes to as JSON,
-# and whose values, read as their text, are JSON documents.
-POSTGRESQL_JSON_TYPES = frozenset({114, 3802})
-_POSTGRESQL_JSON = POSTGRESQL_JSON_TYPES
-
-
-# MySQL's type code for JSON. MariaDB's JSON is LONGTEXT, reported as text,
-# so nothing tells it from a text column.
-MYSQL_JSON_TYPE = 245
 
 
 def jsonColumnIndexes(databaseType: Optional[DatabaseType], description: Optional[Sequence[Sequence[Any]]]) -> List[int]:
@@ -229,10 +232,6 @@ CONVERSIONS: Dict[DatabaseType, Dict[type, Optional[Conversion]]] = {
     DatabaseType.DUCKDB: {datetime.timedelta: _duration, int: _wideInteger, bool: None},
     }
 
-# The databases whose conversions, or binds (DatabaseDialect.bindTypes),
-# depend on the column a value goes to, whose type codes cost a statement per
-# table to read.
-WANTS_COLUMN_TYPES = frozenset({DatabaseType.POSTGRESQL, DatabaseType.ORACLE})
 
 _found: Dict[Tuple[DatabaseType, type], Optional[Conversion]] = {}
 
@@ -248,14 +247,6 @@ def conversionFor(databaseType: DatabaseType, kind: type) -> Optional[Conversion
         _found[key] = next((table[base] for base in kind.__mro__ if base in table), None)
 
     return _found[key]
-
-
-_NONE = type(None)
-
-# Rows to each distinct type signature below which finding a chunk's columns
-# by their signatures beats transposing it: NULLs scattered over many columns
-# make most rows' signatures distinct.
-_ROWS_PER_SIGNATURE = 8
 
 
 def _columnKinds(rows: List[Tuple[Any, ...]]) -> Optional[Tuple[List[List[type]], List[bool]]]:

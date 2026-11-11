@@ -143,9 +143,15 @@ def test_a_file_strategy_into_a_database_is_refused():
         _validate(insertStrategy='append', targetConnection='staging')
 
 
-def test_a_files_connection_is_refused_as_a_source():
-    with pytest.raises(ConfigurationError, match='sourceConnection "lake" is a files connection, which can only be written to'):
-        _validate(sourceConnection='lake')
+def test_a_files_connection_is_accepted_as_a_source():
+    _validate(sourceConnection='lake')
+
+
+def test_an_iceberg_connection_is_refused_as_a_source():
+    connections = dict(_connections(), warehouse=connectionConfig(type='iceberg', catalog='sql', uri='sqlite:///catalog.db', warehouse='lake', namespace='db'))
+
+    with pytest.raises(ConfigurationError, match='sourceConnection "warehouse" is an Iceberg connection, which can only be written to'):
+        _validate(connections=connections, sourceConnection='warehouse')
 
 
 @pytest.mark.parametrize('job, message', [

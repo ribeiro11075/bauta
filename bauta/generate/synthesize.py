@@ -35,6 +35,17 @@ _WORDS = ('alpha', 'bravo', 'delta', 'harbor', 'maple', 'orbit', 'quartz', 'rive
           'amber', 'cobalt', 'ember', 'falcon', 'granite', 'juniper', 'lumen', 'meadow', 'nectar', 'pebble', 'saffron', 'tundra')
 
 _EPOCH = datetime.date(2015, 1, 1)
+# How a column's values are spread in a source, for `--profile`: where
+# synthetic rows take their shape from production without taking anyone's
+# values. Labels are read only from a column with at most this many values,
+# and only those this many rows share, so a value rare enough to point at
+# someone is never copied.
+PROFILE_MOST_LABELS = 20
+PROFILE_FEWEST_ROWS_PER_LABEL = 5
+_FAKE_DESCRIPTIONS = {
+    'fakeFirstName': 'a first name', 'fakeLastName': 'a last name', 'fakeName': 'a full name', 'fakeCity': 'a city',
+    'fakeCompany': 'a company name', 'fakeStreetAddress': 'a street address',
+    }
 
 
 def _recentDays() -> int:
@@ -45,15 +56,6 @@ def _recentDays() -> int:
     """
 
     return (datetime.date(datetime.date.today().year, 12, 31) - _EPOCH).days
-
-
-# How a column's values are spread in a source, for `--profile`: where
-# synthetic rows take their shape from production without taking anyone's
-# values. Labels are read only from a column with at most this many values,
-# and only those this many rows share, so a value rare enough to point at
-# someone is never copied.
-PROFILE_MOST_LABELS = 20
-PROFILE_FEWEST_ROWS_PER_LABEL = 5
 
 
 class ColumnProfile(NamedTuple):
@@ -126,12 +128,6 @@ class ColumnPlan(NamedTuple):
 
 
 Generator = Callable[[int], Any]
-
-
-_FAKE_DESCRIPTIONS = {
-    'fakeFirstName': 'a first name', 'fakeLastName': 'a last name', 'fakeName': 'a full name', 'fakeCity': 'a city',
-    'fakeCompany': 'a company name', 'fakeStreetAddress': 'a street address',
-    }
 
 
 def _templateFor(words: AbstractSet[str]) -> str:

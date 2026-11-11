@@ -11,6 +11,15 @@ from ..fakeData import (COMPANY_WORDS, DEFAULT_LOCALE, FEMALE_NAMES, LARGE_DEFAU
 from ..core import Strategy, canonical
 from .common import _booleanOption, _choiceOption, _integerOption
 
+# The domain the name strategies mask in under `lists: 2` when the policy names
+# none, so a first name masks alike in a first_name column, a full_name column
+# and any table, as a key masks alike in every column of its domain.
+FAKE_NAME_DOMAIN = 'fake name'
+# Lower-case words that begin a surname: `de Jong`, `van der Berg`, `da Silva`.
+_SURNAME_PARTICLES = frozenset({'da', 'das', 'de', 'del', 'della', 'der', 'di', 'do', 'dos', 'du', 'la', 'le', 'ten', 'ter', 'van', 'von',
+                                'den', 'het', "'t", 'y'})
+_FIRST_NAMES: Dict[int, Tuple[str, ...]] = {}
+
 
 def _listsOption(value: Any) -> int:
 
@@ -18,19 +27,6 @@ def _listsOption(value: Any) -> int:
         raise ValueError('must be 1 or 2')
 
     return int(value)
-
-
-# The domain the name strategies mask in under `lists: 2` when the policy names
-# none, so a first name masks alike in a first_name column, a full_name column
-# and any table, as a key masks alike in every column of its domain.
-FAKE_NAME_DOMAIN = 'fake name'
-
-# Lower-case words that begin a surname: `de Jong`, `van der Berg`, `da Silva`.
-_SURNAME_PARTICLES = frozenset({'da', 'das', 'de', 'del', 'della', 'der', 'di', 'do', 'dos', 'du', 'la', 'le', 'ten', 'ter', 'van', 'von',
-                                'den', 'het', "'t", 'y'})
-
-
-_FIRST_NAMES: Dict[int, Tuple[str, ...]] = {}
 
 
 def _firstNames(large: LargeLocale) -> Tuple[str, ...]:

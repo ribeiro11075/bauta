@@ -27,10 +27,14 @@ def test_the_checks_are_due_once_a_day_after_their_time_and_catch_up_after_downt
         # Down at 03:00: due when it starts again.
         assert checks.due(session, datetime.datetime(2026, 10, 16, 9, 30, tzinfo=UTC))
 
-        from bauta.studio.auth import record
-        record(session, None, 'ran the scheduled checks')
+        # Recorded at a time of its own, not now: against the real clock this
+        # failed every night between midnight and the schedule's 03:00.
+        from bauta.studio.db import Activity
+        session.add(Activity(action='ran the scheduled checks', at=datetime.datetime(2026, 10, 16, 9, 31, tzinfo=UTC)))
         session.commit()
-        assert not checks.due(session, datetime.datetime.now(UTC).replace(hour=23, minute=59))
+        assert not checks.due(session, datetime.datetime(2026, 10, 16, 23, 59, tzinfo=UTC))
+        assert not checks.due(session, datetime.datetime(2026, 10, 17, 2, 59, tzinfo=UTC))
+        assert checks.due(session, datetime.datetime(2026, 10, 17, 3, 0, tzinfo=UTC))
 
 
 def test_a_schedule_is_refused_with_a_bad_time_or_an_unknown_check(signIn):
@@ -55,7 +59,7 @@ def test_a_scheduled_run_keeps_each_check_and_one_failing_stops_none(app, settin
         outcomes = checks.runScheduled(session, workspace.loadProject(settings))
 
         assert outcomes['coverage'] == 'done' and outcomes['audit'] == 'done' and outcomes['references'] == 'done'
-        assert outcomes['discovery'].startswith('failed: discovery is down')
+        assert outcomes['discovery'].startswith('failed: RuntimeError: discovery is down')
         assert checks.latestDict(session, 'coverage')['by'] == 'schedule'
 
 

@@ -17,7 +17,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Deque, Dict, Generator, Iterable, List, Optional, Sequence, Tuple
 
 from ..configuration import ConfigurationError, ConnectionConfig, DatabaseType, DataJobConfig, FilesConnection, IcebergConnection, targetProblems
-from ..database import Database, UnloadableValueError
+from ..database import Database, UnloadableValueError, openSource
 from ..database.values import jsonColumnIndexes
 from ..log import ATTEMPT_FAILED, LOGGER_NAME
 from .fullRefresh import isFullRefresh
@@ -46,6 +46,26 @@ PIPELINE_DEPTH = 2
 # Caps the doubling backoff, which would otherwise wait 5.7 hours in all over
 # `retries: 12`.
 MAXIMUM_RETRY_DELAY_SECONDS = 300.0
+# The policies that take a JSON column's text as it is: `json`, which reads
+# JSON text, `null`, and `keep` with anything else that passes values
+# through (Strategy.PASSTHROUGH).
+_TAKES_JSON_TEXT = frozenset({'json', 'null'})
+# What each driver says when a value doesn't fit the column it is written to.
+# A masked value is the usual cause in a job that masks: `key` keeps an
+# integer's digit count, which an INT column's range cuts across, and `number`
+# varies a value that may already be at its column's limit.
+_OUT_OF_RANGE = re.compile(r'out of range|overflow|too large|ORA-01438|ORA-01426', re.IGNORECASE)
+# What each database says when statementTimeoutSeconds stops a statement:
+# PostgreSQL, MySQL, MariaDB, oracledb -- DPY-4024 for a query, and for a
+# PL/SQL call the line below, not DPY-4011 alone, which a dropped network
+# raises too -- and SQL Server's cost limit. Not retried: the same query
+# would run as long again, against the same source.
+_STATEMENT_TIMEOUT = re.compile(r'canceling statement due to statement timeout|maximum statement execution time exceeded|'
+                                r'max_statement_time exceeded|DPY-4024|socket timed out while recovering from previous socket timeout|'
+                                r'estimated cost of this query .* exceeds the configured threshold')
+# Deterministic errors, raised by this package, that a retry can't fix.
+# Everything else is retried; see "Retries" in docs/concepts/how-it-works.md.
+PERMANENT_ERRORS = (ConfigurationError, TransformError, TransformResolutionError, MaskingError, UnloadableValueError)
 
 
 def _bindMasking(job: str, jobConfig: DataJobConfig, columns: List[str], log: bool = True) -> Optional[BoundMasking]:
@@ -68,6 +88,12 @@ def _bindMasking(job: str, jobConfig: DataJobConfig, columns: List[str], log: bo
             logger.debug('Masking {} with {}{}'.format(entry.column, entry.strategy, ' in domain {}'.format(entry.domain) if entry.domain else ''))
 
     return bound
+
+
+def _openSource(settings: ConnectionConfig) -> Database:
+    """What the job reads through: a database, or a files connection's tables."""
+
+    return openSource(settings) if isinstance(settings, FilesConnection) else Database(connectionSettings=settings)
 
 
 @contextlib.contextmanager
@@ -121,7 +147,7 @@ def _executeDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration:
         }
     times = StageTimes()
 
-    with Database(connectionSettings=connectionConfiguration[jobConfig.sourceConnection]) as sourceConnection, \
+    with _openSource(connectionConfiguration[jobConfig.sourceConnection]) as sourceConnection, \
          _openTarget(job, jobConfig, connectionConfiguration[jobConfig.targetConnection]) as target:
 
         sourceQuery = jobConfig.sourceQuery
@@ -248,12 +274,6 @@ def _timed(times: Optional[StageTimes], stage: str) -> Generator[None, None, Non
     finally:
         if times is not None:
             times.add(stage, time.perf_counter() - started)
-
-
-# The policies that take a JSON column's text as it is: `json`, which reads
-# JSON text, `null`, and `keep` with anything else that passes values
-# through (Strategy.PASSTHROUGH).
-_TAKES_JSON_TEXT = frozenset({'json', 'null'})
 
 
 def _decodedJsonColumns(masking: Optional[BoundMasking], description: Any, databaseType: Any, columns: Sequence[str]) -> List[Tuple[int, str]]:
@@ -510,7 +530,7 @@ def _automaticPredicates(job: str, jobConfig: DataJobConfig, connectionConfigura
     try:
         # On a connection of its own: a query the database refuses leaves
         # the job's own, already reading, as it was.
-        with Database(connectionSettings=connectionConfiguration[jobConfig.sourceConnection]) as probe:
+        with _openSource(connectionConfiguration[jobConfig.sourceConnection]) as probe:
             try:
                 _, rows = probe.stream(query=boundsQuery(sourceQuery, quotedColumn), chunkSize=1, parameters=parameters)
                 with rows:
@@ -594,7 +614,7 @@ def _loadPartitions(job: str, jobConfig: DataJobConfig, connectionConfiguration:
     def loadSlice(index: int, piece: Slice) -> Tuple[int, Any]:
         # Everything a slice uses is its own: its connections, since one
         # connection serves one thread, and its transform and masking.
-        with Database(connectionSettings=sourceSettings) as source, target.openWriter() as writer:
+        with _openSource(sourceSettings) as source, target.openWriter() as writer:
             with _timed(times, 'read'):
                 query, bound = _sliceQuery(source, sourceQuery, parameters, piece)
                 _, chunks = source.stream(query=query, chunkSize=jobConfig.chunkSize, parameters=bound)
@@ -698,13 +718,6 @@ def _streamChunks(chunks: Iterable[List[Tuple[Any, ...]]], prepare: Callable[[in
             raise
 
 
-# What each driver says when a value doesn't fit the column it is written to.
-# A masked value is the usual cause in a job that masks: `key` keeps an
-# integer's digit count, which an INT column's range cuts across, and `number`
-# varies a value that may already be at its column's limit.
-_OUT_OF_RANGE = re.compile(r'out of range|overflow|too large|ORA-01438|ORA-01426', re.IGNORECASE)
-
-
 def _noteIfMaskedValueDoesNotFit(error: Exception, job: str, table: str) -> None:
     """Says why a masked load overflowed a column, which the driver's own
     message doesn't: it names the column, not the mask that widened the value.
@@ -717,21 +730,6 @@ def _noteIfMaskedValueDoesNotFit(error: Exception, job: str, table: str) -> None
                    '`key` keeps an integer\'s digit count, so a 10-digit value can leave an INT column\'s range, and `number` '
                    'varies a value that may already be at its column\'s limit. Bound `number` with min and max, or widen the '
                    'column'.format(job, table), extra={'job': job})
-
-
-# What each database says when statementTimeoutSeconds stops a statement:
-# PostgreSQL, MySQL, MariaDB, oracledb -- DPY-4024 for a query, and for a
-# PL/SQL call the line below, not DPY-4011 alone, which a dropped network
-# raises too -- and SQL Server's cost limit. Not retried: the same query
-# would run as long again, against the same source.
-_STATEMENT_TIMEOUT = re.compile(r'canceling statement due to statement timeout|maximum statement execution time exceeded|'
-                                r'max_statement_time exceeded|DPY-4024|socket timed out while recovering from previous socket timeout|'
-                                r'estimated cost of this query .* exceeds the configured threshold')
-
-
-# Deterministic errors, raised by this package, that a retry can't fix.
-# Everything else is retried; see "Retries" in docs/concepts/how-it-works.md.
-PERMANENT_ERRORS = (ConfigurationError, TransformError, TransformResolutionError, MaskingError, UnloadableValueError)
 
 
 def _executeWithRetries(jobConfig: DataJobConfig, job: str, attempt: Callable[[], JobOutcome]) -> JobOutcome:

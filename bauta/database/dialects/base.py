@@ -14,6 +14,12 @@ from ..driver import Connection, Cursor
 from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType
 from .names import catalogName, catalogTableName, quoteIdentifier, unqualifiedName
 
+_TABLE_NAME_PART = r'(?:"(?:[^"]|"")*"|\[[^\]]*\]|`(?:[^`]|``)*`|[^\s.(]+)'
+# The head of a CREATE TABLE statement as SQLite and DuckDB keep it, up to the
+# end of the table's name, schema-qualified or not.
+_CREATE_TABLE_HEAD = re.compile(r'^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?{0}(?:\s*\.\s*{0})?'.format(_TABLE_NAME_PART), re.IGNORECASE)
+M = TypeVar('M')
+
 
 class ForeignKey(NamedTuple):
     """One foreign-key constraint. Composite keys list their columns in order."""
@@ -95,13 +101,6 @@ def _uniqueColumnGroups(rows: Sequence[Sequence[Any]]) -> List[Tuple[str, ...]]:
     """The column lists of _namedColumnGroups, for keys, whose names don't matter."""
 
     return [columns for _, columns in _namedColumnGroups(rows)]
-
-
-_TABLE_NAME_PART = r'(?:"(?:[^"]|"")*"|\[[^\]]*\]|`(?:[^`]|``)*`|[^\s.(]+)'
-
-# The head of a CREATE TABLE statement as SQLite and DuckDB keep it, up to the
-# end of the table's name, schema-qualified or not.
-_CREATE_TABLE_HEAD = re.compile(r'^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?{0}(?:\s*\.\s*{0})?'.format(_TABLE_NAME_PART), re.IGNORECASE)
 
 
 def _withKeys(createStatement: str, table: str, primaryKey: Sequence[str], uniqueKeys: Sequence[Sequence[str]]) -> str:
@@ -208,9 +207,6 @@ def _renameStatement(fromTable: str, toTable: str) -> str:
 def _renameInThreeSteps(targetTable: str, stageTable: str, tempTable: str) -> List[str]:
 
     return [_renameStatement(*step) for step in _renameSteps(targetTable, stageTable, tempTable)]
-
-
-M = TypeVar('M')
 
 
 def settingsOf(settings: DatabaseConfig, model: Type[M]) -> M:
