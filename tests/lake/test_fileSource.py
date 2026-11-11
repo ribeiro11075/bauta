@@ -150,6 +150,15 @@ def test_partition_directories_become_columns(lake):
     assert _read(lake, 'select id, year from events where year = 2025') == [(2, 2025)]
 
 
+def test_a_partition_column_is_typed_by_all_its_directories(lake):
+    """Typed one file at a time, 1 is a number and a is text, and they can't merge."""
+
+    _parquet(lake / 'events' / 'region=1' / 'part.parquet', id=[1])
+    _parquet(lake / 'events' / 'region=a' / 'part.parquet', id=[2])
+
+    assert _read(lake, 'select id, region from events order by id') == [(1, '1'), (2, 'a')]
+
+
 def test_a_nested_table_is_named_by_its_path_as_spelled(lake):
     """Case matters to a path, and matching folded names found no such directory."""
 

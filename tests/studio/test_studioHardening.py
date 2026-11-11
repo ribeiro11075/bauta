@@ -4,6 +4,7 @@ import datetime
 import logging
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -221,6 +222,8 @@ def test_sessions_past_their_time_are_removed_as_studio_starts(app, settings):
 def test_a_read_only_files_connection_is_tested_for_reading(settings, tmp_path, signIn):
     """Asked to be writable, a read-only bucket failed its connection test."""
 
+    pytest.importorskip('pyarrow', reason='a files connection reads with pyarrow (pip install -e ".[files]")')
+    pytest.importorskip('duckdb', reason='a files connection reads with DuckDB (pip install -e ".[files]")')
     lake = tmp_path / 'lake'
     lake.mkdir()
     lake.chmod(0o555)
