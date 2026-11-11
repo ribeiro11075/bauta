@@ -568,6 +568,8 @@ class FilesConnection(_Lake):
     # CSV's alone; a comma when not given.
     delimiter: Optional[str] = None
     keepSnapshots: int = Field(default=DEFAULT_KEEP_SNAPSHOTS, ge=1)
+    # Jobs may read it and nothing may write to it, as on a database.
+    readOnly: bool = False
 
     @field_validator('root')
     @classmethod

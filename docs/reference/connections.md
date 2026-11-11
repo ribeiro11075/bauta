@@ -73,6 +73,7 @@ A directory -- on this machine, or in Amazon S3, Google Cloud Storage or Azure B
 | `fileSize` | `256MB` | Where a part is closed and the next begun, measured as written, compressed. Bytes, or text such as `256MB` or `256MiB`. Snowflake loads best from files of 100 to 250 MB compressed, and Athena and Spark read one file per worker. At most `5GiB` on S3, and `256MiB` on Azure with pyarrow before 19, which publish a part by copying it in one request. |
 | `rowGroupSize` | `128MB` | How much of a table is held in memory, before compression, and written at once: one Parquet row group. Larger compresses better and lets engines skip more; smaller holds less. |
 | `keepSnapshots` | `2` | How many complete snapshots of an `overwrite` job's table stay, the newest included. |
+| `readOnly` | `false` | Jobs may read it, and any job writing to it is refused. Mark a production bucket so. |
 | `endpoint` | any cloud | Another service speaking the same API -- MinIO or Cloudflare R2 for S3, an emulator for the others -- as a URL, `https://...` or `http://...`. |
 
 `requireMasking` and `maxConcurrentJobs` apply as to any connection. Two connections may share a root, to write some tables as Parquet and others as CSV. A setting of one cloud given with another's root is an error naming the cloud it belongs to.

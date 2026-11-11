@@ -20,7 +20,7 @@ import logging
 import posixpath
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..configuration import DataJobConfig, FilesConnection, InsertStrategy
+from ..configuration import ConfigurationError, DataJobConfig, FilesConnection, InsertStrategy
 from ..log import LOGGER_NAME
 from ..log.scrubbing import describeError
 from .columnar import ColumnarTarget, newRunId
@@ -58,6 +58,10 @@ class FileTarget(ColumnarTarget):
     """
 
     def __init__(self, job: str, jobConfig: DataJobConfig, settings: FilesConnection) -> None:
+        if settings.readOnly:
+            # Validation says so against connections.yaml; asked again here for
+            # a caller that built the job without it.
+            raise ConfigurationError('{} is readOnly, and this would write to it; nothing was written'.format(settings.describeTarget()))
         super().__init__(job, jobConfig, settings.rowGroupSize)
         self.settings = settings
         self.store = Store(settings)

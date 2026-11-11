@@ -95,6 +95,7 @@ class FileSource(Database):
 
     def _dataset(self, table: str) -> Any:
 
+        import pyarrow
         import pyarrow.dataset
 
         problem = filePathProblem(table)
@@ -102,21 +103,52 @@ class FileSource(Database):
             raise ConfigurationError('sourceQuery reads {!r}, which {}'.format(table, problem))
 
         files, base = self._tableFiles(table)
+        options = pyarrow.dataset.FileSystemFactoryOptions(partition_base_dir=base)
+        options.partitioning_factory = pyarrow.dataset.HivePartitioning.discover()
+        factory = pyarrow.dataset.FileSystemDatasetFactory(self.store.filesystem, files, self._format(files), options)
 
-        return pyarrow.dataset.dataset(files, filesystem=self.store.filesystem, format=self._format(), partitioning='hive', partition_base_dir=base)
+        # Every file's columns, not the first's alone, which is all a dataset
+        # looks at unless asked: a column a table gained later was dropped,
+        # without a word. A file without it reads as NULL there.
+        try:
+            schema = factory.inspect(promote_options='permissive')
+        except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError) as error:
+            raise ConfigurationError('the files of {} disagree on a column: {}'.format(table, error)) from error
+
+        return factory.finish(schema)
 
 
-    def _format(self) -> Any:
+    def _format(self, files: List[str]) -> Any:
 
-        import pyarrow.csv
         import pyarrow.dataset
 
         if self.files.format == FileFormat.PARQUET:
             return pyarrow.dataset.ParquetFileFormat()
         if self.files.format == FileFormat.CSV:
-            return pyarrow.dataset.CsvFileFormat(parse_options=pyarrow.csv.ParseOptions(delimiter=self.files.delimiter or ','))
+            return self._textCsv(files)
 
         return pyarrow.dataset.JsonFileFormat()
+
+
+    def _textCsv(self, files: List[str]) -> Any:
+        """CSV with every column read as the text it is. Types guessed from the
+        first rows turned zip code 00501 into 501, so it masked differently
+        from the same code in a database, and failed the job on the first
+        later value that wasn't a number.
+
+        NULL is an empty field and empty text a quoted one, as a job writes them.
+        """
+
+        import pyarrow.csv
+        import pyarrow.dataset
+
+        parsing = pyarrow.csv.ParseOptions(delimiter=self.files.delimiter or ',')
+        guessing = pyarrow.dataset.CsvFileFormat(parse_options=parsing)
+        columns = {name for file in files for name in guessing.inspect(file, filesystem=self.store.filesystem).names}
+        converting = pyarrow.csv.ConvertOptions(column_types={name: pyarrow.string() for name in columns}, strings_can_be_null=True, null_values=[''],
+                                                quoted_strings_can_be_null=False)
+
+        return pyarrow.dataset.CsvFileFormat(parse_options=parsing, convert_options=converting)
 
 
     def _tableFiles(self, table: str) -> Tuple[List[str], str]:

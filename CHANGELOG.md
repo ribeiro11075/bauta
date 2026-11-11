@@ -14,7 +14,8 @@ Jobs can read tables of files, Studio's failures keep values out of its logs and
 - **Studio's sign-in limit counts by email and address together**, with wider limits by address and by email. Behind a proxy on another machine, `--forwarded-allow-ips` must name it, or every sign-in counts as the proxy's address.
 
 ### Added
-- **Files as a source.** A job can name a `files` connection as its `sourceConnection` and read its Parquet, CSV or JSON Lines with SQL, locally or in S3, Google Cloud Storage or Azure, through the same streaming, masking, watermarks and partitions as a database. An overwrite job's table reads as its newest complete snapshot. The query can reach nothing outside the connection's root. The `files` extra now installs DuckDB.
+- **Files as a source.** A job can name a `files` connection as its `sourceConnection` and read its Parquet, CSV or JSON Lines with SQL, locally or in S3, Google Cloud Storage or Azure, through the same streaming, masking, watermarks and partitions as a database. An overwrite job's table reads as its newest complete snapshot, a table's columns are those of all its files, and CSV is read as text, so a zip code keeps its leading zeros. The query can reach nothing outside the connection's root. The `files` extra now installs DuckDB.
+- **`readOnly` on a files connection**, as on a database: jobs may read it, and any job writing to it is refused.
 - **Studio's tables upgrade in place** with Alembic, which the `studio` extra now installs. A database from 0.2.7 is recognized and kept.
 
 ### Fixed
@@ -22,6 +23,8 @@ Jobs can read tables of files, Studio's failures keep values out of its logs and
 - **Editing in Studio works where `include` reaches outside the configuration directory.** Every edit was refused, or failed; an edit is now checked in place rather than in a copy of the directory, which also copied run state and any database kept there. Two edits at once can no longer both pass the check that the file is as it was read.
 - **Studio's sign-in can't be used to lock an account's owner out from elsewhere, or to fill its memory**, and only four passwords are checked at once.
 - **Two requests archiving the same manifest at once no longer fail one of them.**
+- **Studio removes expired sessions as it starts**, which stayed in its database unless their browser came back.
+- **Studio's sign-in page names the right command for making the first account**, `bauta studio create-user`.
 - **A benchmark interrupted by Studio restarting is marked failed** rather than staying `running`, which disabled its job's Measure button for good. A job is measured once at a time, and at most two at once.
 
 ### Changed

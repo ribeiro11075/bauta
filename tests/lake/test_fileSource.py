@@ -17,6 +17,7 @@ from bauta.configuration import ConfigurationError, connectionConfig  # noqa: E4
 from bauta.database import openSource  # noqa: E402
 from bauta.jobs.pipeline import _executeDataJob  # noqa: E402
 from bauta.jobs.dependencyGraph import JobStatus  # noqa: E402
+from bauta.lake import FileTarget  # noqa: E402
 from bauta.lake.source import FileSource, checkReadable  # noqa: E402
 from bauta.project import dryRunProblems  # noqa: E402
 from bauta.review.bench import benchJob  # noqa: E402
@@ -177,7 +178,7 @@ def test_csv_is_read_with_the_connections_delimiter(lake):
     (lake / 'people').mkdir()
     (lake / 'people' / 'part.csv').write_text('id;name\n1;ann\n')
 
-    assert _read(lake, 'select id, name from people', format='csv', delimiter=';') == [(1, 'ann')]
+    assert _read(lake, 'select id, name from people', format='csv', delimiter=';') == [('1', 'ann')]
 
 
 def test_gzipped_csv_is_read(lake):
@@ -185,7 +186,107 @@ def test_gzipped_csv_is_read(lake):
     with gzip.open(lake / 'people' / 'part.csv.gz', 'wt') as file:
         file.write('id,name\n1,ann\n')
 
-    assert _read(lake, 'select id, name from people', format='csv') == [(1, 'ann')]
+    assert _read(lake, 'select id, name from people', format='csv') == [('1', 'ann')]
+
+
+def test_csv_keeps_leading_zeros(lake):
+    """Types guessed from the first rows turned 00501 into 501, which also
+    masked differently from the same code held as text in a database."""
+
+    (lake / 'places').mkdir()
+    (lake / 'places' / 'part.csv').write_text('zip,phone\n00501,0612345678\n')
+
+    assert _read(lake, 'select zip, phone from places', format='csv') == [('00501', '0612345678')]
+
+
+def test_csv_with_a_late_value_that_is_not_a_number_is_read(lake):
+    """Guessing from the first rows failed the job on it."""
+
+    (lake / 'numbers').mkdir()
+    (lake / 'numbers' / 'part.csv').write_text('n\n' + ''.join('{}\n'.format(index) for index in range(300000)) + 'ann@corp.example\n')
+
+    assert len(_read(lake, 'select n from numbers', format='csv')) == 300001
+
+
+def test_csv_tells_null_from_empty_text_as_a_job_writes_them(lake):
+    (lake / 'people').mkdir()
+    (lake / 'people' / 'part.csv').write_text('id,name\n1,\n2,""\n')
+
+    with FileSource(connectionConfig(type='files', root=str(lake), format='csv')) as source:
+        _, chunks = source.stream('select id, name from people order by id', chunkSize=10)
+        with chunks:
+            assert [row for chunk in chunks for row in chunk] == [('1', None), ('2', '')]
+
+
+def test_a_query_casts_csv_text_to_what_it_needs(lake):
+    (lake / 'people').mkdir()
+    (lake / 'people' / 'part.csv').write_text('id\n9\n10\n')
+
+    assert _read(lake, 'select cast(id as integer) from people where cast(id as integer) > 9', format='csv') == [(10,)]
+
+
+def test_csv_files_with_different_columns_are_all_read(lake):
+    (lake / 'people').mkdir()
+    (lake / 'people' / 'a.csv').write_text('id\n1\n')
+    (lake / 'people' / 'b.csv').write_text('id,name\n2,bob\n')
+
+    assert _read(lake, 'select id, name from people where name is not null', format='csv') == [('2', 'bob')]
+
+
+def test_a_column_only_later_files_have_is_read(lake):
+    """Only the first file's columns were asked for, so a column a table
+    gained later vanished from `select *` without a word."""
+
+    _parquet(lake / 'people' / 'a.parquet', id=[1])
+    _parquet(lake / 'people' / 'b.parquet', id=[2], email=['new@x.test'])
+
+    with FileSource(connectionConfig(type='files', root=str(lake))) as source:
+        columns, chunks = source.stream('select * from people order by id', chunkSize=10)
+        with chunks:
+            assert columns == ['id', 'email']
+            assert [row for chunk in chunks for row in chunk] == [(1, None), (2, 'new@x.test')]
+
+
+def test_a_new_column_fails_a_policy_that_does_not_cover_it(lake, target):
+    """The safety that depends on seeing it: dropped, it would pass unnoticed."""
+
+    _parquet(lake / 'customers' / 'a.parquet', id=[1])
+    _parquet(lake / 'customers' / 'b.parquet', id=[2], email=['new@x.test'])
+    job = dataJob(masking={'key': KEY, 'columns': {'id': 'keep'}})
+
+    with pytest.raises(Exception, match='email'):
+        _executeDataJob('j', job, _connections(lake, target))
+
+
+def test_narrower_and_wider_numbers_in_a_tables_files_are_widened(lake):
+    _parquet(lake / 'numbers' / 'a.parquet', n=pyarrow.array([1], type=pyarrow.int32()))
+    _parquet(lake / 'numbers' / 'b.parquet', n=pyarrow.array([2 ** 40], type=pyarrow.int64()))
+
+    assert _read(lake, 'select n from numbers') == [(1,), (2 ** 40,)]
+
+
+def test_files_that_cannot_agree_on_a_column_are_refused_by_name(lake):
+    _parquet(lake / 'mixed' / 'a.parquet', n=[1])
+    _parquet(lake / 'mixed' / 'b.parquet', n=['text'])
+
+    with pytest.raises(ConfigurationError, match='the files of mixed disagree'):
+        _read(lake, 'select n from mixed')
+
+
+def test_a_read_only_connection_is_read(lake, target):
+    _parquet(lake / 'customers' / 'part.parquet', id=[1], email=['a'])
+
+    outcome = _executeDataJob('j', dataJob(unmasked=True), _connections(lake, target, readOnly=True))
+
+    assert outcome.rowCount == 1
+
+
+def test_a_read_only_connection_refuses_being_written_to(tmp_path, lake):
+    settings = connectionConfig(type='files', root=str(lake), readOnly=True)
+
+    with pytest.raises(ConfigurationError, match='readOnly'):
+        FileTarget('j', dataJob(unmasked=True, insertStrategy='overwrite'), settings)
+    assert list(lake.iterdir()) == []
 
 
 def test_json_lines_are_read(lake):

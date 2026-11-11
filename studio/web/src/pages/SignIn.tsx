@@ -17,7 +17,7 @@ export function SignIn({ hasUsers }: { hasUsers: boolean }) {
         <h1><img src="/favicon.svg" alt="" />bauta Studio</h1>
         {!hasUsers ? (
           <div className="banner info" role="status">
-            <div>No accounts yet. On the server, add the first admin:<br /><code>bauta-studio create-user --email you@example.com</code></div>
+            <div>No accounts yet. On the server, add the first admin:<br /><code>bauta studio create-user --email you@example.com</code></div>
           </div>
         ) : null}
         <label className="field">Email

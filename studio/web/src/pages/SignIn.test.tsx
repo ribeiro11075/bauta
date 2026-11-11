@@ -18,7 +18,7 @@ afterEach(cleanup)
 describe('signing in', () => {
   it('says how to make the first account when there is none', () => {
     show(false)
-    expect(screen.getByRole('status').textContent).toContain('create-user')
+    expect(screen.getByRole('status').textContent).toContain('bauta studio create-user')
   })
 
   it('shows what the server refused it for', async () => {

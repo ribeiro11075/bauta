@@ -272,8 +272,9 @@ def testConnection(project: Project, alias: str) -> Dict[str, Any]:
         if isLake(settings):
             from ..lake import checkReadable, checkWritable
 
-            if any(job.targetConnection == alias for job in project.jobsFile.jobs.values()) or not any(
-                    job.sourceConnection == alias for job in project.jobsFile.jobs.values()):
+            writes = any(job.targetConnection == alias for job in project.jobsFile.jobs.values())
+            onlyRead = any(job.sourceConnection == alias for job in project.jobsFile.jobs.values()) and not writes
+            if not (getattr(settings, 'readOnly', False) or onlyRead):
                 checkWritable(settings)
                 return {'ok': True, 'detail': 'writable'}
             checkReadable(settings)

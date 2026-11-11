@@ -17,10 +17,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from fastapi import Depends, HTTPException, Request, Response
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .db import Activity, User, UserSession, utcnow
+from .db import Activity, Database, User, UserSession, utcnow
 
 SESSION_COOKIE = 'bauta_studio_session'
 CSRF_HEADER = 'X-Bauta-Studio'
@@ -168,6 +168,16 @@ def endSessionsOf(session: Session, user: User) -> None:
 
     for found in session.scalars(select(UserSession).where(UserSession.userId == user.id)):
         session.delete(found)
+
+
+def endExpiredSessions(database: Database) -> None:
+    """Removes the sessions past their time as Studio starts: one was removed
+    only if its browser came back, so the table only ever grew.
+    """
+
+    with database.open() as session:
+        session.execute(delete(UserSession).where(UserSession.expiresAt < utcnow()))
+        session.commit()
 
 
 def userFromRequest(session: Session, request: Request) -> Optional[User]:

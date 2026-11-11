@@ -1,5 +1,6 @@
 """What Studio does when it is pushed: failures that quote data, sign-ins
 nobody should be making, requests that race, and restarts."""
+import datetime
 import logging
 import time
 
@@ -9,7 +10,7 @@ from sqlalchemy import select
 from bauta.studio import auth, checks, evidence
 from bauta.studio.app import createApp
 from bauta.studio.auth import LoginThrottle
-from bauta.studio.db import Activity, ArchivedManifest, Check
+from bauta.studio.db import Activity, ArchivedManifest, Check, User, UserSession
 from tests.studio.conftest import PASSWORD
 
 VALUE = 'ann@corp.example'
@@ -197,6 +198,40 @@ def test_too_many_password_checks_at_once_are_refused(app, monkeypatch):
             auth._passwordChecks.release()
 
     assert response.status_code == 503 and response.headers['Retry-After'] and time.monotonic() - started < 5
+
+
+def test_sessions_past_their_time_are_removed_as_studio_starts(app, settings):
+    """One was removed only if its browser came back, so the table only grew."""
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    with app.state.database.open() as session:
+        userId = session.scalar(select(User.id).limit(1))
+        session.add(UserSession(tokenHash='expired', userId=userId, expiresAt=now - datetime.timedelta(hours=1)))
+        session.add(UserSession(tokenHash='current', userId=userId, expiresAt=now + datetime.timedelta(hours=1)))
+        session.commit()
+
+    restarted = createApp(settings)
+    with restarted.state.database.open() as session:
+        kept = list(session.scalars(select(UserSession.tokenHash)))
+    restarted.state.database.close()
+
+    assert kept == ['current']
+
+
+def test_a_read_only_files_connection_is_tested_for_reading(settings, tmp_path, signIn):
+    """Asked to be writable, a read-only bucket failed its connection test."""
+
+    lake = tmp_path / 'lake'
+    lake.mkdir()
+    lake.chmod(0o555)
+    connections = settings.configDirectory / 'connections.yaml'
+    connections.write_text(connections.read_text() + 'lake:\n  type: files\n  root: {}\n  readOnly: true\n'.format(lake))
+    try:
+        result = signIn('operator').post('/api/connections/lake/test').json()
+    finally:
+        lake.chmod(0o755)
+
+    assert result == {'ok': True, 'detail': 'readable'}
 
 
 def _edit(client, path, change):

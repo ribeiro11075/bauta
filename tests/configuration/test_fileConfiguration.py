@@ -147,6 +147,13 @@ def test_a_files_connection_is_accepted_as_a_source():
     _validate(sourceConnection='lake')
 
 
+def test_a_read_only_files_connection_is_refused_as_a_target():
+    connections = dict(_connections(), lake=connectionConfig(type='files', root='lake', readOnly=True))
+
+    with pytest.raises(ConfigurationError, match='targetConnection "lake" is readOnly'):
+        _validate(connections=connections)
+
+
 def test_an_iceberg_connection_is_refused_as_a_source():
     connections = dict(_connections(), warehouse=connectionConfig(type='iceberg', catalog='sql', uri='sqlite:///catalog.db', warehouse='lake', namespace='db'))
 

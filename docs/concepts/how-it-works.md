@@ -467,9 +467,9 @@ The query is DuckDB's SQL, answered by an in-memory DuckDB over the connection's
 - **What an overwrite job left:** its newest complete snapshot alone, since each holds the whole table.
 - **A single file,** by its own name, or as `singleFile` names it: `orders` for `orders.parquet`.
 
-All of a connection's tables are read in its `format`, with its `delimiter` for CSV. Gzipped text is told by a name ending in `.gz`. A CSV's column types are inferred from its first rows; where they guess wrong, `CAST` in the query.
+All of a connection's tables are read in its `format`, with its `delimiter` for CSV. Gzipped text is told by a name ending in `.gz`. Every column of a CSV is read as text, so a zip code keeps its leading zeros; `CAST` in the query for a number or a date, a watermark column included, since `'10'` sorts before `'9'` as text. An empty field is NULL and a quoted empty one empty text. A table's columns are those of all its files: one a file lacks reads as NULL there, and files that can't agree on a column's type are refused.
 
-The query reaches nothing but the tables under `root`: DuckDB's access to other files is turned off before it runs, so `read_csv('/etc/passwd')` is refused, and so is writing a file. A dry run asks a connection jobs only read to be listable, not writable.
+The query reaches nothing but the tables under `root`: DuckDB's access to other files is turned off before it runs, so `read_csv('/etc/passwd')` is refused, and so is writing a file. A dry run asks a connection jobs only read to be listable, not writable, and `readOnly: true` on it refuses any job writing there.
 
 Files have no catalog to read, so `discover --update` and `verify-references` pass over these jobs and `coverage` refuses the connection: name the columns in the masking policy yourself, and `audit --connect` will check each against what the query returns.
 

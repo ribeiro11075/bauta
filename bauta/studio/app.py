@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from ..log.scrubbing import describeError, scrubWithin
 from ..project import UsageError
 from . import checks, configfiles, evidence, routes, workspace
-from .auth import LoginThrottle, requireRole
+from .auth import LoginThrottle, endExpiredSessions, requireRole
 from .db import ADMIN, OPERATOR, VIEWER, Database
 from .launcher import Launcher, endInterruptedBenches
 from .routes.context import Context
@@ -112,6 +112,7 @@ def createApp(settings: Settings) -> FastAPI:
     database = Database(settings.databaseUrl)
     launcher = Launcher(settings)
     endInterruptedBenches(database)
+    endExpiredSessions(database)
 
     def sessions() -> Any:
         yield from database.session()
