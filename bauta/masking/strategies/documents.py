@@ -85,6 +85,7 @@ class RedactStrategy(Strategy):
     """
 
     NAME = 'redact'
+    NATIVE = 'redact'
     OPTIONS = {'replacement': _choiceOption('label', 'mask'), 'detect': _listOption(*_DETECTOR_KINDS), 'patterns': _patternsOption}
 
     def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
@@ -98,6 +99,14 @@ class RedactStrategy(Strategy):
         self._key = KeyStrategy(keyedHash, {})
 
 
+    def _buildNative(self) -> Any:
+        """None where the policy has `patterns`: regular expressions of its
+        own, which only Python's `re` is sure to read as Python does.
+        """
+
+        return None if self.options.get('patterns') else super()._buildNative()
+
+
     def _spans(self, text: str) -> List[Tuple[int, int, str]]:
         """Non-overlapping (start, end, kind), earlier detectors winning."""
 
@@ -106,6 +115,10 @@ class RedactStrategy(Strategy):
         # against it costs the match's length, not the number of spans so far.
         occupied = bytearray(len(text))
         for kind, pattern, check in self._detectors:
+            # An email needs an @. Searched for anyway, a long run of the
+            # characters before one costs time quadratic in its length.
+            if kind == 'email' and '@' not in text:
+                continue
             for match in pattern.finditer(text):
                 start, end = match.span()
                 if start == end or occupied.find(1, start, end) != -1 or not check(match.group(0)):

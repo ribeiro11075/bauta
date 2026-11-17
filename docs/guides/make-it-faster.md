@@ -54,7 +54,7 @@ Where the extension was never installed, or `BAUTA_NATIVE=0` turns it off, a run
 
 From a clone, `pip install ./mask-rs/py` builds the extension at the checkout's version.
 
-It covers `key`, `fpe`, `hash`, `email`, `digits`, `number` and the `fake*` strategies, which is where the time goes; the `fake*` ones pick from the lists Python hands it, so there is one copy of those. `number` repeats Python's decimal arithmetic digit for digit, integers, floats and `Decimal`s alike, and hands back what it would have to guess at: a mask that comes out as zero, whose sign Python keeps, and values too long or too far from 1. Everything else stays in Python: the strategies that are already cheap, `redact`, and [custom strategies](../reference/strategies.md#your-own-strategies), which are Python by definition and mask on one thread whatever `maskingThreads` says. So do values the extension doesn't handle (`Decimal` outside `number`, `UUID`, dates, and non-ASCII text for the strategies that read characters), so a value Python would refuse still refuses with the same message.
+It covers `key`, `fpe`, `hash`, `email`, `digits`, `number`, `redact` and the `fake*` strategies, which is where the time goes; the `fake*` ones pick from the lists Python hands it, so there is one copy of those. `number` repeats Python's decimal arithmetic digit for digit, integers, floats and `Decimal`s alike, and hands back what it would have to guess at: a mask that comes out as zero, whose sign Python keeps, and values too long or too far from 1. `redact` finds what Python finds in text, five to fifteen times as fast on one thread -- the more of the text is identifiers, the less -- except with `patterns` of a policy's own, which Python matches. Everything else stays in Python: the strategies that are already cheap, and [custom strategies](../reference/strategies.md#your-own-strategies), which are Python by definition and mask on one thread whatever `maskingThreads` says. So do values the extension doesn't handle (`Decimal` outside `number`, `UUID`, dates, and non-ASCII text for the strategies that read characters), so a value Python would refuse still refuses with the same message.
 
 The second policy above, a million rows, SQLite to SQLite:
 
@@ -96,7 +96,7 @@ The native masker can spread each chunk over several cores. Every mask depends o
 
 **`BAUTA_MASKING_THREADS`** overrides the setting for one environment, as a number or `auto`, and is checked the same way.
 
-**What never uses more than one thread:** masking without the extension (not installed, or `BAUTA_NATIVE=0`), and strategies the extension doesn't cover, such as `redact`, `shuffle`, `dateShift` and [your own](../reference/strategies.md#your-own-strategies).
+**What never uses more than one thread:** masking without the extension (not installed, or `BAUTA_NATIVE=0`), and strategies the extension doesn't cover, such as `shuffle`, `dateShift`, `redact` with `patterns`, and [your own](../reference/strategies.md#your-own-strategies).
 
 **Seeing what it chose.** `bauta validate` prints the plan:
 

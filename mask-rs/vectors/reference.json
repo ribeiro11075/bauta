@@ -4427,58 +4427,288 @@
     "maskedType": "str",
     "type": "str",
     "value": ""
-   }
-  ],
-  "redact {\"replacement\": \"mask\"}": [
-   {
-    "masked": "Called Ann at +0 (263) 204-5622, email uda2456fd0327@example.test; card 5226 2769 1448 1111 SSN 131-13-8212 IBAN GB68 UHUE 3445 6278 2739 84 from 10.21.45.89. Order 2026-01-02, qty 12, v1.2.3.",
-    "maskedType": "str",
-    "type": "str",
-    "value": "Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3."
    },
    {
-    "masked": "reach me at uda2456fd0327@example.test about ACC-123456",
+    "masked": " ",
     "maskedType": "str",
     "type": "str",
-    "value": "reach me at ann.lee@CORP.example.com about ACC-123456"
+    "value": " "
    },
    {
-    "masked": "no identifiers here",
+    "masked": "555 1234-567ab",
     "maskedType": "str",
     "type": "str",
-    "value": "no identifiers here"
+    "value": "555 1234-567ab"
    },
    {
-    "masked": "",
+    "masked": "x5550109999",
     "maskedType": "str",
     "type": "str",
-    "value": ""
-   }
-  ],
-  "redact {}": [
-   {
-    "masked": "Called Ann at [PHONE], email [EMAIL]; card [CARD] SSN [SSN] IBAN [IBAN] from [IP]. Order 2026-01-02, qty 12, v1.2.3.",
-    "maskedType": "str",
-    "type": "str",
-    "value": "Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3."
+    "value": "x5550109999"
    },
    {
-    "masked": "reach me at [EMAIL] about ACC-123456",
+    "masked": "_5550109999",
     "maskedType": "str",
     "type": "str",
-    "value": "reach me at ann.lee@CORP.example.com about ACC-123456"
+    "value": "_5550109999"
    },
    {
-    "masked": "no identifiers here",
+    "masked": "+5550109999",
     "maskedType": "str",
     "type": "str",
-    "value": "no identifiers here"
+    "value": "+5550109999"
    },
    {
-    "masked": "",
+    "masked": "a+5550109999",
     "maskedType": "str",
     "type": "str",
-    "value": ""
+    "value": "a+5550109999"
+   },
+   {
+    "masked": "(555) 010-9999.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "(555) 010-9999."
+   },
+   {
+    "masked": "5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "5550109999"
+   },
+   {
+    "masked": "on 2026-01-02 and 02/03/2024 and 1999.12.31",
+    "maskedType": "str",
+    "type": "str",
+    "value": "on 2026-01-02 and 02/03/2024 and 1999.12.31"
+   },
+   {
+    "masked": "555 123",
+    "maskedType": "str",
+    "type": "str",
+    "value": "555 123"
+   },
+   {
+    "masked": "1234567890123456 x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1234567890123456 x"
+   },
+   {
+    "masked": "tel 555-010-9999\nnext line",
+    "maskedType": "str",
+    "type": "str",
+    "value": "tel 555-010-9999\nnext line"
+   },
+   {
+    "masked": "4222222222222",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4222222222222"
+   },
+   {
+    "masked": "4111-1111-1111-1111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111-1111-1111-1111"
+   },
+   {
+    "masked": "4111 1111 1111 1112",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111 1111 1111 1112"
+   },
+   {
+    "masked": "6011000990139424",
+    "maskedType": "str",
+    "type": "str",
+    "value": "6011000990139424"
+   },
+   {
+    "masked": "4111111111111111110",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111110"
+   },
+   {
+    "masked": "41111111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "41111111111111111111"
+   },
+   {
+    "masked": "-4111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "-4111111111111111"
+   },
+   {
+    "masked": "4111111111111111-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111-"
+   },
+   {
+    "masked": "1123-45-6789",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1123-45-6789"
+   },
+   {
+    "masked": "123-45-67890",
+    "maskedType": "str",
+    "type": "str",
+    "value": "123-45-67890"
+   },
+   {
+    "masked": "a123-45-6789",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a123-45-6789"
+   },
+   {
+    "masked": "ssn:123-45-6789;",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn:123-45-6789;"
+   },
+   {
+    "masked": "1.2.3.4.5",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.4.5"
+   },
+   {
+    "masked": "at 1.2.3.4. Then",
+    "maskedType": "str",
+    "type": "str",
+    "value": "at 1.2.3.4. Then"
+   },
+   {
+    "masked": "ended 1.2.3.4.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ended 1.2.3.4."
+   },
+   {
+    "masked": "1.2.3.400",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.400"
+   },
+   {
+    "masked": "256.1.1.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": "256.1.1.1"
+   },
+   {
+    "masked": ".10.0.0.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": ".10.0.0.1"
+   },
+   {
+    "masked": "10.0.0.1x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.0.0.1x"
+   },
+   {
+    "masked": "GB82WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB82WEST12345698765432"
+   },
+   {
+    "masked": "NO9386011117947",
+    "maskedType": "str",
+    "type": "str",
+    "value": "NO9386011117947"
+   },
+   {
+    "masked": "GB83WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB83WEST12345698765432"
+   },
+   {
+    "masked": "XGB82WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "XGB82WEST12345698765432"
+   },
+   {
+    "masked": "pay DE89 3704 0044 0532 0130 00 now",
+    "maskedType": "str",
+    "type": "str",
+    "value": "pay DE89 3704 0044 0532 0130 00 now"
+   },
+   {
+    "masked": "u76dc91025c8a@example.test",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a@b.co"
+   },
+   {
+    "masked": "@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "@example.com"
+   },
+   {
+    "masked": "ann@@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@@example.com"
+   },
+   {
+    "masked": "ann@example",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@example"
+   },
+   {
+    "masked": "ua4d7f04a70e1@example.test,u2f4002a13fa4@example.test",
+    "maskedType": "str",
+    "type": "str",
+    "value": "x.y+z@a-b.example.org,q@r.st"
+   },
+   {
+    "masked": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777",
+    "maskedType": "str",
+    "type": "str",
+    "value": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777"
+   },
+   {
+    "masked": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-"
+   },
+   {
+    "masked": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 ",
+    "maskedType": "str",
+    "type": "str",
+    "value": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 "
+   },
+   {
+    "masked": "ol\u00e1, 123-45-6789",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ol\u00e1, 123-45-6789"
+   },
+   {
+    "masked": "ssn \u0661\u0662\u0663-\u0664\u0665-\u0666\u0667\u0668\u0669",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn \u0661\u0662\u0663-\u0664\u0665-\u0666\u0667\u0668\u0669"
+   },
+   {
+    "masked": "card \uff14\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11",
+    "maskedType": "str",
+    "type": "str",
+    "value": "card \uff14\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11"
    }
   ],
   "shuffle {}": [
@@ -25082,6 +25312,1334 @@
     "message": "the number strategy needs a number, got str",
     "type": "str",
     "value": "text"
+   }
+  ],
+  "redact {\"detect\": [\"phone\", \"card\"]}": [
+   {
+    "masked": "Called Ann at [PHONE], email Ann.Lee@corp.example.com; card [CARD] SSN [PHONE] IBAN GB82 WEST [PHONE] from [PHONE]. Order 2026-01-02, qty 12, v1.2.3.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3."
+   },
+   {
+    "masked": "reach me at ann.lee@CORP.example.com about ACC-123456",
+    "maskedType": "str",
+    "type": "str",
+    "value": "reach me at ann.lee@CORP.example.com about ACC-123456"
+   },
+   {
+    "masked": "no identifiers here",
+    "maskedType": "str",
+    "type": "str",
+    "value": "no identifiers here"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": " ",
+    "maskedType": "str",
+    "type": "str",
+    "value": " "
+   },
+   {
+    "masked": "[PHONE]-567ab",
+    "maskedType": "str",
+    "type": "str",
+    "value": "555 1234-567ab"
+   },
+   {
+    "masked": "x5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "x5550109999"
+   },
+   {
+    "masked": "_5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "_5550109999"
+   },
+   {
+    "masked": "[PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "+5550109999"
+   },
+   {
+    "masked": "a+5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a+5550109999"
+   },
+   {
+    "masked": "[PHONE].",
+    "maskedType": "str",
+    "type": "str",
+    "value": "(555) 010-9999."
+   },
+   {
+    "masked": "[PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "5550109999"
+   },
+   {
+    "masked": "on 2026-01-02 and 02/03/2024 and 1999.12.31",
+    "maskedType": "str",
+    "type": "str",
+    "value": "on 2026-01-02 and 02/03/2024 and 1999.12.31"
+   },
+   {
+    "masked": "555 123",
+    "maskedType": "str",
+    "type": "str",
+    "value": "555 123"
+   },
+   {
+    "masked": "1234567890123456 x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1234567890123456 x"
+   },
+   {
+    "masked": "tel [PHONE]\nnext line",
+    "maskedType": "str",
+    "type": "str",
+    "value": "tel 555-010-9999\nnext line"
+   },
+   {
+    "masked": "[CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4222222222222"
+   },
+   {
+    "masked": "[CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111-1111-1111-1111"
+   },
+   {
+    "masked": "4111 1111 1111 1112",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111 1111 1111 1112"
+   },
+   {
+    "masked": "[CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "6011000990139424"
+   },
+   {
+    "masked": "[CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111110"
+   },
+   {
+    "masked": "41111111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "41111111111111111111"
+   },
+   {
+    "masked": "-4111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "-4111111111111111"
+   },
+   {
+    "masked": "4111111111111111-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111-"
+   },
+   {
+    "masked": "[PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1123-45-6789"
+   },
+   {
+    "masked": "[PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "123-45-67890"
+   },
+   {
+    "masked": "a123-45-6789",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a123-45-6789"
+   },
+   {
+    "masked": "ssn:[PHONE];",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn:123-45-6789;"
+   },
+   {
+    "masked": "1.2.3.4.5",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.4.5"
+   },
+   {
+    "masked": "at 1.2.3.4. Then",
+    "maskedType": "str",
+    "type": "str",
+    "value": "at 1.2.3.4. Then"
+   },
+   {
+    "masked": "ended 1.2.3.4.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ended 1.2.3.4."
+   },
+   {
+    "masked": "1.2.3.400",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.400"
+   },
+   {
+    "masked": "256.1.1.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": "256.1.1.1"
+   },
+   {
+    "masked": ".10.0.0.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": ".10.0.0.1"
+   },
+   {
+    "masked": "10.0.0.1x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.0.0.1x"
+   },
+   {
+    "masked": "GB82WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB82WEST12345698765432"
+   },
+   {
+    "masked": "NO9386011117947",
+    "maskedType": "str",
+    "type": "str",
+    "value": "NO9386011117947"
+   },
+   {
+    "masked": "GB83WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB83WEST12345698765432"
+   },
+   {
+    "masked": "XGB82WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "XGB82WEST12345698765432"
+   },
+   {
+    "masked": "pay DE89 3704 0044 0532 0130 00 now",
+    "maskedType": "str",
+    "type": "str",
+    "value": "pay DE89 3704 0044 0532 0130 00 now"
+   },
+   {
+    "masked": "a@b.co",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a@b.co"
+   },
+   {
+    "masked": "@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "@example.com"
+   },
+   {
+    "masked": "ann@@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@@example.com"
+   },
+   {
+    "masked": "ann@example",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@example"
+   },
+   {
+    "masked": "x.y+z@a-b.example.org,q@r.st",
+    "maskedType": "str",
+    "type": "str",
+    "value": "x.y+z@a-b.example.org,q@r.st"
+   },
+   {
+    "masked": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777",
+    "maskedType": "str",
+    "type": "str",
+    "value": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777"
+   },
+   {
+    "masked": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-"
+   },
+   {
+    "masked": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 ",
+    "maskedType": "str",
+    "type": "str",
+    "value": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 "
+   },
+   {
+    "masked": "ol\u00e1, [PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ol\u00e1, 123-45-6789"
+   },
+   {
+    "masked": "ssn [PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn \u0661\u0662\u0663-\u0664\u0665-\u0666\u0667\u0668\u0669"
+   },
+   {
+    "masked": "card [CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "card \uff14\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11"
+   },
+   {
+    "masked": null,
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": null
+   },
+   {
+    "error": "MaskingError",
+    "message": "the redact strategy needs text, got bool",
+    "type": "bool",
+    "value": "True"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the redact strategy needs text, got int",
+    "type": "int",
+    "value": "42"
+   },
+   {
+    "masked": "{\"note\": \"call [PHONE]\"}",
+    "maskedType": "str",
+    "type": "dict",
+    "value": "{'note': 'call 555-010-9999'}"
+   }
+  ],
+  "redact {\"detect\": [\"ssn\", \"ip\", \"iban\", \"email\"], \"replacement\": \"mask\"}": [
+   {
+    "masked": "Called Ann at +1 (555) 010-9999, email uda2456fd0327@example.test; card 4111 1111 1111 1111 SSN 131-13-8212 IBAN GB68 UHUE 3445 6278 2739 84 from 10.21.45.89. Order 2026-01-02, qty 12, v1.2.3.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3."
+   },
+   {
+    "masked": "reach me at uda2456fd0327@example.test about ACC-123456",
+    "maskedType": "str",
+    "type": "str",
+    "value": "reach me at ann.lee@CORP.example.com about ACC-123456"
+   },
+   {
+    "masked": "no identifiers here",
+    "maskedType": "str",
+    "type": "str",
+    "value": "no identifiers here"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": " ",
+    "maskedType": "str",
+    "type": "str",
+    "value": " "
+   },
+   {
+    "masked": "555 1234-567ab",
+    "maskedType": "str",
+    "type": "str",
+    "value": "555 1234-567ab"
+   },
+   {
+    "masked": "x5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "x5550109999"
+   },
+   {
+    "masked": "_5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "_5550109999"
+   },
+   {
+    "masked": "+5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "+5550109999"
+   },
+   {
+    "masked": "a+5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a+5550109999"
+   },
+   {
+    "masked": "(555) 010-9999.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "(555) 010-9999."
+   },
+   {
+    "masked": "5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "5550109999"
+   },
+   {
+    "masked": "on 2026-01-02 and 02/03/2024 and 1999.12.31",
+    "maskedType": "str",
+    "type": "str",
+    "value": "on 2026-01-02 and 02/03/2024 and 1999.12.31"
+   },
+   {
+    "masked": "555 123",
+    "maskedType": "str",
+    "type": "str",
+    "value": "555 123"
+   },
+   {
+    "masked": "1234567890123456 x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1234567890123456 x"
+   },
+   {
+    "masked": "tel 555-010-9999\nnext line",
+    "maskedType": "str",
+    "type": "str",
+    "value": "tel 555-010-9999\nnext line"
+   },
+   {
+    "masked": "4222222222222",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4222222222222"
+   },
+   {
+    "masked": "4111-1111-1111-1111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111-1111-1111-1111"
+   },
+   {
+    "masked": "4111 1111 1111 1112",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111 1111 1111 1112"
+   },
+   {
+    "masked": "6011000990139424",
+    "maskedType": "str",
+    "type": "str",
+    "value": "6011000990139424"
+   },
+   {
+    "masked": "4111111111111111110",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111110"
+   },
+   {
+    "masked": "41111111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "41111111111111111111"
+   },
+   {
+    "masked": "-4111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "-4111111111111111"
+   },
+   {
+    "masked": "4111111111111111-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111-"
+   },
+   {
+    "masked": "1123-45-6789",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1123-45-6789"
+   },
+   {
+    "masked": "123-45-67890",
+    "maskedType": "str",
+    "type": "str",
+    "value": "123-45-67890"
+   },
+   {
+    "masked": "a131-13-8212",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a123-45-6789"
+   },
+   {
+    "masked": "ssn:131-13-8212;",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn:123-45-6789;"
+   },
+   {
+    "masked": "1.2.3.4.5",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.4.5"
+   },
+   {
+    "masked": "at 10.56.7.188. Then",
+    "maskedType": "str",
+    "type": "str",
+    "value": "at 1.2.3.4. Then"
+   },
+   {
+    "masked": "ended 10.56.7.188.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ended 1.2.3.4."
+   },
+   {
+    "masked": "1.2.3.400",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.400"
+   },
+   {
+    "masked": "256.1.1.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": "256.1.1.1"
+   },
+   {
+    "masked": ".10.0.0.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": ".10.0.0.1"
+   },
+   {
+    "masked": "10.140.103.0x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.0.0.1x"
+   },
+   {
+    "masked": "GB45ZCPL20758763690298",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB82WEST12345698765432"
+   },
+   {
+    "masked": "NO4040683418958",
+    "maskedType": "str",
+    "type": "str",
+    "value": "NO9386011117947"
+   },
+   {
+    "masked": "GB83WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB83WEST12345698765432"
+   },
+   {
+    "masked": "XGB82WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "XGB82WEST12345698765432"
+   },
+   {
+    "masked": "pay DE90 5742 4958 9996 7411 64 now",
+    "maskedType": "str",
+    "type": "str",
+    "value": "pay DE89 3704 0044 0532 0130 00 now"
+   },
+   {
+    "masked": "u76dc91025c8a@example.test",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a@b.co"
+   },
+   {
+    "masked": "@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "@example.com"
+   },
+   {
+    "masked": "ann@@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@@example.com"
+   },
+   {
+    "masked": "ann@example",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@example"
+   },
+   {
+    "masked": "ua4d7f04a70e1@example.test,u2f4002a13fa4@example.test",
+    "maskedType": "str",
+    "type": "str",
+    "value": "x.y+z@a-b.example.org,q@r.st"
+   },
+   {
+    "masked": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777",
+    "maskedType": "str",
+    "type": "str",
+    "value": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777"
+   },
+   {
+    "masked": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-"
+   },
+   {
+    "masked": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 ",
+    "maskedType": "str",
+    "type": "str",
+    "value": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 "
+   },
+   {
+    "masked": "ol\u00e1, 131-13-8212",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ol\u00e1, 123-45-6789"
+   },
+   {
+    "masked": "ssn \u0661\u0663\u0661-\u0661\u0663-\u0668\u0662\u0661\u0662",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn \u0661\u0662\u0663-\u0664\u0665-\u0666\u0667\u0668\u0669"
+   },
+   {
+    "masked": "card \uff14\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11",
+    "maskedType": "str",
+    "type": "str",
+    "value": "card \uff14\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11"
+   },
+   {
+    "masked": null,
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": null
+   },
+   {
+    "error": "MaskingError",
+    "message": "the redact strategy needs text, got bool",
+    "type": "bool",
+    "value": "True"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the redact strategy needs text, got int",
+    "type": "int",
+    "value": "42"
+   },
+   {
+    "masked": "{\"note\": \"call 555-010-9999\"}",
+    "maskedType": "str",
+    "type": "dict",
+    "value": "{'note': 'call 555-010-9999'}"
+   }
+  ],
+  "redact {\"replacement\": \"mask\"}": [
+   {
+    "masked": "Called Ann at +0 (263) 204-5622, email uda2456fd0327@example.test; card 5226 2769 1448 1111 SSN 131-13-8212 IBAN GB68 UHUE 3445 6278 2739 84 from 10.21.45.89. Order 2026-01-02, qty 12, v1.2.3.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3."
+   },
+   {
+    "masked": "reach me at uda2456fd0327@example.test about ACC-123456",
+    "maskedType": "str",
+    "type": "str",
+    "value": "reach me at ann.lee@CORP.example.com about ACC-123456"
+   },
+   {
+    "masked": "no identifiers here",
+    "maskedType": "str",
+    "type": "str",
+    "value": "no identifiers here"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": " ",
+    "maskedType": "str",
+    "type": "str",
+    "value": " "
+   },
+   {
+    "masked": "913 3563-567ab",
+    "maskedType": "str",
+    "type": "str",
+    "value": "555 1234-567ab"
+   },
+   {
+    "masked": "x5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "x5550109999"
+   },
+   {
+    "masked": "_5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "_5550109999"
+   },
+   {
+    "masked": "+1286456000",
+    "maskedType": "str",
+    "type": "str",
+    "value": "+5550109999"
+   },
+   {
+    "masked": "a+5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a+5550109999"
+   },
+   {
+    "masked": "(128) 645-6000.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "(555) 010-9999."
+   },
+   {
+    "masked": "1286456000",
+    "maskedType": "str",
+    "type": "str",
+    "value": "5550109999"
+   },
+   {
+    "masked": "on 2026-01-02 and 02/03/2024 and 1999.12.31",
+    "maskedType": "str",
+    "type": "str",
+    "value": "on 2026-01-02 and 02/03/2024 and 1999.12.31"
+   },
+   {
+    "masked": "555 123",
+    "maskedType": "str",
+    "type": "str",
+    "value": "555 123"
+   },
+   {
+    "masked": "1234567890123456 x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1234567890123456 x"
+   },
+   {
+    "masked": "tel 128-645-6000\nnext line",
+    "maskedType": "str",
+    "type": "str",
+    "value": "tel 555-010-9999\nnext line"
+   },
+   {
+    "masked": "8226270272222",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4222222222222"
+   },
+   {
+    "masked": "5226-2769-1448-1111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111-1111-1111-1111"
+   },
+   {
+    "masked": "4111 1111 1111 1112",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111 1111 1111 1112"
+   },
+   {
+    "masked": "6543728955929424",
+    "maskedType": "str",
+    "type": "str",
+    "value": "6011000990139424"
+   },
+   {
+    "masked": "3864686566596151110",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111110"
+   },
+   {
+    "masked": "41111111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "41111111111111111111"
+   },
+   {
+    "masked": "-4111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "-4111111111111111"
+   },
+   {
+    "masked": "4111111111111111-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111-"
+   },
+   {
+    "masked": "3339-25-9653",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1123-45-6789"
+   },
+   {
+    "masked": "445-63-42654",
+    "maskedType": "str",
+    "type": "str",
+    "value": "123-45-67890"
+   },
+   {
+    "masked": "a131-13-8212",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a123-45-6789"
+   },
+   {
+    "masked": "ssn:131-13-8212;",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn:123-45-6789;"
+   },
+   {
+    "masked": "1.2.3.4.5",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.4.5"
+   },
+   {
+    "masked": "at 10.56.7.188. Then",
+    "maskedType": "str",
+    "type": "str",
+    "value": "at 1.2.3.4. Then"
+   },
+   {
+    "masked": "ended 10.56.7.188.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ended 1.2.3.4."
+   },
+   {
+    "masked": "1.2.3.400",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.400"
+   },
+   {
+    "masked": "256.1.1.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": "256.1.1.1"
+   },
+   {
+    "masked": ".10.0.0.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": ".10.0.0.1"
+   },
+   {
+    "masked": "10.140.103.0x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.0.0.1x"
+   },
+   {
+    "masked": "GB45ZCPL20758763690298",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB82WEST12345698765432"
+   },
+   {
+    "masked": "NO4040683418958",
+    "maskedType": "str",
+    "type": "str",
+    "value": "NO9386011117947"
+   },
+   {
+    "masked": "GB83WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB83WEST12345698765432"
+   },
+   {
+    "masked": "XGB82WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "XGB82WEST12345698765432"
+   },
+   {
+    "masked": "pay DE90 5742 4958 9996 7411 64 now",
+    "maskedType": "str",
+    "type": "str",
+    "value": "pay DE89 3704 0044 0532 0130 00 now"
+   },
+   {
+    "masked": "u76dc91025c8a@example.test",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a@b.co"
+   },
+   {
+    "masked": "@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "@example.com"
+   },
+   {
+    "masked": "ann@@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@@example.com"
+   },
+   {
+    "masked": "ann@example",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@example"
+   },
+   {
+    "masked": "ua4d7f04a70e1@example.test,u2f4002a13fa4@example.test",
+    "maskedType": "str",
+    "type": "str",
+    "value": "x.y+z@a-b.example.org,q@r.st"
+   },
+   {
+    "masked": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777",
+    "maskedType": "str",
+    "type": "str",
+    "value": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777"
+   },
+   {
+    "masked": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-"
+   },
+   {
+    "masked": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 ",
+    "maskedType": "str",
+    "type": "str",
+    "value": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 "
+   },
+   {
+    "masked": "ol\u00e1, 131-13-8212",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ol\u00e1, 123-45-6789"
+   },
+   {
+    "masked": "ssn \u0661\u0663\u0661-\u0661\u0663-\u0668\u0662\u0661\u0662",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn \u0661\u0662\u0663-\u0664\u0665-\u0666\u0667\u0668\u0669"
+   },
+   {
+    "masked": "card \uff15\uff12\uff12\uff16 \uff12\uff17\uff16\uff19 \uff11\uff14\uff14\uff18 \uff11\uff11\uff11\uff11",
+    "maskedType": "str",
+    "type": "str",
+    "value": "card \uff14\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11"
+   },
+   {
+    "masked": null,
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": null
+   },
+   {
+    "error": "MaskingError",
+    "message": "the redact strategy needs text, got bool",
+    "type": "bool",
+    "value": "True"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the redact strategy needs text, got int",
+    "type": "int",
+    "value": "42"
+   },
+   {
+    "masked": "{\"note\": \"call 128-645-6000\"}",
+    "maskedType": "str",
+    "type": "dict",
+    "value": "{'note': 'call 555-010-9999'}"
+   }
+  ],
+  "redact {}": [
+   {
+    "masked": "Called Ann at [PHONE], email [EMAIL]; card [CARD] SSN [SSN] IBAN [IBAN] from [IP]. Order 2026-01-02, qty 12, v1.2.3.",
+    "maskedType": "str",
+    "type": "str",
+    "value": "Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3."
+   },
+   {
+    "masked": "reach me at [EMAIL] about ACC-123456",
+    "maskedType": "str",
+    "type": "str",
+    "value": "reach me at ann.lee@CORP.example.com about ACC-123456"
+   },
+   {
+    "masked": "no identifiers here",
+    "maskedType": "str",
+    "type": "str",
+    "value": "no identifiers here"
+   },
+   {
+    "masked": "",
+    "maskedType": "str",
+    "type": "str",
+    "value": ""
+   },
+   {
+    "masked": " ",
+    "maskedType": "str",
+    "type": "str",
+    "value": " "
+   },
+   {
+    "masked": "[PHONE]-567ab",
+    "maskedType": "str",
+    "type": "str",
+    "value": "555 1234-567ab"
+   },
+   {
+    "masked": "x5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "x5550109999"
+   },
+   {
+    "masked": "_5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "_5550109999"
+   },
+   {
+    "masked": "[PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "+5550109999"
+   },
+   {
+    "masked": "a+5550109999",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a+5550109999"
+   },
+   {
+    "masked": "[PHONE].",
+    "maskedType": "str",
+    "type": "str",
+    "value": "(555) 010-9999."
+   },
+   {
+    "masked": "[PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "5550109999"
+   },
+   {
+    "masked": "on 2026-01-02 and 02/03/2024 and 1999.12.31",
+    "maskedType": "str",
+    "type": "str",
+    "value": "on 2026-01-02 and 02/03/2024 and 1999.12.31"
+   },
+   {
+    "masked": "555 123",
+    "maskedType": "str",
+    "type": "str",
+    "value": "555 123"
+   },
+   {
+    "masked": "1234567890123456 x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1234567890123456 x"
+   },
+   {
+    "masked": "tel [PHONE]\nnext line",
+    "maskedType": "str",
+    "type": "str",
+    "value": "tel 555-010-9999\nnext line"
+   },
+   {
+    "masked": "[CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4222222222222"
+   },
+   {
+    "masked": "[CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111-1111-1111-1111"
+   },
+   {
+    "masked": "4111 1111 1111 1112",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111 1111 1111 1112"
+   },
+   {
+    "masked": "[CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "6011000990139424"
+   },
+   {
+    "masked": "[CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111110"
+   },
+   {
+    "masked": "41111111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "41111111111111111111"
+   },
+   {
+    "masked": "-4111111111111111",
+    "maskedType": "str",
+    "type": "str",
+    "value": "-4111111111111111"
+   },
+   {
+    "masked": "4111111111111111-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "4111111111111111-"
+   },
+   {
+    "masked": "[PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1123-45-6789"
+   },
+   {
+    "masked": "[PHONE]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "123-45-67890"
+   },
+   {
+    "masked": "a[SSN]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a123-45-6789"
+   },
+   {
+    "masked": "ssn:[SSN];",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn:123-45-6789;"
+   },
+   {
+    "masked": "1.2.3.4.5",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.4.5"
+   },
+   {
+    "masked": "at [IP]. Then",
+    "maskedType": "str",
+    "type": "str",
+    "value": "at 1.2.3.4. Then"
+   },
+   {
+    "masked": "ended [IP].",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ended 1.2.3.4."
+   },
+   {
+    "masked": "1.2.3.400",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1.2.3.400"
+   },
+   {
+    "masked": "256.1.1.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": "256.1.1.1"
+   },
+   {
+    "masked": ".10.0.0.1",
+    "maskedType": "str",
+    "type": "str",
+    "value": ".10.0.0.1"
+   },
+   {
+    "masked": "[IP]x",
+    "maskedType": "str",
+    "type": "str",
+    "value": "10.0.0.1x"
+   },
+   {
+    "masked": "[IBAN]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB82WEST12345698765432"
+   },
+   {
+    "masked": "[IBAN]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "NO9386011117947"
+   },
+   {
+    "masked": "GB83WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "GB83WEST12345698765432"
+   },
+   {
+    "masked": "XGB82WEST12345698765432",
+    "maskedType": "str",
+    "type": "str",
+    "value": "XGB82WEST12345698765432"
+   },
+   {
+    "masked": "pay [IBAN] now",
+    "maskedType": "str",
+    "type": "str",
+    "value": "pay DE89 3704 0044 0532 0130 00 now"
+   },
+   {
+    "masked": "[EMAIL]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "a@b.co"
+   },
+   {
+    "masked": "@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "@example.com"
+   },
+   {
+    "masked": "ann@@example.com",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@@example.com"
+   },
+   {
+    "masked": "ann@example",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ann@example"
+   },
+   {
+    "masked": "[EMAIL],[EMAIL]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "x.y+z@a-b.example.org,q@r.st"
+   },
+   {
+    "masked": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777",
+    "maskedType": "str",
+    "type": "str",
+    "value": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777"
+   },
+   {
+    "masked": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-",
+    "maskedType": "str",
+    "type": "str",
+    "value": "1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-"
+   },
+   {
+    "masked": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 ",
+    "maskedType": "str",
+    "type": "str",
+    "value": "9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 "
+   },
+   {
+    "masked": "ol\u00e1, [SSN]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ol\u00e1, 123-45-6789"
+   },
+   {
+    "masked": "ssn [SSN]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "ssn \u0661\u0662\u0663-\u0664\u0665-\u0666\u0667\u0668\u0669"
+   },
+   {
+    "masked": "card [CARD]",
+    "maskedType": "str",
+    "type": "str",
+    "value": "card \uff14\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11 \uff11\uff11\uff11\uff11"
+   },
+   {
+    "masked": null,
+    "maskedType": "NoneType",
+    "type": "NoneType",
+    "value": null
+   },
+   {
+    "error": "MaskingError",
+    "message": "the redact strategy needs text, got bool",
+    "type": "bool",
+    "value": "True"
+   },
+   {
+    "error": "MaskingError",
+    "message": "the redact strategy needs text, got int",
+    "type": "int",
+    "value": "42"
+   },
+   {
+    "masked": "{\"note\": \"call [PHONE]\"}",
+    "maskedType": "str",
+    "type": "dict",
+    "value": "{'note': 'call 555-010-9999'}"
    }
   ]
  }

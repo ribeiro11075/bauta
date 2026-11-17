@@ -1123,6 +1123,28 @@ def test_redact_takes_time_in_proportion_to_the_text():
     assert seconds(16000) < 40 * max(seconds(1000), 0.001)
 
 
+def test_redact_in_python_takes_time_in_proportion_to_a_run_of_digits():
+    """Searched for an email, a run of the characters that may come before an
+    @ cost time quadratic in its length: 50,000 digits took three seconds. The
+    native masker never had this; Python skips email where there's no @.
+    """
+    import time
+
+    built = pythonStrategy('redact')
+
+    def seconds(length):
+        fastest = float('inf')
+        for _ in range(3):
+            started = time.perf_counter()
+            built.maskColumn(['7' * length], 0)
+            fastest = min(fastest, time.perf_counter() - started)
+        return fastest
+
+    seconds(100)
+    # 16 times the text in about 16 times as long; quadratic would be 256.
+    assert seconds(32000) < 40 * max(seconds(2000), 0.001)
+
+
 def test_redact_keeps_earlier_detectors_winning_where_matches_overlap():
     assert maskOne('redact', 'card 4111 1111 1111 1111 and 555-010-9999') == 'card [CARD] and [PHONE]'
 
