@@ -5,9 +5,9 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.10 — 2026-11-16
 
-No mask changes.
+`redact` masks natively, five to fifteen times as fast, and in time proportional to its text in Python too. No mask changes.
 
 ### Changed
 - **The native masker covers `redact`**, five to fifteen times as fast on one thread, and spread over `maskingThreads` like the other strategies it covers: notes a third of which hold an identifier mask at 0.6 microseconds each rather than 8.6. It finds exactly what Python finds: the vectors and a test over 20,000 generated texts under four policies compare the two. Text outside ASCII and a policy with `patterns` of its own are still masked in Python.
