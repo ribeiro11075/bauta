@@ -77,6 +77,7 @@ COMBINATIONS = [
     ('digits', {}), ('digits', {'keepLeading': 2}), ('digits', {'keepTrailing': 4}),
     ('digits', {'keepLeading': 1, 'keepTrailing': 1}),
     ('number', {}), ('number', {'decimals': 2}), ('number', {'min': '-5.5', 'max': '1E+3'}),
+    ('redact', {}), ('redact', {'replacement': 'mask'}), ('redact', {'detect': ['phone', 'ip']}),
     ] + [(name, options) for name in ('fakeFirstName', 'fakeLastName', 'fakeName', 'fakeCity', 'fakeCompany', 'fakeStreetAddress')
          for options in ({}, {'maxLength': 3}, {'locale': 'de_DE'}, {'locale': 'pt_BR'})]
 
@@ -215,6 +216,89 @@ def test_the_masking_key_never_reaches_the_extension():
     assert KEY not in repr(built._native)
 
 
+# redact over free text -----------------------------------------------------------
+
+def _freeText(count, seed):
+    """Text built to break the port: identifiers valid and nearly so, runs of
+    digits and separators that send Python's matcher backtracking, and words
+    between, with one text in twenty carrying a character outside ASCII,
+    which the extension hands back.
+    """
+    generator = random.Random(seed)
+
+    def digits(count):
+        return ''.join(generator.choice('0123456789') for _ in range(count))
+
+    def spaced(text, separators=' -'):
+        return ''.join(character + (generator.choice(separators) if generator.random() < 0.25 else '') for character in text).rstrip(' -')
+
+    def luhn(length):
+        body = [int(digit) for digit in digits(length - 1)]
+        for check in range(10):
+            numbers = body + [check]
+            if sum((digit * 2 - 9 if digit > 4 else digit * 2) if index % 2 else digit for index, digit in enumerate(reversed(numbers))) % 10 == 0:
+                return ''.join(map(str, numbers))
+
+    def iban():
+        country = generator.choice(['PT', 'DE', 'GB', 'NL'])
+        account = ''.join(generator.choice('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' if generator.random() < 0.2 else '0123456789')
+                          for _ in range(generator.randrange(11, 30)))
+        code = country + '{:02d}'.format(98 - int(''.join(str(int(character, 36)) for character in account + country + '00')) % 97) + account
+        if generator.random() < 0.5:
+            code = ' '.join(code[index:index + 4] for index in range(0, len(code), 4))
+        return code if generator.random() < 0.9 else code[:-1] + str((int(code[-1], 36) + 1) % 10)
+
+    tokens = [
+        lambda: spaced(luhn(generator.choice([13, 15, 16, 19]))), lambda: digits(generator.randrange(12, 21)),
+        lambda: '{}-{}-{}'.format(digits(3), digits(2), digits(4)),
+        lambda: '.'.join(str(generator.randrange(300)) for _ in range(generator.choice([3, 4, 4, 5]))),
+        lambda: generator.choice(['+351 ', '+1 ', '(', '', '+']) + spaced(digits(generator.randrange(5, 17)), ' -.()'),
+        lambda: generator.choice(['2024-03-02', '02/03/2024', '2.3.24', '1999.12.31']),
+        lambda: '{}{}@{}.{}'.format(generator.choice(['jo', 'ann.smith', 'x_y', 'a+b', '.']), generator.randrange(1000),
+                                    generator.choice(['example', 'mail-x', 'a.b']), generator.choice(['com', 'pt', 'c', 'co.uk'])),
+        iban,
+        lambda: ''.join(generator.choice('0123456789 -.()+') for _ in range(generator.randrange(3, 30))),
+        lambda: ''.join(generator.choice('0123456789abX_-.@+ ') for _ in range(generator.randrange(3, 30))),
+        ] + [lambda: generator.choice(['Customer', 'called', 'about', 'delivery,', 'call', 'me', 'at', 'or', 'email', 'thanks.', 'IBAN', 'SSN'])] * 4
+
+    texts = [' '.join(generator.choice(tokens)() for _ in range(generator.randrange(1, 20))) for _ in range(count)]
+    return [text.replace('e', 'é', 1) if generator.random() < 0.05 else text for text in texts]
+
+
+@native
+@pytest.mark.parametrize('options', [{}, {'replacement': 'mask'}, {'detect': ['card', 'phone']}, {'detect': ['ssn', 'ip', 'iban', 'email'], 'replacement': 'mask'}],
+                         ids=lambda item: str(item))
+def test_redact_finds_in_free_text_exactly_what_python_finds(options):
+    """The port writes Python's lookarounds out by hand, so where a pattern's
+    lookahead fails and Python backs off to a shorter match, or its lookbehind
+    fails and Python tries one character on, the two must still agree: on
+    thousands of texts built to land there, not on a few chosen by hand.
+    """
+    texts = _freeText(20000, 20261116)
+    validated = STRATEGIES['redact'].validateOptions(options)
+    asNative = STRATEGIES['redact'](KeyedHash(KEY, 'notes'), validated)
+    asPython = STRATEGIES['redact'](KeyedHash(KEY, 'notes'), validated)
+    asPython._native = None
+
+    fromNative = asNative.maskColumn(texts, 0)
+    fromPython = asPython.maskColumn(texts, 0)
+
+    assert sum(native != text for native, text in zip(fromNative, texts)) > len(texts) // 2, 'too few texts held anything to redact'
+    for text, left, right in zip(texts, fromNative, fromPython):
+        assert left == right, 'native and python disagree on {!r}: {!r} vs {!r}'.format(text, left, right)
+
+
+@native
+def test_redact_with_patterns_of_its_own_masks_in_python():
+    """A policy's own regular expressions are Python's: Rust's engine reads
+    some of them differently, or not at all.
+    """
+    built = STRATEGIES['redact'](KeyedHash(KEY, 'notes'), STRATEGIES['redact'].validateOptions({'patterns': [r'(?<=ACC-)\d{6}']}))
+
+    assert built._native is None
+    assert built.maskColumn(['ACC-123456 ssn 123-45-6789'], 0) == ['ACC-[REDACTED] ssn [SSN]']
+
+
 # Threads and the cross-chunk cache ---------------------------------------------
 
 def _wideColumn(built):
@@ -251,7 +335,8 @@ def maskingThreads():
 
 @native
 @pytest.mark.parametrize('name,options', [('key', {}), ('fpe', {}), ('hash', {}), ('digits', {'keepTrailing': 2}), ('email', {}),
-                                          ('fakeName', {'locale': 'es_ES'}), ('fakeStreetAddress', {}), ('number', {'decimals': 2})],
+                                          ('fakeName', {'locale': 'es_ES'}), ('fakeStreetAddress', {}), ('number', {'decimals': 2}),
+                                          ('redact', {'replacement': 'mask'})],
                          ids=lambda item: str(item))
 def test_threads_and_the_cache_change_no_answer(name, options, maskingThreads):
     """Every mask depends on its value alone, so masking a column on eight

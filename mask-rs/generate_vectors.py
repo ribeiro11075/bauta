@@ -127,6 +127,7 @@ def strategyVectors() -> dict:
 
     combinations += [('number', {}), ('number', {'variance': '0.5'}), ('number', {'min': '0', 'max': '100'}), ('number', {'decimals': 2}),
                      ('number', {'min': '1', 'max': '2', 'decimals': 3})]
+    combinations += REDACT_COMBINATIONS
 
     values = TEXTS + INTEGERS + [uuid.UUID('00000000-0000-4000-a000-000000000000'), None, True]
     out = {}
@@ -134,9 +135,18 @@ def strategyVectors() -> dict:
     for name, options in combinations:
         strategyClass = STRATEGIES[name]
         strategy = strategyClass(KeyedHash(KEY, DOMAIN), strategyClass.validateOptions(options))
+        # Python's masks, whether or not the extension is installed: these are
+        # what it is checked against, so it can't be what records them.
+        strategy._native = None
         results = []
 
-        for value in (NUMBERS + [None, True, 'text'] if name == 'number' else values):
+        if name == 'number':
+            corpus = NUMBERS + [None, True, 'text']
+        elif name == 'redact':
+            corpus = REDACT_TEXTS + [None, True, 42, {'note': 'call 555-010-9999'}]
+        else:
+            corpus = values
+        for value in corpus:
             entry = {'type': type(value).__name__, 'value': None if value is None else str(value)}
             try:
                 masked = strategy.maskColumn([value], 0)[0]
@@ -156,11 +166,37 @@ DATES = [datetime.date(2020, 2, 29), datetime.date(1970, 1, 1), datetime.date.mi
          datetime.date(9999, 12, 30), datetime.datetime(2026, 9, 21, 16, 30, 5), datetime.datetime(2026, 9, 21, 23, 59, 59, 999999),
          '2026-09-21', '2026-09-21T16:30:05', '2026-09-21 16:30:05', '2026-09-21T16:30:05+02:00', '0001-01-01', 20260921]
 
+# Free text for redact, chosen where the port writes Python's lookarounds out
+# by hand: a match whose lookahead fails backs off to a shorter one, one whose
+# lookbehind fails moves on a character, and each kind's check refuses what
+# only looks like it. Then what goes back to Python: other scripts, and
+# values that aren't text.
 REDACT_TEXTS = [
     'Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 '
     'IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3.',
-    'reach me at ann.lee@CORP.example.com about ACC-123456', 'no identifiers here', '',
+    'reach me at ann.lee@CORP.example.com about ACC-123456', 'no identifiers here', '', ' ',
+    # Phone: backed off from a letter, refused after a word character or a +,
+    # dates refused, 6 and 16 digits refused, at either end of the text.
+    '555 1234-567ab', 'x5550109999', '_5550109999', '+5550109999', 'a+5550109999', '(555) 010-9999.', '5550109999',
+    'on 2026-01-02 and 02/03/2024 and 1999.12.31', '555 123', '1234567890123456 x', 'tel 555-010-9999\nnext line',
+    # Card: Luhn-valid at 13, 16 and 19 digits, invalid, too long, inside a dash.
+    '4222222222222', '4111-1111-1111-1111', '4111 1111 1111 1112', '6011000990139424', '4111111111111111110',
+    '41111111111111111111', '-4111111111111111', '4111111111111111-',
+    # SSN: either side a digit or a dash, and clear.
+    '1123-45-6789', '123-45-67890', 'a123-45-6789', 'ssn:123-45-6789;',
+    # IP: a fifth part, a trailing dot then text or the end, an octet past 255.
+    '1.2.3.4.5', 'at 1.2.3.4. Then', 'ended 1.2.3.4.', '1.2.3.400', '256.1.1.1', '.10.0.0.1', '10.0.0.1x',
+    # IBAN: valid with and without spaces, the shortest country, a bad check, glued to a word.
+    'GB82WEST12345698765432', 'NO9386011117947', 'GB83WEST12345698765432', 'XGB82WEST12345698765432', 'pay DE89 3704 0044 0532 0130 00 now',
+    # Email: the shortest, near misses, two at once.
+    'a@b.co', '@example.com', 'ann@@example.com', 'ann@example', 'x.y+z@a-b.example.org,q@r.st',
+    '7' * 300, '1-' * 150, '9 ' * 150,
+    # Python's to mask: text in other scripts.
+    'olá, 123-45-6789', 'ssn ١٢٣-٤٥-٦٧٨٩', 'card ４１１１ １１１１ １１１１ １１１１',
     ]
+
+REDACT_COMBINATIONS = [('redact', {}), ('redact', {'replacement': 'mask'}), ('redact', {'detect': ['phone', 'card']}),
+                       ('redact', {'replacement': 'mask', 'detect': ['ssn', 'ip', 'iban', 'email']})]
 
 
 COORDINATES = [51.50135, -0.14189, 0.0, 89.9999, -89.9999, 179.9999, -180.0, decimal.Decimal('38.722300'), decimal.Decimal('-9.1'), 7]
@@ -208,7 +244,7 @@ def pythonOnlyVectors() -> dict:
     for name, options, values in [
             ('dateShift', {}, DATES), ('dateShift', {'maxDays': 10}, DATES),
             ('ip', {}, IP_ADDRESSES), ('ip', {'keepPrefix': 16}, IP_ADDRESSES),
-            ('redact', {}, REDACT_TEXTS), ('redact', {'replacement': 'mask'}, REDACT_TEXTS),
+            # patterns, which only Python matches.
             ('redact', {'replacement': 'mask', 'detect': ['email'], 'patterns': [r'ACC-\d{6}']}, REDACT_TEXTS),
             # normalize runs in Python before either implementation masks.
             ('key', {'normalize': ['strip', 'lower', 'integer']}, NORMALIZED_TEXTS),

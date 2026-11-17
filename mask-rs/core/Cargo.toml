@@ -11,6 +11,9 @@ aes = "0.9"
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
+# redact's detectors. Python's lookarounds are written out around it rather
+# than taken from a backtracking engine, which was slower than Python's own.
+regex = { version = "1.11", default-features = false, features = ["std", "perf"] }
 ring = "0.17.14"
 
 [dev-dependencies]

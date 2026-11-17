@@ -50,7 +50,7 @@ Releases build every wheel from source on CI, so this is a local trap only. The 
 
 `--release` matters: two tests measure SHA-256 and AES throughput to catch a backend that fell back to software, which a debug build is indistinguishable from. `cargo test` covers `bauta-core`; the extension crate needs a Python interpreter to link, so it's tested from Python, by `tests/masking/test_nativeMasking.py`.
 
-**Python is the reference.** Change masking in Python first, port it, then regenerate the vectors with `python3 mask-rs/generate_vectors.py`. `tests/masking/test_maskVectors.py` fails if Python drifts from the recorded file, so regenerating it is deliberate: it means every masked value has changed. The file records the strategies only Python implements too -- `dateShift`, `shuffle` and `redact`, under `pythonOnly` -- which no port reads: they are there so that changing one of those masks fails the same test. Run the suite both ways, as CI does:
+**Python is the reference.** Change masking in Python first, port it, then regenerate the vectors with `python3 mask-rs/generate_vectors.py`. `tests/masking/test_maskVectors.py` fails if Python drifts from the recorded file, so regenerating it is deliberate: it means every masked value has changed. The file records the strategies only Python implements too -- `dateShift`, `shuffle` and `redact` with `patterns`, under `pythonOnly` -- which no port reads: they are there so that changing one of those masks fails the same test. Run the suite both ways, as CI does:
 
 ```
 pytest                              # with the extension, if installed

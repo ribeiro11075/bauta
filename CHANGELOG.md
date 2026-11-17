@@ -5,6 +5,16 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## Unreleased
+
+No mask changes.
+
+### Changed
+- **The native masker covers `redact`**, five to fifteen times as fast on one thread, and spread over `maskingThreads` like the other strategies it covers: notes a third of which hold an identifier mask at 0.6 microseconds each rather than 8.6. It finds exactly what Python finds: the vectors and a test over 20,000 generated texts under four policies compare the two. Text outside ASCII and a policy with `patterns` of its own are still masked in Python.
+
+### Fixed
+- **`redact` in Python takes time in proportion to a long run of digits or letters**, where it took time quadratic in it: one value of 50,000 digits took three seconds. The search for an email address now starts only where the text holds an @.
+
 ## 0.2.9 — 2026-11-10
 
 Jobs can read tables of files, Studio's failures keep values out of its logs and activity, and its tables now upgrade in place. No mask changes.

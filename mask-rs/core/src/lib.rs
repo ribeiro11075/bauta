@@ -20,6 +20,7 @@ pub mod fpe;
 pub mod key;
 pub mod keyed_hash;
 pub mod number;
+pub mod redact;
 
 pub use ff1::Ff1;
 pub use fpe::FpeStrategy;
@@ -28,3 +29,4 @@ pub use fake::{FakeKind, FakeLists, FakeStrategy};
 pub use key::{Charset, KeyStrategy};
 pub use keyed_hash::KeyedHash;
 pub use number::{NumberInput, NumberOutput, NumberStrategy};
+pub use redact::{RedactStrategy, Replacement};

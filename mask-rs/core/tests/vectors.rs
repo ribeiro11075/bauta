@@ -435,3 +435,47 @@ fn number_strategy_matches_python() {
     assert!(compared > 100, "only {compared} number vectors compared");
     println!("number: {compared} vectors compared, {handedBack} handed back to Python");
 }
+
+/// `redact` over free text chosen where the port writes Python's lookarounds
+/// out by hand. Only text is Rust's: anything else, and text outside ASCII, is
+/// handed back, and the count of those is asserted so the fallback can't
+/// quietly swallow the suite.
+#[test]
+fn redact_strategy_matches_python() {
+    use bauta_core::{MaskError, RedactStrategy, Replacement};
+
+    let vectors = vectors();
+    let hash = keyedHash(&vectors);
+    let mut compared = 0;
+    let mut handedBack = 0;
+
+    for (name, cases) in vectors["strategies"].as_object().unwrap() {
+        let Some(options) = name.strip_prefix("redact ") else { continue };
+        let options: Value = serde_json::from_str(options).unwrap();
+        let detect: Option<Vec<String>> =
+            options.get("detect").map(|kinds| kinds.as_array().unwrap().iter().map(|kind| kind.as_str().unwrap().to_owned()).collect());
+        let replacement = Replacement::parse(options.get("replacement").and_then(Value::as_str).unwrap_or("label")).unwrap();
+        let strategy = RedactStrategy::new(detect.as_deref(), replacement).unwrap();
+
+        for case in cases.as_array().unwrap() {
+            let (Some("str"), Some(value)) = (case["type"].as_str(), case["value"].as_str()) else { continue };
+
+            match strategy.mask(&hash, value) {
+                Err(MaskError::Unsupported) => {
+                    assert!(!value.is_ascii(), "{name}: handed back ASCII text {value:?}, which it should mask");
+                    handedBack += 1;
+                }
+                Err(other) => panic!("{name}: refused {value:?}: {other}"),
+                Ok(masked) => {
+                    let expected = case["masked"].as_str().unwrap_or_else(|| panic!("{name}: Python refused {value:?}, Rust masked it"));
+                    assert_eq!(masked, expected, "{name}: {value:?}");
+                    compared += 1;
+                }
+            }
+        }
+    }
+
+    assert!(compared > 150, "only {compared} redact vectors compared");
+    assert!(handedBack > 0, "the non-ASCII fallback was never exercised");
+    println!("redact: {compared} vectors compared, {handedBack} handed back to Python");
+}

@@ -101,12 +101,23 @@ So:
 
 ## What it covers
 
-`key`, `fpe`, `hash`, `email`, `digits`, `number`, and the `fake*` strategies,
-which pick from the lists Python passes in when a masker is built -- so the
-lists are defined once, in Python, and the vectors record them. `number`
-(core/src/number.rs) reproduces Python's `decimal` arithmetic at 60 digits for
-the operations it uses, and hands back zeros, non-finite values and anything
-that would take Python's rounding past what it reproduces. Everything else
-stays in Python: `redact` needs lookbehind that Rust's regex engine doesn't
-offer, `shuffle`, `dateShift`, `keep`, `null` and `constant` are already
-cheap, and custom strategies are Python by definition.
+`key`, `fpe`, `hash`, `email`, `digits`, `number`, `redact`, and the `fake*`
+strategies, which pick from the lists Python passes in when a masker is built
+-- so the lists are defined once, in Python, and the vectors record them.
+`number` (core/src/number.rs) reproduces Python's `decimal` arithmetic at 60
+digits for the operations it uses, and hands back zeros, non-finite values and
+anything that would take Python's rounding past what it reproduces.
+
+`redact` (core/src/redact.rs) finds what Python's six regular expressions find,
+on the `regex` crate, which has no lookaround. Each lookbehind is checked by
+hand against the character before a match, and each lookahead is one more
+character the pattern consumes and trims off again, which leftmost-first
+matching settles on where Python's backtracking does. `fancy-regex`, which has
+lookaround, was slower than Python. Text outside ASCII goes back to Python, and
+so does a policy with `patterns` of its own, whose regular expressions only
+Python's `re` is sure to read as Python does.
+
+Everything else stays in Python: `shuffle`, `dateShift`, `keep`, `null` and
+`constant` are already cheap -- `dateShift` derives one shift per day, and a
+column holds a few thousand days -- and custom strategies are Python by
+definition.

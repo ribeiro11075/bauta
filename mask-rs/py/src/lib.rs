@@ -31,7 +31,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods, PyFloat, PyInt, PyList, PyListMethods, PyString, PyTuple, PyTupleMethods, PyType};
 
 use bauta_core::cheap;
-use bauta_core::{Charset, FakeKind, FakeLists, FakeStrategy, FpeStrategy, KeyStrategy, KeyedHash, MaskError, NumberInput, NumberOutput, NumberStrategy};
+use bauta_core::{Charset, FakeKind, FakeLists, FakeStrategy, FpeStrategy, KeyStrategy, KeyedHash, MaskError, NumberInput, NumberOutput, NumberStrategy, RedactStrategy, Replacement};
 
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -105,6 +105,7 @@ enum Strategy {
     Digits { keepLeading: usize, keepTrailing: usize },
     Fake(Box<FakeStrategy>),
     Number(Box<NumberStrategy>),
+    Redact(Box<RedactStrategy>),
 }
 
 impl Strategy {
@@ -118,6 +119,7 @@ impl Strategy {
             Strategy::Digits { .. } => "digits",
             Strategy::Fake(_) => "fake",
             Strategy::Number(_) => "number",
+            Strategy::Redact(_) => "redact",
         }
     }
 
@@ -139,6 +141,11 @@ impl Strategy {
             // its script, and an integer's decimal digits.
             (Strategy::Fake(strategy), Input::Text(value)) => Ok(Output::Text(strategy.mask(hash, value.as_bytes()))),
             (Strategy::Fake(strategy), Input::Int(value)) => Ok(Output::Text(strategy.mask(hash, value.to_string().as_bytes()))),
+
+            // redact reads text alone here: a JSON document or an address
+            // Python turns into text first, and refuses the rest by type name.
+            (Strategy::Redact(strategy), Input::Text(value)) => strategy.mask(hash, value).map(Output::Text),
+            (Strategy::Redact(_), _) => return Output::Fallback,
 
             (Strategy::Digits { .. }, Input::Bool) => Err(MaskError::Refused(
                 "the digits strategy needs text or an integer, got bool".to_owned(),
@@ -356,6 +363,18 @@ impl Masker {
                     Strategy::Number(Box::new(
                         NumberStrategy::new(minimum.as_deref(), maximum.as_deref(), variance.as_deref(), decimals).map_err(PyValueError::new_err)?,
                     ))
+                }
+                None if other == "redact" => {
+                    let name = text("replacement", "label")?;
+                    let replacement = Replacement::parse(&name).ok_or_else(|| PyValueError::new_err(format!("unknown replacement {name:?}")))?;
+                    let detect = match options.get_item("detect")? {
+                        Some(value) if !value.is_none() => Some(value.extract::<Vec<String>>()?),
+                        _ => None,
+                    };
+                    if options.get_item("patterns")?.is_some() {
+                        return Err(PyValueError::new_err("redact's patterns are Python's to match"));
+                    }
+                    Strategy::Redact(Box::new(RedactStrategy::new(detect.as_deref(), replacement).map_err(PyValueError::new_err)?))
                 }
                 None => return Err(PyValueError::new_err(format!("no native masker for strategy {other:?}"))),
             },
