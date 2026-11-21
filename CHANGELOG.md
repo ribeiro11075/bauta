@@ -5,7 +5,7 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.11 — 2026-11-21
 
 The native masker no longer crashes Studio, a `--forever` run keeps a manifest of what it masked, DuckDB connections are locked down, MySQL upserts drop the deprecated `VALUES()`, and a dozen smaller fixes. No mask changes, though `dateShift` writes some ISO text back closer to how it came; see below.
 
