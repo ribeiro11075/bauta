@@ -11,6 +11,7 @@ The native masker no longer crashes Studio, a `--forever` run keeps a manifest o
 
 ### Breaking
 - **A DuckDB connection's queries reach no file outside its database.** DuckDB's SQL reads any file the process can, writes one with `COPY ... TO`, attaches databases and loads extensions; a query in the jobs files, one edited in Studio included, could reach the machine as bauta's account. Set `options: {enable_external_access: true}` on a connection whose queries are meant to read files.
+- **DuckDB must be 1.5.1 or later**, for that: 1.5.0 refused the database's own write-ahead log once queries were refused files.
 - **A `readOnly` DuckDB connection opens its file read-only**, so DuckDB refuses a write too: a `sourceQuery` such as `DELETE ... RETURNING` emptied the table it read.
 - **A relative `${file:...}` is read beside the file that names it**, as every other path in a file is, rather than from the working directory, where cron and a shell found different files.
 - **MySQL must be 8.0.19 or later.** An upsert names the row it inserts, as `AS bauta_new`, where it read `VALUES(column)`, which MySQL has deprecated since 8.0.20; a connection to an older server is refused as it opens. MySQL 8.0 itself reached the end of its support in April 2026. MariaDB, which has no row alias and doesn't deprecate `VALUES()`, is unchanged.
