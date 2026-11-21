@@ -22,42 +22,59 @@ from ..jobs.runner import RunResult, runDataJobs
 from ..jobs.status import RunStatus
 from ..project import dryRunProblems, lockFileFor, runningDirectoryFor
 from ..log.scrubbing import describeError
-from .common import (DEFAULT_TABLES, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, NOTIFY_URL_VARIABLE, _refuseReadOnlyLocations, Location,
-                     UsageError, _describeLocation, _discoveryRulesFile, _history, _loadConnections,
-                     _loadDataJobs, _memoryBackend, _memoryLocation, _readJobs, _loadProject, _resolveConfigurationPaths, _resolveLocation, _selectJobs, _settingsFor,
-                     _toolVersion)
+from ..project import describeLocation, openHistory, readJobs, settingsFor, toolVersion
+from .common import (DEFAULT_TABLES, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, NOTIFY_URL_VARIABLE, _refuseReadOnlyLocations,
+                     Location, UsageError, _discoveryRulesFile, _loadConnections, _loadDataJobs, _memoryBackend, _memoryLocation, _loadProject,
+                     _resolveConfigurationPaths, _resolveLocation, _selectJobs)
 
 
-def _cycleReporter(arguments: argparse.Namespace, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig],
-                   log: Log) -> Optional[Callable[[RunResult], None]]:
-    """What `run` does as each cycle ends: history and notifications, as the
-    flags and the jobs file ask. None if they ask for nothing.
+class _CycleReporter:
+    """What `run` does as each cycle ends: history, the masking manifest and
+    notifications, as the flags and the jobs file ask. Each is independent:
+    one failing mustn't cost the others.
+
+    The manifest is written as each cycle ends, so a --forever run records
+    every cycle that ran a job, rather than only the last one, at exit -- an
+    idle cycle, or the one a signal ended. A cycle that decided no job
+    writes none, and leaves the last one standing. `manifestFailed` says one
+    couldn't be written, which fails the run: it is the evidence.
     """
 
-    from ..jobs.reporting import RunHistory, notify, runIdOf
+    def __init__(self, arguments: argparse.Namespace, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig],
+                 log: Log) -> None:
+        from ..jobs.reporting import RunHistory
 
-    historyLocation = _resolveLocation(arguments, 'history', jobsFile.history)
-    history: Optional[RunHistory] = _history(historyLocation, connectionConfiguration) if historyLocation else None
+        self.arguments, self.jobsFile, self.connectionConfiguration, self.log = arguments, jobsFile, connectionConfiguration, log
+        historyLocation = _resolveLocation(arguments, 'history', jobsFile.history)
+        self.history: Optional[RunHistory] = openHistory(historyLocation, connectionConfiguration) if historyLocation else None
+        self.manifestLocation = _resolveLocation(arguments, 'manifest', jobsFile.manifest)
+        self.notifyUrl = arguments.notify_url or os.environ.get(NOTIFY_URL_VARIABLE)
+        self.manifestFailed = False
 
-    notifyUrl = arguments.notify_url or os.environ.get(NOTIFY_URL_VARIABLE)
 
-    if not (history or notifyUrl):
-        return None
+    def _attempt(self, what: str, step: Callable[[], Any]) -> bool:
 
-    def attempt(what: str, step: Callable[[], Any]) -> None:
-        # Each is independent: one failing mustn't cost the others.
         try:
             step()
+            return True
         except Exception as error:
-            log.logging.error('Could not {}: {}'.format(what, describeError(error)))
+            self.log.logging.error('Could not {}: {}'.format(what, describeError(error)))
+            return False
 
-    def report(result: RunResult) -> None:
+
+    def __call__(self, result: RunResult) -> None:
+
+        from ..jobs.reporting import notify, runIdOf
+
+        history, manifestLocation, notifyUrl = self.history, self.manifestLocation, self.notifyUrl
         if history is not None:
-            attempt('record the run history', lambda: history.append(result, runIdOf(result)))
+            self._attempt('record the run history', lambda: history.append(result, runIdOf(result)))
+        if manifestLocation is not None and result.outcomes:
+            written = self._attempt('write the masking manifest', lambda: _writeManifest(manifestLocation, result, self.jobsFile,
+                                                                                       self.connectionConfiguration, self.arguments, self.log))
+            self.manifestFailed = self.manifestFailed or not written
         if notifyUrl:
-            attempt('send the notification', lambda: notify(notifyUrl, result, always=arguments.notify_on == 'always'))
-
-    return report
+            self._attempt('send the notification', lambda: notify(notifyUrl, result, always=self.arguments.notify_on == 'always'))
 
 
 def _applyJobSelection(jobsFile: DataJobsFile, arguments: argparse.Namespace, log: Log) -> DataJobsFile:
@@ -110,6 +127,7 @@ def _commandRun(arguments: argparse.Namespace, log: Log) -> int:
     _refuseReadOnlyLocations(arguments, jobsFile, connectionConfiguration)
     memory, lockFile = _memoryBackend(arguments, jobsFile, connectionConfiguration)
     lockFile.parent.mkdir(parents=True, exist_ok=True)
+    reporter = _CycleReporter(arguments, jobsFile, connectionConfiguration, log)
 
     try:
         # A --job run locks only its jobs, so an orchestrator's task per job can run side by side.
@@ -118,17 +136,17 @@ def _commandRun(arguments: argparse.Namespace, log: Log) -> int:
                                  memory=memory, runForever=arguments.forever,
                                  logLevel=getattr(logging, arguments.log_level.upper()), logFormat=arguments.log_format,
                                  acceptKeyChange=arguments.accept_key_change,
-                                 onCycle=_cycleReporter(arguments, jobsFile, connectionConfiguration, log),
+                                 onCycle=reporter,
                                  onProgress=RunStatus(runningDirectoryFor(lockFile)))
     except RunInProgressError as error:
         log.logging.error(str(error))
         return EXIT_JOBS_DID_NOT_SUCCEED
 
-    manifestLocation = _resolveLocation(arguments, 'manifest', jobsFile.manifest)
-    if manifestLocation:
-        _writeManifest(manifestLocation, result, jobsFile, connectionConfiguration, arguments, log)
+    exitCode = _reportRun(result, log)
+    if reporter.manifestFailed and exitCode == EXIT_SUCCESS:
+        return EXIT_JOBS_DID_NOT_SUCCEED
 
-    return _reportRun(result, log)
+    return exitCode
 
 
 def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig],
@@ -141,11 +159,11 @@ def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile
     jobsPath, _ = _resolveConfigurationPaths(arguments)
     manifest = result.maskingManifest(jobsFile.jobs)
     configuration: Dict[str, Any] = {'jobsFile': str(jobsPath), 'sha256': hashlib.sha256(jobsPath.read_bytes()).hexdigest()}
-    included = _readJobs(jobsPath).files[1:]
+    included = readJobs(jobsPath).files[1:]
     if included:
         # Each file's digest, since the jobs file's alone no longer says what ran.
         configuration['includes'] = [{'file': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in included]
-    manifest.update(tool={'name': 'bauta', 'version': _toolVersion()}, configuration=configuration)
+    manifest.update(tool={'name': 'bauta', 'version': toolVersion()}, configuration=configuration)
 
     signingKey = os.environ.get(arguments.manifest_key_variable)
 
@@ -167,8 +185,8 @@ def _writeManifest(location: Location, result: RunResult, jobsFile: DataJobsFile
 
         runId = runIdOf(result)
         manifest = sealManifest(manifest, signingKey=signingKey)
-        DatabaseManifests(_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['manifest']).write(manifest, runId)
-        where = '{}, run {}'.format(_describeLocation(location), runId)
+        DatabaseManifests(settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['manifest']).write(manifest, runId)
+        where = '{}, run {}'.format(describeLocation(location), runId)
 
     log.logging.info('Wrote the masking manifest for {} job(s) to {}, {}'.format(
         len(manifest['jobs']), where, 'signed' if signingKey else 'unsigned (set ${} to sign it)'.format(arguments.manifest_key_variable)))
@@ -286,14 +304,14 @@ def _readManifest(arguments: argparse.Namespace) -> Tuple[str, Dict[str, Any]]:
 
     assert location is not None
     try:
-        runId, manifest = DatabaseManifests(_settingsFor(location, connectionConfiguration, writing=False),
+        runId, manifest = DatabaseManifests(settingsFor(location, connectionConfiguration, writing=False),
                                             table=location.table or DEFAULT_TABLES['manifest']).read(arguments.run)
     except KeyError as error:
         raise UsageError(error.args[0]) from error
     except ValueError as error:
-        raise UsageError('the manifest in {} is not valid JSON: {}'.format(_describeLocation(location), error)) from error
+        raise UsageError('the manifest in {} is not valid JSON: {}'.format(describeLocation(location), error)) from error
 
-    return 'run {} in {}'.format(runId, _describeLocation(location)), manifest
+    return 'run {} in {}'.format(runId, describeLocation(location)), manifest
 
 
 def _commandVerifyManifest(arguments: argparse.Namespace, log: Log) -> int:
@@ -355,17 +373,17 @@ def _commandValidate(arguments: argparse.Namespace, log: Log) -> int:
 
     print('configuration is valid: {} connection(s), {} job(s)'.format(len(connectionConfiguration), len(jobsFile.jobs)))
     jobsPath, _ = _resolveConfigurationPaths(arguments)
-    document = _readJobs(jobsPath)
+    document = readJobs(jobsPath)
     if len(document.files) > 1:
         counts = {path: 0 for path in document.files}
         for path in document.origins.values():
             counts[path] += 1
         print('jobs from {} file(s): {}'.format(len(counts), ', '.join('{} ({})'.format(path, count) for path, count in counts.items())))
     _refuseReadOnlyLocations(arguments, jobsFile, connectionConfiguration)
-    print('run state: {}'.format(_describeLocation(_memoryLocation(arguments, jobsFile))))
+    print('run state: {}'.format(describeLocation(_memoryLocation(arguments, jobsFile))))
     for setting, missing in (('history', 'not recorded'), ('manifest', 'not written')):
         location = _resolveLocation(arguments, setting, getattr(jobsFile, setting))
-        print('{}: {}'.format(setting, _describeLocation(location) if location else missing))
+        print('{}: {}'.format(setting, describeLocation(location) if location else missing))
 
     from ..masking import MASKING_THREADS_VARIABLE, availableCores, maskingThreadsFor, nativeUnavailableReason, nativeVersion
 
@@ -430,7 +448,7 @@ def _commandHistory(arguments: argparse.Namespace, log: Log) -> int:
             raise UsageError('name the history to read: --history FILE, --history-connection ALIAS, or `history` in the jobs file')
 
     assert location is not None
-    history = _history(location, connectionConfiguration, writing=False)
+    history = openHistory(location, connectionConfiguration, writing=False)
 
     records = history.read(limit=arguments.limit, job=arguments.job)
     sys.stdout.write(json.dumps(records, indent=2) + '\n' if arguments.format == 'json' else renderHistory(records))

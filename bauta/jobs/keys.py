@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, InsertStrategy
+from ..configuration import ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, IcebergConnection, InsertStrategy
 from ..database import Database
 from ..log import LOGGER_NAME
 from ..log.scrubbing import describeError
@@ -59,11 +59,27 @@ def _maskedPrimaryKeyColumns(jobConfig: DataJobConfig, primaryKeyColumns: Sequen
             if (policy := policyFor(column, masking.columns, masking.defaultStrategy)) is not None and changesValues(policy)]
 
 
+def _matchedBy(jobConfig: DataJobConfig, settings: ConnectionConfig) -> List[str]:
+    """The columns an upsert into the job's target matches rows by: a
+    table's primary key, or an Iceberg table's targetKey or identifier fields.
+    """
+
+    if isinstance(settings, IcebergConnection):
+        if jobConfig.targetKey:
+            return list(jobConfig.targetKey)
+        from ..lake.iceberg import identifierFields
+
+        return identifierFields(settings, jobConfig.targetTableFinal)
+
+    with Database(connectionSettings=settings) as database:
+        return database.getPrimaryColumnNames(table=jobConfig.targetTableFinal)
+
+
 def _refuseAcceptedKeyChangeThatWouldDuplicateRows(changed: Sequence[Tuple[str, DataJobConfig]],
                                                    connectionConfiguration: Mapping[str, ConnectionConfig]) -> None:
     """--accept-key-change is safe only where the masked rows still match the
-    ones already loaded. Where the policy masks the target's primary key, they
-    cannot: the run inserts a second generation of rows beside the first, and
+    ones already loaded. Where the policy masks what the upsert matches rows
+    by -- a table's primary key, an Iceberg table's key -- they cannot: the run inserts a second generation of rows beside the first, and
     where a new key collides with an old one it overwrites a different row.
 
     Only the jobs whose key actually changed are checked, so a run with no
@@ -77,8 +93,7 @@ def _refuseAcceptedKeyChangeThatWouldDuplicateRows(changed: Sequence[Tuple[str, 
         if settings is None:
             continue
         try:
-            with Database(connectionSettings=settings) as database:
-                primaryKeyColumns = database.getPrimaryColumnNames(table=jobConfig.targetTableFinal)
+            primaryKeyColumns = _matchedBy(jobConfig, settings)
         except Exception as error:
             logger.warning('{}: could not check whether the masking key change is safe to accept -- {}'.format(name, describeError(error)))
             continue
@@ -89,7 +104,7 @@ def _refuseAcceptedKeyChangeThatWouldDuplicateRows(changed: Sequence[Tuple[str, 
 
     if refused:
         raise ConfigurationError(
-            'the masking key changed for upsert job(s) {}, whose policy masks the primary key of the table they load. A new key '
+            'the masking key changed for upsert job(s) {}, whose policy masks the primary key of the table they load, or its Iceberg key. A new key '
             'gives those rows new primary keys, so the run would insert a second generation beside the first rather than update '
             'it -- and where a new key lands on an old one, overwrite a different row. --accept-key-change cannot make that safe. '
             'Empty those targets with `bauta clear`, which also forgets the old key, and run again'.format(', '.join(refused)))

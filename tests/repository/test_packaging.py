@@ -10,6 +10,7 @@ The native masker is the exception: masking.py uses it only at bauta's own
 version, so the `native` extra pins exactly that, and both are released from
 one tag.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -25,6 +26,8 @@ else:
 ROOT = Path(__file__).resolve().parents[2]
 PROJECT = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']
 NATIVE_VERSION = tomllib.loads((ROOT / 'mask-rs' / 'Cargo.toml').read_text())['workspace']['package']['version']
+# The one place bauta's version is written; pyproject.toml reads it.
+VERSION = re.search(r"^__version__ = '([^']+)'$", (ROOT / 'bauta' / '_version.py').read_text(), re.MULTILINE).group(1)
 
 
 def _requirements():
@@ -79,12 +82,23 @@ def test_the_image_pins_everything_within_the_ranges():
         assert requirement.specifier.contains(pins[name]), '{}=={} is outside {}'.format(name, pins[name], requirement)
 
 
+def test_the_package_is_built_at_the_version_bauta_reads():
+    """One version, in bauta/_version.py: what pip installs is what bauta
+    reports, and compares the native masker's against.
+    """
+    import bauta
+
+    assert PROJECT['dynamic'] == ['version'] and 'version' not in PROJECT
+    assert tomllib.loads((ROOT / 'pyproject.toml').read_text())['tool']['setuptools']['dynamic']['version'] == {'attr': 'bauta._version.__version__'}
+    assert bauta.__version__ == VERSION
+
+
 def test_the_native_masker_is_released_at_bauta_s_version():
-    assert NATIVE_VERSION == PROJECT['version']
+    assert NATIVE_VERSION == VERSION
 
 
 def test_the_native_extra_pins_exactly_that_version():
     (requirement,) = [Requirement(text) for text in PROJECT['optional-dependencies']['native']]
 
     assert requirement.name == 'bauta-rs'
-    assert str(requirement.specifier) == '=={}'.format(PROJECT['version'])
+    assert str(requirement.specifier) == '=={}'.format(VERSION)

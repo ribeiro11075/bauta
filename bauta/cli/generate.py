@@ -8,13 +8,15 @@ import datetime
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from ..configuration import isLake
+from ..configuration import ConnectionConfig, DataJobConfig, DataJobsFile, isLake
 from ..database import Database
+from ..jobs.memory import RunInProgressError, exclusiveRun
 from ..database.dialects import catalogTable
 from ..log import Log
 from ..log.scrubbing import describeError
-from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadConnections, _loadDataJobs, _loadProject, _memoryBackend,
-                     _requireDatabase, _selectJobs, _writeOutput)
+from ..project import requireDatabase
+from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadConnections, _loadDataJobs, _loadProject,
+                     _memoryBackend, _selectJobs, _writeOutput)
 
 
 def _generatedHeading(command: str, source: str, target: str) -> List[str]:
@@ -80,8 +82,8 @@ def _commandDiscover(arguments: argparse.Namespace, log: Log) -> int:
     connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
     target = arguments.target or arguments.connection
-    _requireDatabase(connectionConfiguration, arguments.connection)
-    targetSettings = _requireDatabase(connectionConfiguration, target)
+    requireDatabase(connectionConfiguration, arguments.connection)
+    targetSettings = requireDatabase(connectionConfiguration, target)
 
     drafts = []
     with Database(connectionSettings=connectionConfiguration[arguments.connection]) as database:
@@ -186,8 +188,8 @@ def _commandSubset(arguments: argparse.Namespace, log: Log) -> int:
 
     connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
-    _requireDatabase(connectionConfiguration, arguments.connection)
-    targetSettings = _requireDatabase(connectionConfiguration, arguments.target)
+    requireDatabase(connectionConfiguration, arguments.connection)
+    targetSettings = requireDatabase(connectionConfiguration, arguments.target)
 
     if arguments.target == arguments.connection:
         raise UsageError('--target must differ from --connection: a subset is loaded into another database, not over its source')
@@ -241,8 +243,8 @@ def _commandSchema(arguments: argparse.Namespace, log: Log) -> int:
     if arguments.all_tables and arguments.related:
         raise UsageError('--related adds the tables related to --table; --all-tables already takes every table')
     connectionConfiguration = _loadConnections(arguments)
-    sourceSettings = _requireDatabase(connectionConfiguration, arguments.connection)
-    targetSettings = _requireDatabase(connectionConfiguration, arguments.target)
+    sourceSettings = requireDatabase(connectionConfiguration, arguments.connection)
+    targetSettings = requireDatabase(connectionConfiguration, arguments.target)
     stagesOnly = arguments.connection == arguments.target
 
     if stagesOnly and not arguments.stage_suffix:
@@ -341,12 +343,12 @@ def _commandSynthesize(arguments: argparse.Namespace, log: Log) -> int:
 
     connectionConfiguration = _loadConnections(arguments)
     rules = _discoveryRules(arguments)
-    _requireDatabase(connectionConfiguration, arguments.connection)
+    requireDatabase(connectionConfiguration, arguments.connection)
     requested = dict(_parseTableRows(arguments.table, arguments.rows))
     profiles: Dict[str, Any] = {}
     if arguments.profile:
         # Aggregates only -- see synthesize.profileTable -- read before anything is written.
-        _requireDatabase(connectionConfiguration, arguments.profile)
+        requireDatabase(connectionConfiguration, arguments.profile)
         with Database(connectionSettings=connectionConfiguration[arguments.profile]) as source:
             for table in requested:
                 try:
@@ -398,8 +400,6 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
     next run would reload only new rows into an empty table.
     """
 
-    from ..generate.schema import SchemaError, clearOrder, clearTables
-
     jobsFile, connectionConfiguration = _loadDataJobs(arguments)
     jobs = {name: job for name, job in _selectJobs(jobsFile.jobs, arguments.job, log).items() if job.active}
 
@@ -422,6 +422,29 @@ def _commandClear(arguments: argparse.Namespace, log: Log) -> int:
     if not arguments.dry_run and not arguments.yes:
         raise UsageError('clear deletes every row of {} table(s); pass --yes to do it, or --dry-run to see the plan'.format(
             sum(len(tables) for tables in tablesByDatabase.values())))
+
+    if arguments.dry_run:
+        return _clearTargets(arguments, jobsFile, connectionConfiguration, jobs, tablesByDatabase, log)
+
+    # Under the run lock, as a run of these jobs would take it, so a run
+    # can't be loading a table while it is emptied.
+    _, lockFile = _memoryBackend(arguments, jobsFile, connectionConfiguration)
+    lockFile.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with exclusiveRun(lockFile, jobs=sorted(jobs) if arguments.job else None):
+            return _clearTargets(arguments, jobsFile, connectionConfiguration, jobs, tablesByDatabase, log)
+    except RunInProgressError as error:
+        log.logging.error('{}; nothing was cleared'.format(error))
+        return EXIT_JOBS_DID_NOT_SUCCEED
+
+
+def _clearTargets(arguments: argparse.Namespace, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig],
+                  jobs: Dict[str, DataJobConfig], tablesByDatabase: Dict[str, List[str]], log: Log) -> int:
+    """Empties `tablesByDatabase`, or with --dry-run says how it would, and
+    forgets the masking key of each masked job emptied.
+    """
+
+    from ..generate.schema import SchemaError, clearOrder, clearTables
 
     for alias, tables in sorted(tablesByDatabase.items()):
         with Database(connectionSettings=connectionConfiguration[alias]) as database:

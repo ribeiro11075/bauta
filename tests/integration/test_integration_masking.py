@@ -214,13 +214,13 @@ def test_checking_a_masked_query_leaves_the_connection_usable(schema):
     MariaDB connections refusing the close itself, so --dry-run and
     audit --connect called every such job uncheckable.
     """
-    from bauta.cli.common import _Connections, _sourceQueryColumns
+    from bauta.database.sessions import Connections, sourceQueryColumns
 
     settings, database, names = schema
     jobsFile = _maskedJob(names['customers'], names['customers_copy'], {'id': 'keep'})
 
-    with _Connections({'db': settings}) as connections:
-        columns = _sourceQueryColumns(jobsFile.jobs['mask'], connections)
+    with Connections({'db': settings}) as connections:
+        columns = sourceQueryColumns(jobsFile.jobs['mask'], connections)
         # The same connection answers the next check, as a dry run asks it to.
         with connections.use('db') as reused:
             assert reused.getAllColumnNames(names['customers'])

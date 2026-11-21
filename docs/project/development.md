@@ -174,10 +174,10 @@ The `docs` extra pins exact versions, like `dev`: MkDocs 2 drops the plugins and
 
 **Actions are pinned to commits**, with the release each one is in a comment, so a tag moved in an action's repository can't change what the workflows run -- the release workflow publishes to PyPI. `dtolnay/rust-toolchain` names its toolchain with `toolchain: stable`, since it otherwise reads it from the ref, which a commit no longer spells. [Dependabot](../../.github/dependabot.yml) proposes updates weekly for the actions, `pyproject.toml` and the Rust crates. It leaves `constraints/` alone: `lowest.txt` must stay at the bottom of each range, and `image.txt` is one resolved set, regenerated whole with the command at its top, which Dependabot's pin-by-pin edits break. It also leaves `bauta-rs`, which must equal bauta's own version, and `num-bigint` below 0.5 until PyO3's `num-bigint` feature moves to it, since the extension's integers cross through PyO3's.
 
-`.github/workflows/release.yml` publishes a release when a tag matching the version in `pyproject.toml`, and in `mask-rs/Cargo.toml`, is pushed. Bump both, and the `native` extra's pin, together, and add the release to [CHANGELOG.md](../../CHANGELOG.md), breaking changes first:
+`.github/workflows/release.yml` publishes a release when a tag matching the version in `bauta/_version.py`, the one place bauta's is written, and in `mask-rs/Cargo.toml`, is pushed. Bump both, the `native` extra's pin in `pyproject.toml`, and the two packages in `mask-rs/Cargo.lock`, together, and add the release to [CHANGELOG.md](../../CHANGELOG.md), breaking changes first:
 
 ```
-git tag v0.1.3 && git push origin v0.1.3      # the version in pyproject.toml
+git tag v0.1.3 && git push origin v0.1.3      # the version in bauta/_version.py
 ```
 
 It builds and checks `bauta`'s sdist and wheel, and `bauta-rs`'s sdist and a wheel for each of Linux x86-64 and ARM and macOS Apple silicon and Intel, each on its own hardware. Each wheel is installed and the suite run against it, on the oldest and newest supported Python, before anything is published; so is a wheel built from the sdist. Then both go to PyPI together. PyPI publishing uses trusted publishing, so there is no token to store. Set it up once per project, before its first tag:

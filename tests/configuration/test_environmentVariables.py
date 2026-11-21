@@ -205,3 +205,21 @@ def test_a_short_secret_a_failing_command_printed_is_redacted_as_a_word():
     from bauta.configuration.environment import _withoutSecrets
 
     assert _withoutSecrets('password abc rejected; abcdef kept', 'abc') == 'password <redacted> rejected; abcdef kept'
+
+
+def test_a_relative_file_reference_is_read_beside_the_file_that_names_it(tmp_path, monkeypatch):
+    """As every path a configuration file names is: from the working
+    directory, cron and a shell found different secrets, or none.
+    """
+
+    from bauta.configuration import loadYamlFile
+
+    configuration = tmp_path / 'configuration'
+    (configuration / 'secrets').mkdir(parents=True)
+    (configuration / 'secrets' / 'key').write_text('from-beside-the-file\n')
+    (configuration / 'settings.yaml').write_text('key: ${file:secrets/key}\n')
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    assert loadYamlFile(configuration / 'settings.yaml') == {'key': 'from-beside-the-file'}

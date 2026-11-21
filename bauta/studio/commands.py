@@ -8,7 +8,7 @@ import sys
 
 from sqlalchemy import select
 
-from .settings import Settings
+from .settings import PRIVATE_DIRECTORY_MODE, Settings
 
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8710
@@ -27,7 +27,7 @@ def serve(arguments: argparse.Namespace) -> int:
     from .db import Database, User
 
     settings = _settings(arguments)
-    settings.dataDirectory.mkdir(parents=True, exist_ok=True)
+    settings.dataDirectory.mkdir(mode=PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
     app = createApp(settings)
     database = Database(settings.databaseUrl)
     try:
@@ -54,7 +54,7 @@ def createUser(arguments: argparse.Namespace) -> int:
     from .db import ROLES, Database, User
 
     settings = _settings(arguments)
-    settings.dataDirectory.mkdir(parents=True, exist_ok=True)
+    settings.dataDirectory.mkdir(mode=PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
     if arguments.role not in ROLES:
         print('--role must be one of {}'.format(', '.join(ROLES)), file=sys.stderr)
         return 2

@@ -1,6 +1,7 @@
 """Signing in, the accounts admins manage, and the activity log."""
 from __future__ import annotations
 
+import threading
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -8,13 +9,16 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..auth import PasswordCheckBusy, checkPassword, endSession, endSessionsOf, hashPassword, record, startSession, userFromRequest
+from ..auth import CSRF_HEADER, PasswordCheckBusy, checkPassword, endSession, endSessionsOf, hashPassword, record, startSession, userFromRequest
 from ..db import ADMIN, ROLES, VIEWER, Activity, User
 from .context import Context
 
 ACTIVITY_PAGE = 200
 # How long a browser is asked to wait when too many sign-ins are being checked.
 BUSY_RETRY_SECONDS = '5'
+# One change to an account at a time: two admins demoting each other at once
+# each counted the other as the admin who'd remain. Studio runs as one process.
+_changingAccounts = threading.Lock()
 
 
 class Login(BaseModel):
@@ -36,6 +40,12 @@ class UserChange(BaseModel):
     password: Optional[str] = None
 
 
+def _requireRole(role: str) -> None:
+
+    if role not in ROLES:
+        raise HTTPException(status_code=400, detail='role must be one of {}'.format(', '.join(ROLES)))
+
+
 def build(context: Context) -> APIRouter:
 
     router = APIRouter()
@@ -43,8 +53,8 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/auth/login')
     def login(body: Login, request: Request, response: Response, session: Session = Depends(sessions)) -> Dict[str, Any]:
-        if request.headers.get('X-Bauta-Studio') != '1':
-            raise HTTPException(status_code=403, detail='missing the X-Bauta-Studio header')
+        if request.headers.get(CSRF_HEADER) != '1':
+            raise HTTPException(status_code=403, detail='missing the {} header'.format(CSRF_HEADER))
         email = body.email.strip().lower()
         address = request.client.host if request.client is not None else ''
         if not throttle.allowed(email, address):
@@ -82,8 +92,7 @@ def build(context: Context) -> APIRouter:
     @router.post('/users')
     def addUser(body: NewUser, user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
         email = body.email.strip().lower()
-        if body.role not in ROLES:
-            raise HTTPException(status_code=400, detail='role must be one of {}'.format(', '.join(ROLES)))
+        _requireRole(body.role)
         if session.scalar(select(User).where(User.email == email)) is not None:
             raise HTTPException(status_code=409, detail='{} already has an account'.format(email))
         try:
@@ -98,13 +107,16 @@ def build(context: Context) -> APIRouter:
 
     @router.patch('/users/{userId}')
     def changeUser(userId: int, body: UserChange, user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        with _changingAccounts:
+            return _changeUser(userId, body, user, session)
+
+    def _changeUser(userId: int, body: UserChange, user: User, session: Session) -> Dict[str, Any]:
         found = session.get(User, userId)
         if found is None:
             raise HTTPException(status_code=404, detail='no such user')
         changes: Dict[str, Any] = {}
         if body.role is not None:
-            if body.role not in ROLES:
-                raise HTTPException(status_code=400, detail='role must be one of {}'.format(', '.join(ROLES)))
+            _requireRole(body.role)
             changes['role'] = found.role = body.role
         if body.name is not None:
             changes['name'] = found.name = body.name

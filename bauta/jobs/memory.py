@@ -230,8 +230,10 @@ class FileMemory(MemoryBackend):
         except FileNotFoundError:
             document = {}
 
-        if document and 'lastRun' not in document and 'watermarks' not in document:
-            return {'lastRun': document, 'watermarks': {}}
+        if document and not any(section in document for section in SECTIONS):
+            # Every section, so reading the key fingerprints of such a file,
+            # which every run does first, finds none rather than failing.
+            document = {'lastRun': document}
 
         for section in SECTIONS:
             document.setdefault(section, {})

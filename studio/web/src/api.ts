@@ -26,7 +26,14 @@ export async function api<T>(path: string, options: { method?: string; body?: un
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   })
   const text = await response.text()
-  const data = text ? JSON.parse(text) : {}
+  let data: { detail?: unknown } = {}
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    // Not Studio's answer: a proxy's error page, say, when Studio is down.
+    if (!response.ok) throw new ApiError(response.status, `the server answered ${response.status} ${response.statusText}`.trim())
+    throw new ApiError(response.status, 'the server answered with something other than JSON')
+  }
   if (!response.ok) throw new ApiError(response.status, data.detail)
   return data as T
 }

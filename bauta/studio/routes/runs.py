@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...project import toolVersion
 from .. import evidence, workspace
 from ..auth import record
 from ..db import Activity, LaunchedRun, User
@@ -114,15 +115,13 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/runs/{runId}/evidence')
     def runEvidence(runId: str, user: User = Depends(viewer), session: Session = Depends(sessions)) -> Response:
-        from ...cli.common import _toolVersion
-
         current = project()
         evidence.archiveManifest(session, current)
         _, history, _ = workspace.readHistory(current)
         detail = workspace.runDetail(current, history, runId)
         if detail is None:
             raise HTTPException(status_code=404, detail='no run {} in history or running now'.format(runId))
-        name, content = evidence.bundle(session, current, detail, _toolVersion())
+        name, content = evidence.bundle(session, current, detail, toolVersion())
         record(session, user, 'downloaded evidence', runId)
         session.commit()
         return Response(content, media_type='application/zip', headers={'Content-Disposition': 'attachment; filename="{}"'.format(name)})

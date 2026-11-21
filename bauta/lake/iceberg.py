@@ -456,6 +456,17 @@ class IcebergTarget(ColumnarTarget):
         self.catalog.close()
 
 
+def identifierFields(settings: IcebergConnection, table: str) -> List[str]:
+    """The identifier fields of `table`, as a job names it -- what an upsert
+    into it matches rows by when the job gives no targetKey.
+    """
+
+    with loadCatalog(settings) as catalog:
+        schema = catalog.load_table(settings.tableIdentifier(table)).schema()
+
+    return [schema.find_column_name(fieldId) for fieldId in schema.identifier_field_ids]
+
+
 def checkIcebergWritable(settings: IcebergConnection) -> None:
     """Raises unless the catalog answers and -- where the warehouse is a
     location -- a file can be written and deleted in it.

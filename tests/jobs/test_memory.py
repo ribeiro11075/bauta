@@ -439,3 +439,20 @@ def test_database_memory_reads_a_table_whose_name_needs_quoting(tmp_path):
         assert memory.readWatermarks() == {'loadOrders': 7}
         assert memory.readKeyFingerprints() == {'maskCustomers': 'abc123'}
         assert 'loadOrders' in memory.read()
+
+
+def test_a_bare_mapping_from_before_watermarks_reads_and_records_key_fingerprints(tmp_path):
+    """The old layout had no maskingKeys section, so reading the fingerprints
+    -- the first thing every run does -- raised KeyError, and so did every
+    write after it.
+    """
+
+    path = tmp_path / 'memory.yaml'
+    path.write_text('loadOrders: 1726400000.0\n')
+    memory = FileMemory(memoryFile=path)
+
+    assert memory.readKeyFingerprints() == {}
+    memory.recordKeyFingerprint('loadOrders', 'abc123')
+
+    assert memory.readKeyFingerprints() == {'loadOrders': 'abc123'}
+    assert memory.read() == {'loadOrders': 1726400000.0}

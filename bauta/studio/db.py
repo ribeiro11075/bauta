@@ -33,15 +33,18 @@ def utcnow() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
 
 
-def iso(value: Optional[datetime.datetime]) -> Optional[str]:
-    """A stored time as ISO 8601 in UTC. SQLite gives back times without their
-    zone, which a browser would read as its own; they were stored in UTC.
+def aware(value: datetime.datetime) -> datetime.datetime:
+    """A stored time with its zone. SQLite gives back times without it, which
+    would compare as local ones; they were stored in UTC.
     """
 
-    if value is None:
-        return None
+    return value if value.tzinfo else value.replace(tzinfo=datetime.timezone.utc)
 
-    return (value if value.tzinfo else value.replace(tzinfo=datetime.timezone.utc)).isoformat()
+
+def iso(value: Optional[datetime.datetime]) -> Optional[str]:
+    """A stored time as ISO 8601 in UTC, which a browser reads as such."""
+
+    return None if value is None else aware(value).isoformat()
 
 
 class Base(DeclarativeBase):

@@ -5,6 +5,41 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## Unreleased
+
+The native masker no longer crashes Studio, a `--forever` run keeps a manifest of what it masked, DuckDB connections are locked down, MySQL upserts drop the deprecated `VALUES()`, and a dozen smaller fixes. No mask changes, though `dateShift` writes some ISO text back closer to how it came; see below.
+
+### Breaking
+- **A DuckDB connection's queries reach no file outside its database.** DuckDB's SQL reads any file the process can, writes one with `COPY ... TO`, attaches databases and loads extensions; a query in the jobs files, one edited in Studio included, could reach the machine as bauta's account. Set `options: {enable_external_access: true}` on a connection whose queries are meant to read files.
+- **A `readOnly` DuckDB connection opens its file read-only**, so DuckDB refuses a write too: a `sourceQuery` such as `DELETE ... RETURNING` emptied the table it read.
+- **A relative `${file:...}` is read beside the file that names it**, as every other path in a file is, rather than from the working directory, where cron and a shell found different files.
+- **MySQL must be 8.0.19 or later.** An upsert names the row it inserts, as `AS bauta_new`, where it read `VALUES(column)`, which MySQL has deprecated since 8.0.20; a connection to an older server is refused as it opens. MySQL 8.0 itself reached the end of its support in April 2026. MariaDB, which has no row alias and doesn't deprecate `VALUES()`, is unchanged.
+- **Studio refuses an edit naming a masking strategy of your own from a module the jobs files don't already use**, as it refused a transform: naming a strategy imports its module, which ran before the check did. `BAUTA_STUDIO_TRANSFORM_MODULES` allows a module for both.
+
+### Fixed
+- **The native masker crashed the process when a thread other than the main one loaded it first** -- Studio on its first masked request, or an orchestrator running tasks in threads -- in the next thread to allocate. It allocates through mimalloc 2 now, which doesn't; masking is as fast. Every bauta-rs since 0.1.3, which began allocating through mimalloc, is affected.
+- **A `--forever` run's manifest lists what its cycles masked.** It was written once, as the run stopped, from its last cycle alone, usually an idle one, so it listed no job. The manifest is now written as each cycle that ran a job ends. A run whose cycle decided no job leaves the last manifest as it was, rather than writing one with no jobs over it.
+- **A signal during the pause between `--forever` cycles stops the run there.** It started one more cycle, which marked every due job skipped and reported that to history, the manifest and the webhook.
+- **A `--forever` cycle with nothing due logs at debug**, where it wrote two lines every `cycleSleepSeconds` all day.
+- **Run state in the layout from before watermarks no longer fails every run** on the missing `maskingKeys` section.
+- **`verify-references` counts the orphans of a key the target doesn't declare on a table named for a reserved word**, such as `order`, which failed as a syntax error, reported with its message redacted.
+- **A manifest kept in a table whose name needs quoting reads back**: the latest run was found, and its content then read from the name unquoted.
+- **`clear` holds the run lock**, so it can't empty a table a run of the same jobs is loading.
+- **Scrubbing a driver's message takes time in proportion to it.** One naming many tables or quoting many values on many lines took time quadratic in them: 16,000 names, over a minute.
+- **bauta reports its own version, from `bauta/_version.py`**, which `pyproject.toml` now reads too, rather than what pip recorded: an editable install kept the version it was installed at, so manifests and `bauta --version` named an older one, and the native masker of an older version was used as if it matched.
+- **`dateShift` keeps ISO text as it was written but for its date**: `.5` was written back as `.500000` and `Z` as `+00:00`, and on Python 3.10 neither could be read at all, failing the job.
+- **`--accept-key-change` checks an Iceberg upsert's key**, its `targetKey` or the table's identifier fields, as it does a table's primary key, where it only warned that it couldn't.
+- **Studio:**
+  - It reuses the loaded configuration until one of its files changes, where every request and every page's polling read and validated it again: a fifth of a second for 500 masked jobs.
+  - A job measured, or a database checked, before 200 other checks no longer shows as never measured or checked.
+  - An edit spanning several files, as accepting discovery's proposals makes, is written whole or not at all.
+  - A run started before Studio restarted no longer shows as running because another process took its id.
+  - A finished run is no longer left a zombie process until someone opens its page.
+  - Two admins demoting each other at once can no longer leave no admin.
+  - A jobs file is on disk before it takes the old one's place, and the data directory, run logs and backups are created readable by Studio's account alone.
+  - A failed benchmark's message is scrubbed, as everything else Studio keeps is.
+  - The web app says what went wrong when a proxy answers in Studio's place, rather than failing to read the answer.
+
 ## 0.2.10 — 2026-11-16
 
 `redact` masks natively, five to fifteen times as fast, and in time proportional to its text in Python too. No mask changes.

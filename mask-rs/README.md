@@ -55,7 +55,9 @@ Python layer sets per process (`setThreads`) from `jobs.yaml`'s
 result. `availableCores()` reads a container's CPU quota, which Python's
 `os.cpu_count()` doesn't. `key`, `fpe` and the `fake*` strategies also remember
 masks across chunks. The extension allocates through mimalloc: the system
-allocators serialise masking's many small allocations across threads.
+allocators serialise masking's many small allocations across threads. It is
+mimalloc 2, not the crate's default 3, which crashed the process once a
+thread other than Python's main one had loaded the extension.
 
 ## Machine integers where they fit
 

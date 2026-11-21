@@ -196,9 +196,9 @@ It's wrong too when the dependent's table references the predecessor's: in the c
 */5 * * * *  cd /srv/etl && bauta run
 ```
 
-`--forever` keeps the process resident, for freshness below cron's one-minute floor or where there's no scheduler.
+`--forever` keeps the process resident, for freshness below cron's one-minute floor or where there's no scheduler. History, the masking manifest and notifications are written as each cycle ends, so the manifest is always that of the latest cycle that ran a job; a cycle with nothing due writes none, and says it started and finished only at `--log-level debug`.
 
-**Stopping.** On `SIGINT` or `SIGTERM`, a run starts no new jobs, lets the running ones finish, reports the rest as skipped, and exits with status 130. Killing jobs mid-load instead would leave a streaming cursor or a half-loaded table for the database to clean up. A container's grace period has to cover the longest job for this to finish; give long jobs a `timeoutSeconds` shorter than that grace period, so a hung one can't hold the shutdown. Between `--forever` cycles, a signal ends the pause within a second, however long `cycleSleepSeconds` is.
+**Stopping.** On `SIGINT` or `SIGTERM`, a run starts no new jobs, lets the running ones finish, reports the rest as skipped, and exits with status 130. Killing jobs mid-load instead would leave a streaming cursor or a half-loaded table for the database to clean up. A container's grace period has to cover the longest job for this to finish; give long jobs a `timeoutSeconds` shorter than that grace period, so a hung one can't hold the shutdown. Between `--forever` cycles, a signal ends the pause within a second, however long `cycleSleepSeconds` is, and the run stops there: no cycle starts only to mark its jobs skipped.
 
 **Overlapping runs.** `run` holds a lock (`memory.yaml.run.lock`, beside the run state file; see [run state](../guides/run-on-a-schedule.md#run-state) for run state in a table) for as long as it runs. A second invocation sharing that memory file exits with status 1 instead of running the same jobs at the same time, which a cron interval shorter than a slow run would otherwise cause. The operating system releases the lock if the process dies.
 

@@ -11,7 +11,6 @@ of the suite runs in that configuration.
 """
 import datetime
 import decimal
-import importlib.metadata
 import logging
 import math
 import random
@@ -21,12 +20,38 @@ import uuid
 
 import pytest
 
+import bauta
+
 from bauta.masking import STRATEGIES, KeyedHash, MaskingError, nativeVersion
 
 native = pytest.mark.skipif(nativeVersion() is None, reason='the bauta_rs extension is not installed')
 
 KEY = 'a-test-key-that-is-long-enough'
 ALPHANUMERIC = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+# Run in a process of its own, where nothing has loaded the extension yet, so
+# a worker thread is the first to: as Studio's first masked request, or an
+# orchestrator's task, loads it.
+FIRST_LOADED_IN_A_THREAD = '''
+import threading
+from bauta.masking import MaskingPlan, nativeVersion
+
+def mask(index):
+    policy = {'id': 'key', 'email': ['email', 'redact', 'fakeName', 'hash'][index % 4]}
+    plan = MaskingPlan(key='a-test-key-that-is-long-enough', columns=policy).bind(['id', 'email'])
+    plan.apply([(number, 'ann{}@corp.example'.format(number)) for number in range(50)])
+
+first = threading.Thread(target=lambda: print(nativeVersion()))
+first.start()
+first.join()
+for _ in range(40):
+    threads = [threading.Thread(target=mask, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+print('survived')
+'''
+
 
 # Shaped rather than merely plentiful. Random text would essentially never land
 # on the boundaries that matter: 2**128 for a UUID domain, the 21-to-22
@@ -179,7 +204,7 @@ def test_an_extension_of_the_same_version_is_used(standInExtension):
     import bauta.masking.core as masking
 
     extension, warnings = standInExtension
-    extension.__version__ = importlib.metadata.version('bauta')
+    extension.__version__ = bauta.__version__
 
     assert masking._nativeModule() is extension
     assert warnings == []
@@ -199,7 +224,7 @@ def test_an_extension_of_another_version_is_ignored_with_a_warning(standInExtens
     assert masking._nativeModule() is None
     assert masking.maskingImplementation() == 'python'
     (warning,) = warnings
-    assert 'bauta-rs {} does not match bauta {}'.format(installed, importlib.metadata.version('bauta')) in warning
+    assert 'bauta-rs {} does not match bauta {}'.format(installed, bauta.__version__) in warning
 
 
 @native
@@ -603,7 +628,7 @@ def test_a_run_requiring_the_native_masker_is_told_why_it_cannot_have_it(standIn
     monkeypatch.setenv('BAUTA_REQUIRE_NATIVE', '1')
     assert masking.requireNativeProblem(False) == problem
 
-    extension.__version__ = importlib.metadata.version('bauta')
+    extension.__version__ = bauta.__version__
     masking._nativeModule.cache_clear()
     assert masking.requireNativeProblem(True) is None
 
@@ -710,3 +735,18 @@ def test_a_run_says_once_as_it_starts_that_it_masks_in_python(monkeypatch, tmp_p
 
     assert [warning for warning in warnings if 'Masking in Python' in warning] == [
         'Masking in Python, about ten times slower than the native masker: bauta-rs is not installed; pip install "bauta[native]" installs it']
+
+
+@native
+def test_the_extension_first_loaded_by_a_thread_masks_on_every_thread_after_it():
+    """mimalloc 3, as the extension's allocator, crashed the process in the
+    next thread to allocate once a thread other than the main one had loaded
+    the extension: Studio died on its first masked request.
+    """
+
+    import subprocess
+
+    finished = subprocess.run([sys.executable, '-c', FIRST_LOADED_IN_A_THREAD], capture_output=True, text=True, timeout=120)
+
+    assert finished.returncode == 0, finished.stderr[-2000:]
+    assert finished.stdout.split() == [nativeVersion(), 'survived']

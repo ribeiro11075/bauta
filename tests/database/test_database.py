@@ -648,3 +648,54 @@ def test_a_watermark_in_a_comment_or_a_literal_is_left_unbound(tmp_path):
             query, parameters = database.bindWatermark(text, 2)
             _, chunks = database.stream(query, 10, parameters)
             assert parameters == (2,) and list(chunks) == [[(5,)]]
+
+
+def _duckdbFile(tmp_path):
+    duckdb = pytest.importorskip('duckdb')
+    path = tmp_path / 'data.duckdb'
+    connection = duckdb.connect(str(path))
+    connection.execute('CREATE TABLE t (x INT)')
+    connection.execute('INSERT INTO t VALUES (1), (2)')
+    connection.close()
+
+    return duckdb, path
+
+
+def test_a_read_only_duckdb_connection_is_refused_a_write_by_duckdb_itself(tmp_path):
+    """Only bauta's own writes were refused: a sourceQuery's DELETE ... RETURNING
+    emptied the table, through a streaming cursor that commits as it goes.
+    """
+    duckdb, path = _duckdbFile(tmp_path)
+
+    with Database(connectionSettings=connectionConfig(type=DatabaseType.DUCKDB, path=str(path), readOnly=True)) as database:
+        with pytest.raises(duckdb.Error):
+            database.stream('DELETE FROM t RETURNING x', chunkSize=10)
+
+    assert duckdb.connect(str(path), read_only=True).execute('SELECT count(*) FROM t').fetchone() == (2,)
+
+
+def test_a_duckdb_query_reaches_no_file_outside_its_database(tmp_path):
+    """DuckDB reads any file this account can, and writes one with COPY ... TO,
+    unless told not to: a query in a jobs file edited in Studio ran as Studio.
+    """
+    duckdb, path = _duckdbFile(tmp_path)
+    (tmp_path / 'secret.txt').write_text('not for queries')
+
+    with Database(connectionSettings=connectionConfig(type=DatabaseType.DUCKDB, path=str(path))) as database:
+        with pytest.raises(duckdb.Error):
+            database.stream("SELECT * FROM read_text('{}')".format(tmp_path / 'secret.txt'), chunkSize=1)
+        with pytest.raises(duckdb.Error):
+            database.stream("COPY (SELECT 1) TO '{}'".format(tmp_path / 'written.csv'), chunkSize=1)
+
+    assert not (tmp_path / 'written.csv').exists()
+
+
+def test_a_duckdb_connection_may_be_given_file_access_in_its_options(tmp_path):
+    _, path = _duckdbFile(tmp_path)
+    (tmp_path / 'allowed.txt').write_text('read on purpose')
+    settings = connectionConfig(type=DatabaseType.DUCKDB, path=str(path), options={'enable_external_access': True})
+
+    with Database(connectionSettings=settings) as database:
+        _, chunks = database.stream("SELECT content FROM read_text('{}')".format(tmp_path / 'allowed.txt'), chunkSize=1)
+        with chunks:
+            assert next(chunks) == [('read on purpose',)]

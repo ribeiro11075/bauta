@@ -400,6 +400,37 @@ def test_a_failed_masked_run_still_writes_its_manifest(maskedWorkspace):
     assert _targetRowCount(maskedWorkspace) == 0
 
 
+def test_a_forever_run_writes_the_manifest_of_each_cycle_that_ran_a_job(maskedWorkspace):
+    """It was written once, as the run stopped, from its last cycle alone: an
+    idle one, or the one a signal ended, so a run that had masked every row
+    left a manifest listing no job.
+    """
+    import json
+    import os
+    import signal
+    import threading
+    import time
+
+    _writeJobs(maskedWorkspace, MASKED_JOBS_YAML, maskRows={'refresh': 60})
+    settings = yaml.safe_load((maskedWorkspace / 'configuration' / 'jobs.yaml').read_text())
+    settings['cycleSleepSeconds'] = 0.2
+    (maskedWorkspace / 'configuration' / 'jobs.yaml').write_text(yaml.safe_dump(settings, sort_keys=False))
+    manifest = maskedWorkspace / 'manifest.json'
+
+    def stopOnceWritten() -> None:
+        deadline = time.monotonic() + 60
+        while not manifest.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        time.sleep(1)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=stopOnceWritten, daemon=True).start()
+
+    assert main(['run', '--quiet', '--forever', '--manifest', 'manifest.json']) == 130
+    [entry] = json.loads(manifest.read_text())['jobs']
+    assert (entry['job'], entry['status'], entry['rowCount']) == ('maskRows', 'completed', 5)
+
+
 def test_validate_rejects_a_masking_key_that_is_too_short(maskedWorkspace, monkeypatch, caplog):
     monkeypatch.setenv('MASKING_KEY', 'short')
 
@@ -758,6 +789,20 @@ def test_clear_empties_targets_and_a_forced_run_refills_them(workspace, capsys):
     assert _targetRowCount(workspace) == 0
 
     assert main(['run', '--quiet', '--force']) == EXIT_SUCCESS
+    assert _targetRowCount(workspace) == 5
+
+
+def test_clear_waits_for_no_run_and_empties_nothing_while_one_holds_the_lock(workspace, caplog):
+    """It took no lock, so it could empty a table a run was loading."""
+    from bauta.jobs.memory import exclusiveRun
+
+    main(['run', '--quiet'])
+    lockFile = workspace / 'configuration' / 'memory.yaml.run.lock'
+
+    with exclusiveRun(lockFile):
+        assert main(['clear', '--quiet', '--yes']) == EXIT_JOBS_DID_NOT_SUCCEED
+
+    assert 'nothing was cleared' in caplog.text
     assert _targetRowCount(workspace) == 5
 
 
@@ -1438,8 +1483,9 @@ def test_validate_refuses_more_masking_threads_than_cores(maskedWorkspace, monke
 
 
 def test_version_says_which_masker_it_would_use(capsys):
-    import importlib.metadata
     import os
+
+    import bauta
 
     from bauta.masking import nativeVersion
 
@@ -1448,7 +1494,7 @@ def test_version_says_which_masker_it_would_use(capsys):
 
     assert exited.value.code == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines[0] == 'bauta {}'.format(importlib.metadata.version('bauta'))
+    assert lines[0] == 'bauta {}'.format(bauta.__version__)
 
     if nativeVersion():
         expected = 'masking: bauta-rs {}'.format(nativeVersion())
@@ -1542,27 +1588,27 @@ def test_dry_run_compares_the_column_counts_it_already_prints():
     the target hasn't got. The run said so clearly; the dry run had both
     numbers in hand and passed anyway.
     """
-    from bauta.cli.common import _checkColumnCounts
+    from bauta.project import checkColumnCounts
     from bauta.configuration import DataJobConfig
 
     job = DataJobConfig(active=True, sourceConnection='prod', sourceQuery='select * from customers',
                         targetConnection='staging', targetTableFinal='customers', insertStrategy='upsert', chunkSize=10)
 
-    assert _checkColumnCounts('maskCustomers', job, ['id', 'email'], ['id', 'email']) is None
+    assert checkColumnCounts('maskCustomers', job, ['id', 'email'], ['id', 'email']) is None
 
-    problem = _checkColumnCounts('maskCustomers', job, ['id', 'email', 'tax_id'], ['id', 'email'])
+    problem = checkColumnCounts('maskCustomers', job, ['id', 'email', 'tax_id'], ['id', 'email'])
     assert problem is not None and 'returns 3 column(s)' in problem and 'fills 2' in problem
 
 
 def test_dry_run_counts_only_the_columns_target_columns_names():
-    from bauta.cli.common import _checkColumnCounts
+    from bauta.project import checkColumnCounts
     from bauta.configuration import DataJobConfig
 
     job = DataJobConfig(active=True, sourceConnection='prod', sourceQuery='select id, email from customers',
                         targetConnection='staging', targetTableFinal='customers', insertStrategy='upsert', chunkSize=10,
                         targetColumns=['id', 'email'])
 
-    assert _checkColumnCounts('maskCustomers', job, ['id', 'email'], ['id', 'email', 'created_at']) is None
+    assert checkColumnCounts('maskCustomers', job, ['id', 'email'], ['id', 'email', 'created_at']) is None
 
 
 def test_every_subcommand_gets_every_other_subcommands_flags_filled_in():

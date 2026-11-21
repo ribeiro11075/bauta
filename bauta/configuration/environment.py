@@ -8,7 +8,7 @@ import os
 import re
 import shlex
 import subprocess
-from typing import Any, List, Union
+from typing import Any, List, Optional, Union
 
 # ${NAME}, ${NAME:-default} or ${file:/path}; $${...} escapes one.
 ENVIRONMENT_VARIABLE = re.compile(r'(\$?)\$\{(?:file:([^}]+)|([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?)\}')
@@ -22,13 +22,13 @@ class ConfigurationError(Exception):
     """Raised when user-supplied YAML configuration fails validation."""
 
 
-def _expand(value: Any, missing: List[str]) -> Any:
+def _expand(value: Any, missing: List[str], directory: Optional[str]) -> Any:
     """Recursive worker: collects what couldn't be read rather than raising on the first."""
 
     if isinstance(value, dict):
-        return {key: _expand(item, missing) for key, item in value.items()}
+        return {key: _expand(item, missing, directory) for key, item in value.items()}
     if isinstance(value, list):
-        return [_expand(item, missing) for item in value]
+        return [_expand(item, missing, directory) for item in value]
     if not isinstance(value, str):
         return value
 
@@ -39,6 +39,9 @@ def _expand(value: Any, missing: List[str]) -> Any:
             return match.group(0)[1:]
 
         if path is not None:
+            path = os.path.expanduser(path)
+            if directory is not None and not os.path.isabs(path):
+                path = os.path.join(directory, path)
             try:
                 with open(path) as file:
                     # Secret files usually end with a newline nobody meant as
@@ -60,7 +63,7 @@ def _expand(value: Any, missing: List[str]) -> Any:
     return ENVIRONMENT_VARIABLE.sub(replace, value)
 
 
-def expandEnvironmentVariables(value: Any) -> Any:
+def expandEnvironmentVariables(value: Any, directory: Optional[str] = None) -> Any:
     """Recursively replace ${NAME} and ${file:/path} in a loaded configuration:
 
         password: ${PROD_DB_PASSWORD}
@@ -68,13 +71,14 @@ def expandEnvironmentVariables(value: Any) -> Any:
         key: ${file:/run/secrets/masking-key}
 
     A file reference reads the file less a trailing newline, as mounted
-    secrets are written. An unset variable with no default, or an unreadable
+    secrets are written. A relative one is relative to `directory`, the one
+    the configuration file is in, as every path a file names is. An unset variable with no default, or an unreadable
     file, raises ConfigurationError rather than expanding to an empty string,
     naming every one at once. Escape a literal ${...} as $${...}.
     """
 
     missing: List[str] = []
-    expanded = _expand(value, missing)
+    expanded = _expand(value, missing, directory)
 
     if missing:
         raise ConfigurationError(

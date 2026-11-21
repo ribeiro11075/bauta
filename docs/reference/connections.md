@@ -46,10 +46,11 @@ analytics:
   options: {memory_limit: 4GB}
 ```
 
-Install it with `pip install "bauta[duckdb]"`, which brings pyarrow for fast loads. DuckDB is a source or target like any other database, with three differences, each stopped with an error that says so rather than left to fail part-way:
+Install it with `pip install "bauta[duckdb]"`, which brings pyarrow for fast loads. DuckDB is a source or target like any other database, with four differences, each stopped with an error that says so rather than left to fail part-way:
 
 - **One job at a time per file.** DuckDB lets one process open a file, and every job runs in a process of its own, so the run starts one job at a time on a DuckDB connection (its `maxConcurrentJobs` is always 1). `workers` still runs jobs on other connections alongside. Two aliases for one file are refused, since each would count its jobs apart. Anything else holding the file open -- another run, a program reading it -- makes a job wait up to a minute, then fail saying why.
 - **No run state in DuckDB.** The run holds its run-state connection for as long as it lasts, so `memory` can't be a DuckDB table. `history` and `manifest` can, since each is written once a cycle ends.
+- **No files outside the database.** DuckDB's SQL can read any file the process can (`read_text('/etc/passwd')`), write one (`COPY ... TO`), attach another database or load an extension, so a query in the jobs files -- one an admin edited in Studio, say -- could reach the machine as bauta's account. Each connection is opened with that turned off: such a query fails with a permission error. Set `options: {enable_external_access: true}` on a connection whose queries are meant to read files, such as Parquet beside the database; a [files connection](#files) reads tables of files without it.
 - **No swap of a table in a foreign key, or with an index.** DuckDB won't rename a table with an index or one another references, and renaming one that references another corrupts its catalog. A `swap` job whose target or stage is either fails before renaming anything; use `upsert` for it. A primary key is fine. `clear` empties such tables one transaction per table, since DuckDB checks a foreign key against what is committed: a clear stopped part-way leaves the tables it reached empty, and running it again finishes it.
 
 ## Files
@@ -209,7 +210,7 @@ production:
 
 Mark production `readOnly`, so a job, a command or an alias pointed the wrong way can't write to it. `validate` and `run` refuse a job whose `targetConnection` is read-only. Every write bauta makes goes through one place that refuses on a read-only connection, whichever command makes it: a job's load, swap or `preTargetAdhocQueries`, `clear`, `schema --apply`, `synthesize`, and run state, history or a manifest kept in a table there. Reading -- jobs' queries, `discover`, `subset`, `audit --connect`, `coverage`, `bench` -- is unaffected.
 
-The server refuses writes too, where it can make a session read-only: PostgreSQL (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`), MySQL and MariaDB (`SET SESSION TRANSACTION READ ONLY`) and SQLite (`PRAGMA query_only`). Oracle, SQL Server and DuckDB can't, so there it rests on bauta's own refusal: give the login itself no write privileges as well.
+The database refuses writes too, where it can: PostgreSQL (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`), MySQL and MariaDB (`SET SESSION TRANSACTION READ ONLY`) and SQLite (`PRAGMA query_only`) make the session read-only, and DuckDB opens the file read-only, so a `sourceQuery` can't write to it either. Oracle and SQL Server can't, so there it rests on bauta's own refusal: give the login itself no write privileges as well.
 
 ### Statement timeout
 

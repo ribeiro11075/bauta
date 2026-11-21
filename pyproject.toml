@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bauta"
-version = "0.2.10"
+# bauta/_version.py, the one place it is written
+dynamic = ["version"]
 description = "Safe, realistic copies of production across databases: masking, subsets, synthetic data, and the ETL to move them"
 readme = "README.md"
 license = "MIT"
@@ -93,6 +94,9 @@ studio = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "sqlalchemy>=2.0.18", "al
 docs = ["mkdocs==1.6.1", "mkdocs-material==9.7.7", "mike==2.2.0"]
 dev = ["pytest==9.2.0", "mypy==2.4.1", "ruff==0.17.5", "pytest-cov==7.1.0", "types-PyYAML==6.0.12.20261113", "build==1.6.1", "twine==7.0.0",
        "bauta[studio]", "httpx==0.28.1"]
+
+[tool.setuptools.dynamic]
+version = { attr = "bauta._version.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["bauta", "bauta.*"]

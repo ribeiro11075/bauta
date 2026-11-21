@@ -9,7 +9,7 @@ pip install "bauta[postgresql,oracle]"
 
 | Extra | Installs | Needs besides pip |
 | --- | --- | --- |
-| `mysql`, `mariadb` | mysql-connector-python | nothing |
+| `mysql`, `mariadb` | mysql-connector-python | nothing; the server must be MySQL 8.0.19 or later |
 | `postgresql` | psycopg 3, with its own libpq | nothing |
 | `oracle` | oracledb, in thin mode | nothing |
 | `mssql` | pymssql | nothing |

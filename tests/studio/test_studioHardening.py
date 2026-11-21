@@ -294,6 +294,31 @@ def test_an_edit_cannot_start_calling_any_module_it_likes(signIn):
     assert response.status_code == 422 and 'BAUTA_STUDIO_TRANSFORM_MODULES' in response.text
 
 
+def test_an_edit_cannot_start_naming_a_strategy_from_a_module_nothing_vouched_for(settings, signIn, tmp_path, monkeypatch):
+    """A strategy named module.path:ClassName is imported as the edit is
+    validated, so the module ran before the transform check did, and the
+    check never asked of strategies at all.
+    """
+
+    modules = tmp_path / 'modules'
+    modules.mkdir()
+    (modules / 'sideeffect.py').write_text('import pathlib\npathlib.Path(__file__).with_name("IMPORTED").write_text("ran")\n')
+    monkeypatch.syspath_prepend(str(modules))
+
+    response = _edit(signIn('admin'), 'jobs.yaml', lambda text: text.replace('        email: email\n', '        email: sideeffect:Masker\n'))
+
+    assert response.status_code == 422 and 'sideeffect' in response.text and 'BAUTA_STUDIO_TRANSFORM_MODULES' in response.text
+    assert not (modules / 'IMPORTED').exists()
+
+
+def test_an_edit_cannot_hide_a_strategy_inside_a_json_policy(signIn):
+    policy = '        email:\n          strategy: json\n          fields:\n            contact.email: os.path:Masker\n'
+
+    response = _edit(signIn('admin'), 'jobs.yaml', lambda text: text.replace('        email: email\n', policy))
+
+    assert response.status_code == 422 and 'os.path' in response.text
+
+
 def test_an_edit_may_name_bautas_own_transforms(signIn):
     assert _edit(signIn('admin'), 'jobs.yaml', _withTransform('bauta.transform.builtinTransforms:collapseWhitespace')).status_code == 200
 

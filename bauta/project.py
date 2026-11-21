@@ -17,10 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-import yaml
-
 from .configuration import (Configuration, ConfigurationError, ConnectionConfig, DataJobConfig, DataJobsFile, FilesConnection, IcebergConnection,
-                            InsertStrategy, JobsDocument, StorageLocation, TableLocation, expandEnvironmentVariables, isLake, parseYaml, readJobsFile)
+                            InsertStrategy, JobsDocument, StorageLocation, TableLocation, isLake, loadYamlFile, readJobsFile)
 from .database import DIALECTS, Database
 from .database.sessions import Connections, sourceQueryColumns
 from .log import LOGGER_NAME
@@ -48,15 +46,11 @@ class UsageError(Exception):
 
 
 def loadYaml(path: Path) -> Any:
-    """A YAML file, with ${NAME} expanded from the environment."""
+    """A YAML file, with ${NAME} expanded from the environment; a UsageError
+    where it can't be read.
+    """
 
-    try:
-        with open(path) as file:
-            return expandEnvironmentVariables(parseYaml(file))
-    except FileNotFoundError as error:
-        raise UsageError('no such file: {}'.format(path)) from error
-    except yaml.YAMLError as error:
-        raise UsageError('{} is not valid YAML: {}'.format(path, error)) from error
+    return loadYamlFile(path, error=UsageError)
 
 
 def readJobs(jobsPath: Path, replacing: Optional[Mapping[Path, str]] = None) -> JobsDocument:
@@ -64,21 +58,22 @@ def readJobs(jobsPath: Path, replacing: Optional[Mapping[Path, str]] = None) -> 
     `replacing` names read as the text given there instead of from disk.
     """
 
-    if not replacing:
-        return readJobsFile(jobsPath, load=loadYaml)
-
-    texts = {os.path.realpath(path): text for path, text in replacing.items()}
+    texts = {os.path.realpath(path): text for path, text in (replacing or {}).items()}
 
     def load(path: Path) -> Any:
-        text = texts.get(os.path.realpath(path))
-        if text is None:
-            return loadYaml(path)
-        try:
-            return expandEnvironmentVariables(parseYaml(text))
-        except yaml.YAMLError as error:
-            raise UsageError('{} is not valid YAML: {}'.format(path, error)) from error
+        return loadYamlFile(path, error=UsageError, text=texts.get(os.path.realpath(path)))
 
     return readJobsFile(jobsPath, load=load)
+
+
+def toolVersion() -> str:
+    """This package's version, as bauta/_version.py says: what a manifest,
+    `bauta --version` and Studio's evidence record.
+    """
+
+    from ._version import __version__
+
+    return __version__
 
 
 def configDirectory(directory: Optional[Union[str, Path]] = None) -> Path:

@@ -170,14 +170,22 @@ def _removeQuotedData(text: str) -> str:
         inside = text[start:end].strip('\\\'"')
         follows = keptUntil is not None and start == keptUntil + 1 and text[keptUntil] == '.'
 
-        if inside == REDACTED or follows or _IDENTIFIER_BEFORE.search(text[position:start]):
+        # The word before a quote ends where it starts, so only the text since
+        # the last quote is read: read from `position` each time, a message
+        # of many names took time quadratic in them.
+        previous = quotes[index - 1][0] if index else -1
+        lookFrom = max(position, previous + (2 if previous >= 0 and text[previous] == '\\' else 1))
+        if inside == REDACTED or follows or _IDENTIFIER_BEFORE.search(text, lookFrom, start):
             keptUntil = end
             index = closing + 1
             continue
 
         lineEnd = text.find('\n', start)
         lineEnd = len(text) if lineEnd == -1 else lineEnd
-        onLine = [quote for quote in quotes[index:] if quote[0] < lineEnd]
+        last = index
+        while last + 1 < len(quotes) and quotes[last + 1][0] < lineEnd:
+            last += 1
+        onLine = quotes[index:last + 1]
         balanced = all(sum(1 for _, each in onLine if each == kind) % 2 == 0 for kind in '\'"')
         # Where they don't, a quote is part of a value, and so may be anything after it.
         stop = onLine[-1][0] + (2 if text[onLine[-1][0]] == '\\' else 1) if balanced else len(text)

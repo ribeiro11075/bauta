@@ -8,8 +8,12 @@ masking key, a password, or a value from a table.
 """
 from __future__ import annotations
 
+import hashlib
 import os
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+import threading
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Tuple
 
 from .. import ConfigurationError, Project, keyFingerprint, verifyManifest
 from ..project import UsageError
@@ -18,18 +22,65 @@ from .settings import HISTORY_RUNS, Settings
 
 MANIFEST_KEY_VARIABLE = 'BAUTA_MANIFEST_KEY'
 STAGES = {'read': 'readSeconds', 'mask': 'maskSeconds', 'write': 'writeSeconds', 'wait': 'throttledSeconds'}
+# The longest a loaded configuration is reused while none of its files has
+# changed: what it reads besides them -- a new file an `include` pattern
+# matches, the environment, a ${file:...} secret -- is read again this often.
+PROJECT_REUSE_SECONDS = 30.0
 
 
 class ConfigurationProblem(Exception):
     """The configuration doesn't load: every screen but the editor says why."""
 
 
+class _Loaded(NamedTuple):
+    project: Project
+    stamp: Tuple[Tuple[str, Optional[str]], ...]
+    at: float
+
+
+_loaded: Dict[Path, _Loaded] = {}
+_loading = threading.Lock()
+
+
+def _stamp(project: Project) -> Tuple[Tuple[str, Optional[str]], ...]:
+    """Each file the configuration was read from, with a digest of what it
+    holds -- not when it changed, which some filesystems keep to the second
+    -- or None for a file gone. Jobs files are small; reading them is cheap
+    where validating what they say is not.
+    """
+
+    stamps: List[Tuple[str, Optional[str]]] = []
+    for path in [project.connectionsPath, *project.document.files]:
+        try:
+            stamps.append((str(path), hashlib.sha256(Path(path).read_bytes()).hexdigest()))
+        except OSError:
+            stamps.append((str(path), None))
+
+    return tuple(stamps)
+
+
 def loadProject(settings: Settings) -> Project:
+    """The configuration as it stands, reused while none of its files has
+    changed and for at most PROJECT_REUSE_SECONDS: every request and every
+    page's polling asked for it, and validating 500 masked jobs takes a fifth
+    of a second. An edit made here changes its file, so the next request
+    reads it.
+    """
+
+    with _loading:
+        found = _loaded.get(settings.configDirectory)
+    if found is not None and time.monotonic() - found.at < PROJECT_REUSE_SECONDS and _stamp(found.project) == found.stamp:
+        return found.project
 
     try:
-        return Project.load(settings.configDirectory)
+        project = Project.load(settings.configDirectory)
     except (ConfigurationError, UsageError) as error:
         raise ConfigurationProblem(str(error)) from error
+
+    with _loading:
+        _loaded[settings.configDirectory] = _Loaded(project, _stamp(project), time.monotonic())
+
+    return project
 
 
 # Jobs -------------------------------------------------------------------------

@@ -172,9 +172,9 @@ def _declaredMasking(jobs: Mapping[str, DataJobConfig]) -> Dict[str, Dict[str, A
         }
 
 
-def _logCycleSummary(dependencyGraph: DependencyGraph) -> None:
-    """One line per failed or skipped job, plus totals. The only place a
-    skipped job is logged, since it never reaches a worker.
+def _logCycleSummary(dependencyGraph: DependencyGraph, level: int = logging.INFO) -> None:
+    """One line per failed or skipped job, plus totals at `level`. The only
+    place a skipped job is logged, since it never reaches a worker.
     """
 
     result = RunResult(outcomes=list(dependencyGraph.outcomes))
@@ -188,7 +188,7 @@ def _logCycleSummary(dependencyGraph: DependencyGraph) -> None:
         logger.warning('{} skipped: {}'.format(outcome.job, outcome.error),
                        extra={'job': outcome.job, 'status': outcome.status.value, 'error': outcome.error})
 
-    logger.info('Cycle finished: {} completed, {} failed, {} skipped, {} row(s) moved'.format(
+    logger.log(level, 'Cycle finished: {} completed, {} failed, {} skipped, {} row(s) moved'.format(
         len(result.completed), len(result.failed), len(result.skipped), result.rowCount),
         extra={'event': 'cycleFinished', 'completed': len(result.completed), 'failed': len(result.failed),
                'skipped': len(result.skipped), 'rowCount': result.rowCount})
@@ -352,7 +352,10 @@ def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, Conne
         while True:
             dependencyGraph = DependencyGraph(jobs=jobsFile.jobs, memory=memory.read(), connectionLimits=connectionLimits(connectionConfiguration))
             runId, cycleStartedAt = newRunId(), time.time()
-            logger.info('Starting cycle {} with {} active job(s)'.format(runId, len(dependencyGraph.activeJobs)), extra={'runId': runId})
+            # A --forever cycle with nothing due says so only at debug: one
+            # every cycleSleepSeconds was two lines each half second, all day.
+            level = logging.INFO if dependencyGraph.activeJobs or not runForever else logging.DEBUG
+            logger.log(level, 'Starting cycle {} with {} active job(s)'.format(runId, len(dependencyGraph.activeJobs)), extra={'runId': runId})
 
             def progress(running: Dict[str, float], rows: Dict[str, int], finished: bool = False) -> None:
                 if onProgress is None:
@@ -368,7 +371,7 @@ def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, Conne
                           readLimits, progress)
             finally:
                 progress({}, {}, finished=True)
-            _logCycleSummary(dependencyGraph)
+            _logCycleSummary(dependencyGraph, level)
 
             if onCycle is not None:
                 try:
@@ -380,6 +383,10 @@ def runDataJobs(jobsFile: DataJobsFile, connectionConfiguration: Dict[str, Conne
                 break
 
             _sleepUnlessTerminated(jobsFile.cycleSleepSeconds, termination)
+            if termination['terminating']:
+                # Stopped during the pause: another cycle would only mark
+                # every due job skipped, and report that as the run.
+                break
 
         logger.info('Finished data job runner')
 

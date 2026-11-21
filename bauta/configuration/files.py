@@ -7,7 +7,7 @@ from __future__ import annotations
 import glob
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, NamedTuple
+from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Type
 
 import yaml
 
@@ -65,16 +65,24 @@ def parseYaml(stream: Any) -> Any:
     return yaml.load(stream, Loader=_UniqueKeyLoader)
 
 
-def loadYamlFile(path: Path) -> Any:
-    """A YAML file, with ${NAME} expanded from the environment."""
+def loadYamlFile(path: Path, error: Type[Exception] = ConfigurationError, text: Optional[str] = None) -> Any:
+    """A YAML file -- or `text` standing in for it -- with ${NAME} expanded
+    from the environment, and ${file:...} read relative to the file. What
+    can't be read raises `error`.
+    """
 
     try:
-        with open(path) as file:
-            return expandEnvironmentVariables(parseYaml(file))
-    except FileNotFoundError as error:
-        raise ConfigurationError('no such file: {}'.format(path)) from error
-    except yaml.YAMLError as error:
-        raise ConfigurationError('{} is not valid YAML: {}'.format(path, error)) from error
+        if text is not None:
+            document = parseYaml(text)
+        else:
+            with open(path) as file:
+                document = parseYaml(file)
+    except FileNotFoundError as missing:
+        raise error('no such file: {}'.format(path)) from missing
+    except yaml.YAMLError as invalid:
+        raise error('{} is not valid YAML: {}'.format(path, invalid)) from invalid
+
+    return expandEnvironmentVariables(document, directory=os.path.dirname(os.path.abspath(path)))
 
 
 def _includedFiles(jobsPath: Path, patterns: Any) -> List[Path]:

@@ -352,3 +352,19 @@ def test_history_round_trips_what_it_appended(tmp_path):
 
     assert [record['job'] for record in records] == ['second', 'first']
     assert records[0]['status'] == 'failed' and records[0]['error'] == 'boom'
+
+
+def test_a_manifest_table_named_for_a_reserved_word_is_read_back(tmp_path):
+    """Its content was read with the table named as written, where finding
+    the latest run quoted it: `order` found the run and failed reading it.
+    """
+
+    path = tmp_path / 'manifests.db'
+    connection = sqlite3.connect(path)
+    connection.execute(DATABASE_MANIFEST_SCHEMA.replace('bauta_manifest', '"order"'))
+    connection.close()
+    manifests = DatabaseManifests(connectionConfig(type='sqlite', path=str(path)), table='order')
+
+    manifests.write({'jobs': ['kept']}, 'run-1')
+
+    assert manifests.read() == ('run-1', {'jobs': ['kept']})

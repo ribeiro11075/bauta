@@ -1320,6 +1320,29 @@ def test_date_shift_gives_one_day_one_shift_however_many_rows_share_it():
     assert all(shifter.mask(day) == shiftedDate for _ in range(100))
 
 
+@pytest.mark.parametrize('text', ['2026-03-17T09:30:00.5', '2026-03-17T09:30:00Z', '2026-03-17 09:30:00.123', '2026-03-17T09:30',
+                                  '2026-03-17T09:30:05+02:00', '2026-03-17T09:30:05.123456789-0500'])
+def test_date_shift_moves_text_by_its_day_and_keeps_everything_after_it(text):
+    """Written back through isoformat, `.5` became `.500000`, `Z` became
+    `+00:00`, and on Python 3.10 neither `Z` nor `.5` could be read at all.
+    """
+
+    shifter = strategy('dateShift')
+    day = datetime.date(2026, 3, 17)
+
+    masked = shifter.mask(text)
+
+    assert masked[10:] == text[10:]
+    assert masked[:10] == shifter.mask(day).isoformat()
+
+
+@pytest.mark.parametrize('text', ['2026-03-17T25:00', '2026-02-30', '2026-03-17T09:61:00', '2026-03-17T09:30+24:00'])
+def test_date_shift_refuses_text_shaped_like_a_date_that_is_not_one(text):
+
+    with pytest.raises(MaskingError):
+        strategy('dateShift').mask(text)
+
+
 def test_date_shift_caches_per_day_without_growing_without_bound():
     from bauta.masking import MASK_CACHE_SIZE
 

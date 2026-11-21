@@ -327,8 +327,9 @@ class DatabaseManifests:
                     raise KeyError('{} holds no manifest'.format(self.table))
                 runId = latest[0][0]
 
-            _, chunks = database.stream(query='SELECT content FROM {} WHERE run_id = {} ORDER BY part'.format(self.table, placeholder),
-                                        chunkSize=100, parameters=(runId,))
+            # The table quoted as its write spells it, as the query for the latest run is.
+            query = 'SELECT content FROM {} WHERE run_id = {} ORDER BY part'.format(database.statementName(self.table), placeholder)
+            _, chunks = database.stream(query=query, chunkSize=100, parameters=(runId,))
             with chunks:
                 text = ''.join(row[0] for chunk in chunks for row in chunk)
 

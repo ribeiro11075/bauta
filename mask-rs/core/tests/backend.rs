@@ -7,6 +7,9 @@
 //! Both fallbacks are silent -- they show up as a slow job, months later, and
 //! the `aes` one cost `fpe` a factor of three before this test existed.
 
+// camelCase, as the rest of the crate and the package are written.
+#![allow(non_snake_case)]
+
 use std::time::Instant;
 
 /// These measure, so they mean nothing unoptimised: `ring` is precompiled

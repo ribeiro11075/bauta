@@ -36,6 +36,14 @@ describe('the API client', () => {
     await expect(api('/jobs')).rejects.toThrow('jobs.yaml is not valid YAML')
   })
 
+  it('keeps the status of an answer that is not JSON, as a proxy gives when Studio is down', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>Bad Gateway</html>', { status: 502, statusText: 'Bad Gateway' })))
+    const error = await api('/runs').catch((caught: ApiError) => caught) as ApiError
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error.status).toBe(502)
+    expect(error.message).toBe('the server answered 502 Bad Gateway')
+  })
+
   it('takes an empty answer as nothing to read', async () => {
     answering(200, undefined)
     await expect(api('/auth/logout', { method: 'POST' })).resolves.toEqual({})

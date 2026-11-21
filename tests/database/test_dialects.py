@@ -65,8 +65,42 @@ def test_mysql_upsert_of_a_key_only_table_does_not_use_insert_ignore():
     query = MySQLDialect().upsertQuery('links', ['a', 'b'], ['a', 'b'], [])
 
     assert 'IGNORE' not in query
-    assert query.endswith('ON DUPLICATE KEY UPDATE links.a = IF(links.a <=> VALUES(a) AND links.b <=> VALUES(b), links.a, '
+    assert query.endswith('ON DUPLICATE KEY UPDATE links.a = IF(links.a <=> bauta_new.a AND links.b <=> bauta_new.b, links.a, '
                           '(SELECT links.a UNION ALL SELECT links.a))')
+
+
+def test_mysql_upserts_name_the_row_they_insert_where_mariadb_reads_it_with_values():
+    """VALUES(column) is deprecated in MySQL since 8.0.20, and MariaDB has
+    nothing else.
+    """
+    mysql, mariadb = MySQLDialect(), MariaDBDialect()
+
+    assert 'VALUES(' not in mysql.upsertQuery('t', ['id', 'v'], ['id'], ['v']).split('ON DUPLICATE KEY UPDATE', 1)[1]
+    assert ' AS bauta_new ' in mysql.upsertQuery('t', ['id', 'v'], ['id'], ['v'])
+    assert 'FROM (SELECT id, v FROM s) AS bauta_new ' in mysql.upsertFromStageQuery('t', 's', ['id', 'v'], ['id'], ['v'])
+    assert mariadb.upsertQuery('t', ['id', 'v'], ['id'], ['v']).endswith('v=VALUES(v)')
+    assert 'bauta_new' not in mariadb.upsertFromStageQuery('t', 's', ['id', 'v'], ['id'], ['v'])
+
+
+def test_mysql_before_8_0_19_is_refused_as_it_connects():
+    from unittest.mock import MagicMock
+
+    from bauta.configuration import ConfigurationError, connectionConfig
+
+    settings = connectionConfig(type='mysql', host='h', user='u', password='p', database='d')
+
+    def connectionTo(version):
+        connection = MagicMock()
+        connection.cursor.return_value.fetchone.return_value = (version,)
+        return connection
+
+    with pytest.raises(ConfigurationError, match='MySQL 8.0.18, and bauta needs 8.0.19 or later'):
+        MySQLDialect().prepareSession(connectionTo('8.0.18-log'), settings)
+
+    MySQLDialect().prepareSession(connectionTo('8.4.11'), settings)
+    mariadb = connectionTo('10.11.0-MariaDB')
+    MariaDBDialect().prepareSession(mariadb, connectionConfig(type='mariadb', host='h', user='u', password='p', database='d'))
+    mariadb.cursor.return_value.execute.assert_not_called()
 
 
 def test_mysql_upsert_refuses_a_row_matched_by_another_unique_key_before_assigning_anything():
@@ -79,8 +113,8 @@ def test_mysql_upsert_refuses_a_row_matched_by_another_unique_key_before_assigni
     query = dialect.upsertQuery('people', ['id', 'email', 'name'], ['id'], ['email', 'name'])
     update = query.split('ON DUPLICATE KEY UPDATE ', 1)[1]
 
-    assert update.startswith('people.id = IF(people.id <=> VALUES(id), people.id, (SELECT people.id UNION ALL SELECT people.id)), ')
-    assert update.endswith('email=VALUES(email), name=VALUES(name)')
+    assert update.startswith('people.id = IF(people.id <=> bauta_new.id, people.id, (SELECT people.id UNION ALL SELECT people.id)), ')
+    assert update.endswith('email=bauta_new.email, name=bauta_new.name')
     assert dialect.upsertFromStageQuery('people', 'stage', ['id', 'email', 'name'], ['id'], ['email', 'name']).endswith(update)
 
     class Refused(Exception):
@@ -232,8 +266,9 @@ def test_upsert_of_a_key_only_table_is_valid_sql(dialect):
 
     assert not query.rstrip().endswith(('SET', 'UPDATE'))
     assert 'DO UPDATE SET ' not in query
-    assert 'ON DUPLICATE KEY UPDATE ' not in query or query.endswith('ON DUPLICATE KEY UPDATE t.id = IF(t.id <=> VALUES(id), t.id, '
-                                                                     '(SELECT t.id UNION ALL SELECT t.id))')
+    inserted = 'VALUES(id)' if isinstance(dialect, MariaDBDialect) else 'bauta_new.id'
+    assert 'ON DUPLICATE KEY UPDATE ' not in query or query.endswith('ON DUPLICATE KEY UPDATE t.id = IF(t.id <=> {}, t.id, '
+                                                                     '(SELECT t.id UNION ALL SELECT t.id))'.format(inserted))
 
 
 @pytest.mark.parametrize('dialect', [
@@ -244,8 +279,9 @@ def test_upsert_from_stage_of_a_key_only_table_is_valid_sql(dialect):
 
     assert not query.rstrip().endswith(('SET', 'UPDATE'))
     assert 'DO UPDATE SET ' not in query
-    assert 'ON DUPLICATE KEY UPDATE ' not in query or query.endswith('ON DUPLICATE KEY UPDATE t.id = IF(t.id <=> VALUES(id), t.id, '
-                                                                     '(SELECT t.id UNION ALL SELECT t.id))')
+    inserted = 'VALUES(id)' if isinstance(dialect, MariaDBDialect) else 'bauta_new.id'
+    assert 'ON DUPLICATE KEY UPDATE ' not in query or query.endswith('ON DUPLICATE KEY UPDATE t.id = IF(t.id <=> {}, t.id, '
+                                                                     '(SELECT t.id UNION ALL SELECT t.id))'.format(inserted))
 
 
 def test_copy_writes_each_row_through_psycopg():
@@ -511,7 +547,15 @@ def test_duckdb_options_are_duckdbs_own_settings():
 
     settings = connectionConfig(type='duckdb', path=':memory:', options={'threads': 2})
 
-    assert DuckDBDialect().connectArguments(settings) == {'database': ':memory:', 'config': {'threads': 2}}
+    assert DuckDBDialect().connectArguments(settings) == {'database': ':memory:', 'config': {'enable_external_access': False, 'threads': 2}}
+
+
+def test_duckdb_options_may_give_queries_files_and_a_read_only_connection_opens_its_file_read_only():
+    from bauta.configuration import connectionConfig
+
+    settings = connectionConfig(type='duckdb', path='data.duckdb', readOnly=True, options={'enable_external_access': True})
+
+    assert DuckDBDialect().connectArguments(settings) == {'database': 'data.duckdb', 'config': {'enable_external_access': True}, 'read_only': True}
 
 
 @pytest.mark.parametrize('dataType, expected', [('INTEGER', ColumnCategory.NUMBER), ('DECIMAL(10,2)', ColumnCategory.NUMBER),

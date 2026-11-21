@@ -174,9 +174,12 @@ def verifyReferences(database: Any, alias: str, loaded: Mapping[str, str], sourc
         orphans, problem = None, check.problem
         if problem is None:
             assert check.table and check.columns and check.referencedTable and check.referencedColumns
+            # A declared key's tables come from the catalog, already quoted;
+            # a job's are as it names them, quoted as its load writes them.
+            table, referencedTable = ((check.table, check.referencedTable) if check.declared
+                                      else (database.statementName(check.table), database.statementName(check.referencedTable)))
             try:
-                orphans = int(database.query(orphanQuery(database.type, check.table, check.columns, check.referencedTable,
-                                                         check.referencedColumns))[0][0])
+                orphans = int(database.query(orphanQuery(database.type, table, check.columns, referencedTable, check.referencedColumns))[0][0])
             except Exception as error:
                 # A failed statement aborts PostgreSQL's transaction until rolled back.
                 database.rollback()

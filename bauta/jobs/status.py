@@ -83,7 +83,8 @@ class RunStatus:
         os.replace(partial, path)
 
 
-def _processAlive(pid: int) -> bool:
+def processAlive(pid: int) -> bool:
+    """Whether a process with this id is running on this machine."""
 
     try:
         os.kill(pid, 0)
@@ -114,7 +115,7 @@ def readRunStatuses(directory: Path) -> List[Dict[str, Any]]:
             record = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        record['alive'] = _processAlive(int(record['pid'])) if record.get('host') == host else None
+        record['alive'] = processAlive(int(record['pid'])) if record.get('host') == host else None
         records.append(record)
 
     return sorted(records, key=lambda record: record.get('startedAt') or '', reverse=True)

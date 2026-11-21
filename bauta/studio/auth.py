@@ -20,7 +20,7 @@ from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .db import Activity, Database, User, UserSession, utcnow
+from .db import Activity, Database, User, UserSession, aware, utcnow
 
 SESSION_COOKIE = 'bauta_studio_session'
 CSRF_HEADER = 'X-Bauta-Studio'
@@ -189,8 +189,7 @@ def userFromRequest(session: Session, request: Request) -> Optional[User]:
     found = session.get(UserSession, _tokenHash(token))
     if found is None:
         return None
-    expires = found.expiresAt if found.expiresAt.tzinfo else found.expiresAt.replace(tzinfo=datetime.timezone.utc)
-    if expires < utcnow():
+    if aware(found.expiresAt) < utcnow():
         session.delete(found)
         session.commit()
         return None

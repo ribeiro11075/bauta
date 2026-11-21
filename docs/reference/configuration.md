@@ -80,7 +80,7 @@ key: ${file:/run/secrets/masking-key}
 | --- | --- |
 | `${NAME}` | The variable's value. If it's unset, the run **stops before connecting to anything**, naming every missing variable at once. |
 | `${NAME:-default}` | The variable, or `default` if unset. Use for ports, hosts and schema names — **never for a secret**, which would just put the credential back in the file. |
-| `${file:/path}` | The file's content, without a trailing newline — how Docker, Kubernetes and secret-store drivers mount secrets. An unreadable file stops the run like an unset variable. |
+| `${file:/path}` | The file's content, without a trailing newline — how Docker, Kubernetes and secret-store drivers mount secrets. A relative path is relative to the file that names it, as every path in a file is. An unreadable file stops the run like an unset variable. |
 | `$${NAME}` | A literal `${NAME}`, for SQL that contains one. PostgreSQL dollar-quoting (`$$body$$`) needs no escaping. |
 
 Kept this way, `connections.yaml` holds references to secrets rather than secrets, and is safe to commit.

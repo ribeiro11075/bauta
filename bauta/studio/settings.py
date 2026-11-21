@@ -17,6 +17,9 @@ TRANSFORM_MODULES_VARIABLE = 'BAUTA_STUDIO_TRANSFORM_MODULES'
 SESSION_HOURS = 12
 # How many runs' history the run list reads back.
 HISTORY_RUNS = 50
+# What Studio creates its data directory, and those in it, with: its owner's
+# alone. It holds password hashes, run logs and the jobs files as they were.
+PRIVATE_DIRECTORY_MODE = 0o700
 
 
 @dataclass(frozen=True)

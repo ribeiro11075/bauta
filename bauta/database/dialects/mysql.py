@@ -1,13 +1,12 @@
 """MySQL, and MariaDB, which speaks its protocol."""
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from ..driver import Connection, Cursor, native
-from ...configuration import DatabaseConfig, DatabaseType, MariaDBConnection, MySQLConnection
+from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType, MariaDBConnection, MySQLConnection
 from .base import ColumnCategory, DatabaseDialect
-
-
 
 
 # What the upsert guard evaluates to refuse a row: a scalar subquery of two
@@ -16,6 +15,11 @@ from .base import ColumnCategory, DatabaseDialect
 # UUID type was refused as mixing types, failing every upsert into a table
 # keyed by one. See MySQLDialect._onDuplicateKey.
 UNIQUE_KEY_CLASH = '(SELECT {0} UNION ALL SELECT {0})'
+# What a MySQL upsert names the row it would insert, for its update to read:
+# `AS bauta_new`, where MySQL deprecated VALUES(column) in 8.0.20.
+NEW_ROW = 'bauta_new'
+# The oldest MySQL that names that row so.
+MYSQL_ROW_ALIAS_VERSION = (8, 0, 19)
 
 class MySQLDialect(DatabaseDialect):
 
@@ -44,8 +48,22 @@ class MySQLDialect(DatabaseDialect):
 
 
     def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
+        """Refuses MySQL older than 8.0.19, whose upserts couldn't name the
+        row they insert: 8.0 itself reached the end of its support in 2026.
+        """
 
-        return native(connection).cursor(buffered=True)
+        cursor = native(connection).cursor(buffered=True)
+        if self.databaseType == DatabaseType.MYSQL:
+            # Asked of the server: the driver's own answer is a method its
+            # newest versions deprecate and a property its oldest lack.
+            cursor.execute('SELECT VERSION()')
+            found = re.match(r'(\d+)\.(\d+)\.(\d+)', str(cursor.fetchone()[0]))
+            version = tuple(int(part) for part in found.groups()) if found else None
+            if version is not None and version < MYSQL_ROW_ALIAS_VERSION:
+                raise ConfigurationError('{} runs MySQL {}, and bauta needs {} or later'.format(
+                    settings.describeTarget(), '.'.join(map(str, version)), '.'.join(map(str, MYSQL_ROW_ALIAS_VERSION))))
+
+        return cursor
 
 
     def streamingCursor(self, connection: Connection, chunkSize: int) -> Any:
@@ -201,8 +219,15 @@ class MySQLDialect(DatabaseDialect):
                 "WHERE table_schema = COALESCE({}, DATABASE()) AND table_type = 'BASE TABLE' ORDER BY table_name")
 
 
-    @staticmethod
-    def _onDuplicateKey(table: str, primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+    def _inserted(self, column: str) -> str:
+        """The value of `column` in the row an upsert would insert, as its
+        ON DUPLICATE KEY UPDATE reads it.
+        """
+
+        return '{}.{}'.format(NEW_ROW, column)
+
+
+    def _onDuplicateKey(self, table: str, primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
         """The update for a row that matched one already there, guarded first.
 
         ON DUPLICATE KEY fires on any unique key, not only the primary key: a
@@ -222,17 +247,54 @@ class MySQLDialect(DatabaseDialect):
         from a stage table names the same columns in its SELECT.
         """
 
-        same = ' AND '.join('{0}.{1} <=> VALUES({1})'.format(table, column) for column in primaryKeyColumns)
+        same = ' AND '.join('{0}.{1} <=> {2}'.format(table, column, self._inserted(column)) for column in primaryKeyColumns)
         keyColumn = '{}.{}'.format(table, primaryKeyColumns[0])
         guard = '{0} = IF({1}, {0}, {2})'.format(keyColumn, same, UNIQUE_KEY_CLASH.format(keyColumn))
 
-        return 'ON DUPLICATE KEY UPDATE {}'.format(', '.join([guard] + ['{0}=VALUES({0})'.format(column) for column in nonPrimaryKeyColumns]))
+        return 'ON DUPLICATE KEY UPDATE {}'.format(', '.join([guard] + ['{}={}'.format(column, self._inserted(column)) for column in nonPrimaryKeyColumns]))
 
 
     def isUniqueKeyClash(self, error: BaseException) -> bool:
         """Whether `error` is _onDuplicateKey's guard refusing a row."""
 
         return getattr(error, 'errno', None) == 1242 and 'more than 1 row' in str(error)
+
+
+    def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+
+        return 'INSERT INTO {} ({}) VALUES ({}) AS {} {}'.format(table, ', '.join(allColumns), ', '.join(self.placeholders(len(allColumns))), NEW_ROW,
+                                                                self._onDuplicateKey(table, primaryKeyColumns, nonPrimaryKeyColumns))
+
+
+    def upsertFromStageQuery(self, targetTable: str, stageTable: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """The stage's rows through a derived table, which names the row the
+        update reads, as the row alias does for one insert.
+        """
+
+        return 'INSERT INTO {} ({}) SELECT * FROM (SELECT {} FROM {}) AS {} {}'.format(
+            targetTable, ', '.join(allColumns), ', '.join(allColumns), stageTable, NEW_ROW,
+            self._onDuplicateKey(targetTable, primaryKeyColumns, nonPrimaryKeyColumns))
+
+
+    def swapQueries(self, targetTable: str, stageTable: str, tempTable: str) -> List[str]:
+        """One atomic statement; RENAME TABLE takes qualified names on both sides."""
+
+        return ['RENAME TABLE {} TO {}, {} TO {}, {} TO {}'.format(stageTable, tempTable, targetTable, stageTable, tempTable, targetTable)]
+
+
+class MariaDBDialect(MySQLDialect):
+    """MySQL's dialect and driver: MariaDB is compatible with everything this
+    uses but the statement timeout, which it names otherwise, and an upsert's
+    inserted row, which it reads with VALUES(column) -- not deprecated there,
+    and the only way it has.
+    """
+
+    databaseType = DatabaseType.MARIADB
+
+
+    def _inserted(self, column: str) -> str:
+
+        return 'VALUES({})'.format(column)
 
 
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
@@ -245,20 +307,6 @@ class MySQLDialect(DatabaseDialect):
 
         return 'INSERT INTO {} ({}) SELECT {} FROM {} {}'.format(targetTable, ', '.join(allColumns), ', '.join(allColumns), stageTable,
                                                                 self._onDuplicateKey(targetTable, primaryKeyColumns, nonPrimaryKeyColumns))
-
-
-    def swapQueries(self, targetTable: str, stageTable: str, tempTable: str) -> List[str]:
-        """One atomic statement; RENAME TABLE takes qualified names on both sides."""
-
-        return ['RENAME TABLE {} TO {}, {} TO {}, {} TO {}'.format(stageTable, tempTable, targetTable, stageTable, tempTable, targetTable)]
-
-
-class MariaDBDialect(MySQLDialect):
-    """MySQL's dialect and driver: MariaDB is compatible with everything this
-    uses but the statement timeout, which it names otherwise.
-    """
-
-    databaseType = DatabaseType.MARIADB
 
 
     def limitStatements(self, connection: Connection, cursor: Cursor, seconds: float) -> None:

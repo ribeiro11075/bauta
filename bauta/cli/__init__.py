@@ -21,8 +21,9 @@ from typing import Any, Optional, Sequence
 from ..configuration import ConfigurationError
 from ..log.scrubbing import describeError
 from ..project import CONFIG_DIRECTORY_VARIABLE
-from .common import (EXIT_BAD_CONFIGURATION, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, MANIFEST_KEY_VARIABLE,
-                     NOTIFY_URL_VARIABLE, UsageError, _configureLogging, _toolVersion)
+from ..project import toolVersion
+from .common import (EXIT_BAD_CONFIGURATION, EXIT_INTERRUPTED, EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, MANIFEST_KEY_VARIABLE, NOTIFY_URL_VARIABLE,
+                     UsageError, _configureLogging)
 from .generate import _commandClear, _commandDiscover, _commandSchema, _commandSubset, _commandSynthesize
 from .review import _commandAudit, _commandBench, _commandCoverage, _commandVerifyReferences
 from .studio import _commandStudio
@@ -146,7 +147,7 @@ class _PrintVersion(argparse.Action):
         # Why not, as the extension found it: "not installed" and "installed,
         # another version" need different fixes.
         masker = 'bauta-rs {}'.format(native) if native else 'python ({})'.format(nativeUnavailableReason())
-        print('bauta {}'.format(_toolVersion()))
+        print('bauta {}'.format(toolVersion()))
         print('masking: {}'.format(masker))
         parser.exit()
 

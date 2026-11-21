@@ -1059,6 +1059,39 @@ def test_run_data_jobs_stops_on_sigterm_rather_than_running_forever(tmp_path):
     assert result.interrupted is True
 
 
+def test_a_signal_during_the_pause_between_forever_cycles_starts_no_other_cycle(tmp_path, monkeypatch):
+    """Stopped while it slept, the run started one more cycle, which marked
+    every due job skipped, and reported that -- to history, the manifest and
+    the webhook -- as how the run ended.
+    """
+
+    cycles: List[bool] = []
+
+    def cycle(dependencyGraph: DependencyGraph, workers: int, connections: Any, memory: Any, termination: Dict[str, bool], *rest: Any) -> None:
+        cycles.append(termination['terminating'])
+        if termination['terminating']:
+            dependencyGraph.skipNotStarted('stopped')
+        for job in dependencyGraph.takeReady():
+            dependencyGraph.finish(JobOutcome(job=job, status=JobStatus.COMPLETED))
+
+    monkeypatch.setattr('bauta.jobs.runner._runCycle', cycle)
+    raw = {'workers': 1, 'cycleSleepSeconds': 30,
+           'jobs': {'copy': {'sourceConnection': 'x', 'targetConnection': 'y', 'insertStrategy': 'upsert', 'targetTableFinal': 't',
+                             'sourceQuery': 'select 1'}}}
+    jobsFile = Configuration.validateJobConfiguration(raw, DataJobsFile)
+    reported: List[RunResult] = []
+
+    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+    started = time.monotonic()
+    result = runDataJobs(jobsFile=jobsFile, connectionConfiguration={}, logFile=tmp_path / 'runner.log',
+                         memory=FileMemory(memoryFile=tmp_path / 'runner.yaml'), runForever=True, onCycle=reported.append)
+
+    assert time.monotonic() - started < 10
+    assert cycles == [False]
+    assert [(outcome.job, outcome.status) for each in reported for outcome in each.outcomes] == [('copy', JobStatus.COMPLETED)]
+    assert result.interrupted is True and result.succeeded is True
+
+
 def _retryJobConfig(**overrides: Any) -> DataJobConfig:
     fields = dict(active=True, sourceConnection='src', targetConnection='tgt', insertStrategy=InsertStrategy.UPSERT,
                    chunkSize=100, targetTableFinal='people', sourceQuery='select * from people',

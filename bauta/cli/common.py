@@ -13,12 +13,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..configuration import Configuration, ConnectionConfig, DataJobConfig, DataJobsFile, StorageLocation, TableLocation
-from ..database.sessions import Connections, sourceQueryColumns, sourceQuerySample, targetColumns
 from ..jobs.memory import DatabaseMemory, FileMemory, MemoryBackend
 from ..log import Log
-from ..project import (CONNECTIONS_FILE, DEFAULT_TABLES, JOBS_FILE, Location, Project, UsageError, checkColumnCounts,
-                       checkMaskingCoverage, configDirectory, describeLocation, loadConnections, loadYaml, lockFileFor, openHistory, readJobs, requireAlias,
-                       requireDatabase, resolveLocation, settingsFor)
+from ..project import (CONNECTIONS_FILE, DEFAULT_TABLES, JOBS_FILE, Location, Project, UsageError, checkMaskingCoverage, configDirectory,
+                       loadConnections, loadYaml, lockFileFor, resolveLocation, settingsFor)
 
 EXIT_SUCCESS = 0
 
@@ -69,20 +67,6 @@ def _resolveLocation(arguments: argparse.Namespace, setting: str, configured: Op
                            connection=getattr(arguments, setting + '_connection', None), table=getattr(arguments, setting + '_table', None))
 
 
-_loadYaml = loadYaml
-_readJobs = readJobs
-_describeLocation = describeLocation
-_settingsFor = settingsFor
-_history = openHistory
-_requireAlias = requireAlias
-_requireDatabase = requireDatabase
-_Connections = Connections
-_sourceQueryColumns = sourceQueryColumns
-_sourceQuerySample = sourceQuerySample
-_targetColumns = targetColumns
-_checkColumnCounts = checkColumnCounts
-
-
 def _refuseReadOnlyLocations(arguments: argparse.Namespace, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig]) -> None:
     """Fails where run state, history or the manifest would be written to a
     readOnly connection, before anything runs: what `validate` and `run` ask.
@@ -92,7 +76,7 @@ def _refuseReadOnlyLocations(arguments: argparse.Namespace, jobsFile: DataJobsFi
                                                            for setting in ('history', 'manifest')]
     for location in locations:
         if isinstance(location, TableLocation):
-            _settingsFor(location, connectionConfiguration)
+            settingsFor(location, connectionConfiguration)
 
 
 def _memoryLocation(arguments: argparse.Namespace, jobsFile: DataJobsFile) -> Location:
@@ -118,7 +102,7 @@ def _memoryBackend(arguments: argparse.Namespace, jobsFile: DataJobsFile,
     lockFile = lockFileFor(location, jobsPath, jobsFile.memory)
 
     if isinstance(location, TableLocation):
-        return DatabaseMemory(connectionSettings=_settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['memory']), lockFile
+        return DatabaseMemory(connectionSettings=settingsFor(location, connectionConfiguration), table=location.table or DEFAULT_TABLES['memory']), lockFile
 
     return FileMemory(memoryFile=location), lockFile
 
@@ -182,16 +166,6 @@ def _selectJobs(jobs: Dict[str, DataJobConfig], requested: Optional[List[str]], 
     return selected
 
 
-def _toolVersion() -> str:
-
-    from importlib.metadata import PackageNotFoundError, version
-
-    try:
-        return version('bauta')
-    except PackageNotFoundError:
-        return 'unknown'
-
-
 def _checkMaskingCoverage(name: str, job: DataJobConfig, returned: Sequence[str], log: Log) -> Optional[str]:
     """Whether the job's masking policy covers every column its query returns."""
 
@@ -227,7 +201,7 @@ def _discoveryRulesFile(arguments: argparse.Namespace) -> Tuple[Optional[Path], 
     if not arguments.rules and not path.exists():
         return None, None
 
-    return path, Configuration.validateDiscoveryRules(_loadYaml(path), str(path))
+    return path, Configuration.validateDiscoveryRules(loadYaml(path), str(path))
 
 
 def _discoveryRules(arguments: argparse.Namespace) -> Any:

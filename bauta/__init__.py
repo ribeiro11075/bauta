@@ -5,6 +5,7 @@ What is importable from here is the public API, the one docs/reference/python-ap
 describes. A name reached only through a submodule is internal, unless the
 documentation names it there, and may change in any release.
 """
+from ._version import __version__
 from .configuration import (Configuration, ConfigurationError, ConnectionConfig, DatabaseType, DataJobConfig, DataJobsFile, DiscoveryRulesFile,
                             DuckDBConnection, FilesConnection, InsertStrategy, MariaDBConnection, MaskingConfig, MSSQLConnection, MySQLConnection, OracleConnection,
                             PostgreSQLConnection, SQLiteConnection, connectionConfig, expandEnvironmentVariables, readJobsFile)
@@ -25,6 +26,7 @@ from .jobs.runner import RunProgress, RunResult, runDataJobs
 from .transform import Transformer, TransformError, TransformResolutionError
 
 __all__ = [
+    '__version__',
     'auditJobs',
     'buildMaskingManifest',
     'Configuration',

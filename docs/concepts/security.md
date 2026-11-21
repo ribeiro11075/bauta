@@ -176,7 +176,7 @@ The configuration is trusted: whoever can change it controls what the tool does.
 - **SQL.** `sourceQuery`, subset `--where` filters, adhoc queries and `currentSchema` are written into SQL as given (`currentSchema` must be a plain identifier). Table and column names are quoted into the statements bauta builds, which makes them one identifier each but is not a defence: a name is configuration, not data. Data values are always bound as parameters.
 - **Code.** Transformer references and custom masking strategies import and run Python modules named in the configuration. Transformer arguments are limited to literals.
 - **Commands.** `passwordCommand` runs a program named in the configuration, without a shell.
-- **Files.** `${file:...}` reads any file the process can read.
+- **Files.** `${file:...}` reads any file the process can read. A DuckDB connection's queries can reach no file outside its database unless its `options` set `enable_external_access`; see [DuckDB](../reference/connections.md#duckdb).
 - **Discovery rules.** `discovery.yaml`'s regular expressions run against values sampled from production, in memory; like any regular expression, a badly written one can be slow.
 - **YAML** is parsed with PyYAML's safe loader, and run memory is written with its safe dumper, so neither can construct Python objects.
 

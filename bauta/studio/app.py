@@ -36,12 +36,14 @@ UNEXPECTED_ERROR = 'something went wrong on the server; its log says what'
 logger = logging.getLogger(__name__)
 
 
-def _archiveLoop(settings: Settings, database: Database, stop: threading.Event) -> None:
+def _archiveLoop(settings: Settings, database: Database, launcher: Launcher, stop: threading.Event) -> None:
     """Keeps each manifest `run` writes, by run, as it appears: see
-    evidence.archiveManifest.
+    evidence.archiveManifest. Collects the exits of the runs Studio started,
+    too, so none is left a zombie process.
     """
 
     while not stop.wait(ARCHIVE_SECONDS):
+        launcher.reap()
         try:
             with database.open() as session:
                 evidence.archiveManifest(session, workspace.loadProject(settings))
@@ -123,7 +125,7 @@ def createApp(settings: Settings) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
         stop = threading.Event()
-        threading.Thread(target=_archiveLoop, args=(settings, database, stop), name='studio-manifests', daemon=True).start()
+        threading.Thread(target=_archiveLoop, args=(settings, database, launcher, stop), name='studio-manifests', daemon=True).start()
         threading.Thread(target=checks.scheduleLoop, args=(database, lambda: workspace.loadProject(settings), stop), name='studio-checks',
                          daemon=True).start()
         try:

@@ -20,10 +20,11 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from ..log.scrubbing import describeError
+from ..jobs.status import processAlive
+from ..log.scrubbing import describeError, scrubForeignText
 from .checks import latest
 from .db import Check, LaunchedRun, User, utcnow
-from .settings import Settings
+from .settings import PRIVATE_DIRECTORY_MODE, Settings
 
 # Read back for the run page: the end of a long log is what matters.
 LOG_TAIL_BYTES = 256 * 1024
@@ -64,7 +65,7 @@ class Launcher:
 
     def start(self, session: Session, user: User, jobs: List[str], fullRefresh: bool = False) -> LaunchedRun:
 
-        self.settings.runLogDirectory.mkdir(parents=True, exist_ok=True)
+        self.settings.runLogDirectory.mkdir(mode=PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
         launched = LaunchedRun(userId=user.id, email=user.email, jobs=jobs, options={'fullRefresh': fullRefresh})
         session.add(launched)
         session.flush()
@@ -105,14 +106,27 @@ class Launcher:
                     with self._lock:
                         self._processes.pop(launched.id, None)
                     changed = True
-            elif launched.pid is not None and not _alive(launched.pid):
+            elif launched.pid is not None and not (processAlive(launched.pid) and isBautaRun(commandOf(launched.pid))):
                 # Started before Studio restarted: it ended, but how is
-                # only in its log.
+                # only in its log. A process with its id that isn't `bauta
+                # run` took the id since, and kept the run showing as running.
                 launched.finishedAt = utcnow()
                 changed = True
 
         if changed:
             session.commit()
+
+
+    def reap(self) -> None:
+        """Collects the exit of every run Studio holds that has ended, which
+        otherwise stayed a zombie process until someone looked at its page.
+        What became of it is recorded by refresh(), whenever that is.
+        """
+
+        with self._lock:
+            processes = list(self._processes.values())
+        for process in processes:
+            process.poll()
 
 
     def _runIdFromLog(self, launched: LaunchedRun) -> Optional[str]:
@@ -201,8 +215,9 @@ def startBench(settings: Settings, database: Any, email: str, job: str, rows: in
             finished = subprocess.run(command, capture_output=True, text=True, timeout=BENCH_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL,
                                       cwd=str(settings.configDirectory.parent))
             report = json.loads(finished.stdout) if finished.stdout.strip() else None
-            result = {'status': 'done', 'report': report} if report is not None else \
-                {'status': 'failed', 'problem': (finished.stderr.strip() or 'bench exited {}'.format(finished.returncode))[-2000:]}
+            # Scrubbed, as anything a process wrote is before Studio keeps it.
+            problem = scrubForeignText(finished.stderr.strip() or 'bench exited {}'.format(finished.returncode))[-2000:]
+            result = {'status': 'done', 'report': report} if report is not None else {'status': 'failed', 'problem': problem}
         except subprocess.TimeoutExpired:
             result = {'status': 'failed', 'problem': 'stopped after {} seconds'.format(BENCH_TIMEOUT_SECONDS)}
         except Exception as error:
@@ -262,21 +277,9 @@ def cancelRun(live: Dict[str, Any]) -> None:
     if live.get('host') != socket.gethostname():
         raise CancelRefused('the run is on {}; cancel it there'.format(live.get('host')))
     pid = int(live['pid'])
-    if not _alive(pid):
+    if not processAlive(pid):
         raise CancelRefused('the run has already ended')
     if not isBautaRun(commandOf(pid)):
         raise CancelRefused('process {} is no longer the run'.format(pid))
 
     os.kill(pid, signal.SIGTERM)
-
-
-def _alive(pid: int) -> bool:
-
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-
-    return True

@@ -10,7 +10,7 @@ import os
 from typing import Any, Dict, List, Sequence
 
 from ..project import Project
-from .configfiles import EditRefused, digest, writeFile
+from .configfiles import EditRefused, digest, writeFiles
 from .settings import Settings
 
 
@@ -35,8 +35,8 @@ def findings(project: Project, sample: int = 1000) -> Dict[str, Any]:
 
 def apply(settings: Settings, project: Project, kept: Dict[str, Any], accepted: Sequence[str]) -> List[Dict[str, Any]]:
     """Writes the kept proposals for the `accepted` jobs into the files they
-    are defined in, one file at a time, each validated, backed up and diffed
-    as any edit is. Returns each file's write.
+    are defined in, all of them validated together, backed up and diffed as
+    any edit is, and written only if they all pass. Returns each file's write.
     """
 
     from ..generate.discovery import Suggestion
@@ -56,16 +56,16 @@ def apply(settings: Settings, project: Project, kept: Dict[str, Any], accepted: 
                          removed=list(entry['removed']))
         byFile.setdefault(entry['file'], []).append(drift)
 
-    written = []
+    edits = {}
     for relative, drifts in byFile.items():
-        path = project.directory / relative
-        before = path.read_text()
+        before = (project.directory / relative).read_text()
         text = before
         try:
             for drift in drifts:
                 text = applyDrift(text, drift)
         except DriftError as error:
             raise EditRefused('{}: {}. Apply it by hand in the editor.'.format(relative, error)) from error
-        written.append(writeFile(settings, project, relative, text, digest(before)))
+        edits[relative] = (text, digest(before))
 
-    return written
+    # Together, so a change refused in one file leaves the others as they were.
+    return writeFiles(settings, project, edits)

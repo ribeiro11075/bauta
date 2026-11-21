@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from ..configuration import isLake
 from ..log.scrubbing import describeError
 from ..project import Project
-from .db import Activity, Check, Database, Setting
+from .db import Activity, Check, Database, Setting, aware
 
 SCHEDULE_SETTING = 'checkSchedule'
 KINDS = ['coverage', 'audit', 'discovery', 'references']
@@ -28,6 +28,8 @@ DEFAULT_SCHEDULE = {'enabled': False, 'time': '03:00', 'kinds': KINDS}
 SCHEDULE = 'schedule'
 # How often the schedule looks at the clock.
 TICK_SECONDS = 60.0
+# Checks read from Studio's database at a time, looking for the latest.
+CHECKS_PAGE = 200
 
 logger = logging.getLogger(__name__)
 
@@ -42,15 +44,25 @@ def saveCheck(session: Session, kind: str, email: str, result: Dict[str, Any]) -
 
 
 def latest(session: Session, kind: str, count: int = 1, where: Optional[Callable[[Check], bool]] = None) -> List[Check]:
+    """The newest `count` checks of `kind`, newest first, of those `where`
+    accepts. Read a page at a time, as far back as it takes: only the newest
+    200 were read, so a job measured before 200 other measurements, or a
+    database checked before 200 others, showed as never checked.
+    """
 
-    found = []
-    for check in session.scalars(select(Check).where(Check.kind == kind).order_by(Check.id.desc()).limit(200)):
-        if where is None or where(check):
-            found.append(check)
-            if len(found) == count:
-                break
+    found: List[Check] = []
+    before: Optional[int] = None
+    while len(found) < count:
+        query = select(Check).where(Check.kind == kind)
+        if before is not None:
+            query = query.where(Check.id < before)
+        page = list(session.scalars(query.order_by(Check.id.desc()).limit(CHECKS_PAGE)))
+        found.extend(check for check in page if where is None or where(check))
+        if len(page) < CHECKS_PAGE:
+            break
+        before = page[-1].id
 
-    return found
+    return found[:count]
 
 
 def latestDict(session: Session, kind: str) -> Optional[Dict[str, Any]]:
@@ -201,7 +213,7 @@ def _lastScheduledRun(session: Session) -> Optional[datetime.datetime]:
     if found is None:
         return None
 
-    return found.at if found.at.tzinfo else found.at.replace(tzinfo=datetime.timezone.utc)
+    return aware(found.at)
 
 
 def due(session: Session, now: datetime.datetime) -> bool:

@@ -357,3 +357,21 @@ def test_duckdb_errors_quote_no_values(statement):
     assert SECRET not in described and '77777777777' not in described
     # A known format keeps what it says about the failure.
     assert described.startswith(type(raised.value).__name__ + ': ')
+
+
+@pytest.mark.parametrize('line', ["relation 'table{}'", "got 'value{}' here"])
+def test_a_message_quoting_many_names_or_values_is_scrubbed_in_time_proportional_to_it(line):
+    """Each name it kept read the whole message before it again, and each
+    value walked every quote after it: 16,000 names took over a minute.
+    """
+
+    import time
+
+    text = '\n'.join(line.format(index) for index in range(20_000))
+    best = float('inf')
+    for _ in range(3):
+        started = time.perf_counter()
+        scrubForeignText(text)
+        best = min(best, time.perf_counter() - started)
+
+    assert best < 2.0

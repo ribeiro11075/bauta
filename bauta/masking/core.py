@@ -22,7 +22,6 @@ import hashlib
 import functools
 import hmac
 import importlib
-import importlib.metadata
 import json
 import logging
 import math
@@ -112,11 +111,9 @@ def _nativeModule() -> Any:
         _nativeUnavailable, _nativeUnavailableKind = 'bauta-rs is not installed; pip install "bauta[native]" installs it', 'missing'
         return None
 
-    try:
-        expected = importlib.metadata.version('bauta')
-    except importlib.metadata.PackageNotFoundError:
-        # Imported from a source tree that was never installed: nothing to compare against.
-        return bauta_rs
+    # This package's own version, not what pip recorded, which an editable
+    # install keeps from whenever it was installed.
+    from .._version import __version__ as expected
 
     installed = getattr(bauta_rs, '__version__', None)
     if installed != expected:

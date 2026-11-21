@@ -189,3 +189,15 @@ def test_verify_references_skips_inactive_jobs_unless_named(workspace, capsys):
 
     assert main(['verify-references', '--quiet']) == EXIT_SUCCESS
     assert main(['verify-references', '--quiet', '--job', 'loadOrders']) == EXIT_JOBS_DID_NOT_SUCCEED
+
+
+def test_a_job_table_named_for_a_reserved_word_is_counted(copy):
+    """A key the target doesn't declare named the job's table in its query as
+    written, so `order` was a syntax error and its orphans went uncounted.
+    """
+
+    _load(copy, 'CREATE TABLE customers (id INT PRIMARY KEY)', 'CREATE TABLE "order" (id INT PRIMARY KEY, customer_id INT)',
+          'INSERT INTO "order" VALUES (10, 99)')
+    key = ForeignKey('order', ('customer_id',), 'customers', ('id',), 'fk_order')
+
+    assert _counts(verifyReferences(copy, 'copy', {'ORDER': 'order', 'CUSTOMERS': 'customers'}, [key])) == [('order', False, 1, None)]

@@ -7,8 +7,8 @@ import argparse
 import json
 
 from ..log import Log
-from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadDataJobs, _loadProject, _selectJobs, _toolVersion,
-                     _writeOutput)
+from ..project import toolVersion
+from .common import (EXIT_JOBS_DID_NOT_SUCCEED, EXIT_SUCCESS, UsageError, _discoveryRules, _loadDataJobs, _loadProject, _selectJobs, _writeOutput)
 
 
 def _commandVerifyReferences(arguments: argparse.Namespace, log: Log) -> int:
@@ -58,7 +58,7 @@ def _commandCoverage(arguments: argparse.Namespace, log: Log) -> int:
         from ..review.html import renderCoverageHtml
 
         generatedAt = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
-        text = renderCoverageHtml(report, generatedAt=generatedAt, version=_toolVersion())
+        text = renderCoverageHtml(report, generatedAt=generatedAt, version=toolVersion())
     else:
         text = json.dumps(report, indent=2, default=str) + '\n' if arguments.format == 'json' else renderCoverage(report)
     _writeOutput(text, arguments.output)
@@ -98,7 +98,7 @@ def _commandAudit(arguments: argparse.Namespace, log: Log) -> int:
     if arguments.format == 'html':
         from ..review.html import renderAuditHtml
 
-        text = renderAuditHtml(report, version=_toolVersion())
+        text = renderAuditHtml(report, version=toolVersion())
     else:
         text = json.dumps(report, indent=2, default=str) + '\n' if arguments.format == 'json' else renderAudit(report)
     _writeOutput(text, arguments.output)

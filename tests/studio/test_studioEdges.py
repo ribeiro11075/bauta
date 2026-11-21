@@ -212,7 +212,7 @@ def test_the_manifest_keeper_and_the_schedule_each_take_a_turn(app, settings, mo
     monkeypatch.setattr(studioApp, 'ARCHIVE_SECONDS', 0.05)
     monkeypatch.setattr(checks, 'TICK_SECONDS', 0.05)
     stop = threading.Event()
-    keeper = threading.Thread(target=studioApp._archiveLoop, args=(settings, app.state.database, stop))
+    keeper = threading.Thread(target=studioApp._archiveLoop, args=(settings, app.state.database, app.state.launcher, stop))
     schedule = threading.Thread(target=checks.scheduleLoop, args=(app.state.database, lambda: workspace.loadProject(settings), stop))
     keeper.start()
     schedule.start()
@@ -472,3 +472,66 @@ def test_a_run_of_named_jobs_runs_only_those(signIn):
 
     assert finished['exitCode'] == 0
     assert [job['job'] for job in client.get('/api/runs/{}'.format(finished['runId'])).json()['jobs']] == ['copyPeople']
+
+
+def test_a_jobs_latest_measurement_is_found_however_many_others_came_after_it(app):
+    """Only the newest 200 checks were looked through, so a job measured
+    before 200 others showed as never measured.
+    """
+    from bauta.studio import checks
+    from bauta.studio.db import Check
+
+    with app.state.database.open() as session:
+        session.add(Check(kind='bench', email='x', result={'job': 'copyPeople', 'status': 'done'}))
+        session.add_all([Check(kind='bench', email='x', result={'job': 'copyOrders', 'status': 'done'}) for _ in range(450)])
+        session.commit()
+
+        found = checks.latest(session, 'bench', 1, where=lambda check: check.result.get('job') == 'copyPeople')
+
+    assert [check.result['job'] for check in found] == ['copyPeople']
+
+
+def test_an_edit_across_two_files_is_written_whole_or_not_at_all(settings):
+    """Discovery wrote one file at a time, so a change refused in the second
+    left the first changed.
+    """
+    from bauta import Project
+    from bauta.studio import configfiles
+
+    jobs = settings.configDirectory / 'jobs.yaml'
+    extra = settings.configDirectory / 'extra.yaml'
+    extra.write_text('jobs:\n  copyMore:\n    sourceConnection: demo\n    sourceQuery: SELECT id FROM orders\n    targetConnection: demo\n'
+                     '    targetTableFinal: orders_copy\n    insertStrategy: upsert\n    unmasked: true\n')
+    jobs.write_text(jobs.read_text() + 'include: [extra.yaml]\n')
+    project = Project.load(settings.configDirectory)
+    before = {path: path.read_text() for path in (jobs, extra)}
+
+    with pytest.raises(configfiles.EditRefused):
+        configfiles.writeFiles(settings, project, {
+            'jobs.yaml': (before[jobs] + '# a comment, which alone would pass\n', configfiles.digest(before[jobs])),
+            'extra.yaml': (before[extra].replace('insertStrategy: upsert', 'insertStrategy: sideways'), configfiles.digest(before[extra])),
+            })
+
+    assert {path: path.read_text() for path in (jobs, extra)} == before
+
+
+def test_studio_keeps_its_backups_where_only_its_own_account_can_read_them(settings, signIn):
+    response = signIn('admin').get('/api/configuration/file', params={'path': 'jobs.yaml'})
+    edited = signIn('admin').put('/api/configuration/file', params={'path': 'jobs.yaml'},
+                                 json={'text': response.json()['text'] + '# edited\n', 'digest': response.json()['digest']})
+
+    assert edited.status_code == 200, edited.text
+    assert settings.backupDirectory.stat().st_mode & 0o077 == 0
+
+
+def test_a_change_to_the_jobs_file_made_outside_studio_shows_at_once(settings, signIn):
+    """The configuration is reused between requests while its files stay as
+    they were; one changed by hand, or by a deploy, is read again.
+    """
+    viewer = signIn('viewer')
+    assert 'copyOrders' in [job['name'] for job in viewer.get('/api/jobs').json()['jobs']]
+
+    jobs = settings.configDirectory / 'jobs.yaml'
+    jobs.write_text(jobs.read_text().replace('copyOrders', 'copyTotals'))
+
+    assert 'copyTotals' in [job['name'] for job in viewer.get('/api/jobs').json()['jobs']]

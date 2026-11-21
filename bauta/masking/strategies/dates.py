@@ -5,7 +5,8 @@ Part of the strategies package; see its __init__.
 from __future__ import annotations
 
 import datetime
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+import re
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..core import MASK_CACHE_SIZE, KeyedHash, MaskingError, Strategy, canonical
 from .common import _integerOption, _textOption, _typeName
@@ -13,6 +14,9 @@ from .common import _integerOption, _textOption, _typeName
 
 _CALENDAR_ENDS = frozenset({datetime.date.min.toordinal(), datetime.date.max.toordinal()})
 _CALENDAR_INSIDE = range(datetime.date.min.toordinal() + 1, datetime.date.max.toordinal())
+# ISO 8601 text as it is usually written: a date, then perhaps a time to the
+# hour, minute, second or fraction of one, then perhaps Z or an offset.
+_ISO_TEXT = re.compile(r'(\d{4}-\d{2}-\d{2})(?:[T ](\d{2})(?::(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?)?(Z|[+-]\d{2}(?::?\d{2})?)?)?')
 
 
 class DateShiftStrategy(Strategy):
@@ -150,12 +154,15 @@ class DateShiftStrategy(Strategy):
             raise MaskingError('the dateShift strategy needs a date, a timestamp or ISO 8601 text, got {}'.format(_typeName(value)))
 
         text = value.strip()
+        day = _isoDay(text)
+        if day is not None:
+            # The shift is whole days, so only the date changes: the time,
+            # its fraction of a second and its zone stay as they were
+            # written, `.5` and `Z` included, where Python's isoformat wrote
+            # `.500000` and `+00:00` back.
+            return self._shift(day, subject).isoformat() + text[10:]
 
         try:
-            if len(text) == 10:
-                parsed: datetime.date = datetime.date.fromisoformat(text)
-                return self._shift(parsed, subject).isoformat()
-
             parsedTimestamp = datetime.datetime.fromisoformat(text)
         except ValueError:
             raise MaskingError('the dateShift strategy could not read a text value as an ISO 8601 date') from None
@@ -165,3 +172,29 @@ class DateShiftStrategy(Strategy):
         timespec = 'microseconds' if '.' in text else ('seconds' if text.count(':') >= 2 else 'minutes')
 
         return shifted.isoformat(sep=separator, timespec=timespec)
+
+
+def _isoDay(text: str) -> Optional[datetime.date]:
+    """The day of ISO 8601 text in the usual shape (see _ISO_TEXT), its time
+    and zone checked as real ones, or None for text in another shape --
+    which Python 3.11 reads more of than 3.10, as datetime.fromisoformat.
+    Raises MaskingError for text in this shape naming no real day or time.
+    """
+
+    match = _ISO_TEXT.fullmatch(text)
+    if match is None:
+        return None
+
+    _, hour, minute, second, _, zone = match.groups()
+    try:
+        day = datetime.date.fromisoformat(match.group(1))
+        if hour is not None:
+            datetime.time(int(hour), int(minute or 0), int(second or 0))
+        if zone is not None and zone != 'Z':
+            digits = zone[1:].replace(':', '')
+            if int(digits[:2]) > 23 or int(digits[2:] or 0) > 59:
+                raise ValueError
+    except ValueError:
+        raise MaskingError('the dateShift strategy could not read a text value as an ISO 8601 date') from None
+
+    return day

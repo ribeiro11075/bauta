@@ -25,6 +25,8 @@ LOCK_POLL_SECONDS = 0.5
 
 # What DuckDB says when another process holds the file.
 _LOCK_MESSAGE = 'Could not set lock on file'
+# DuckDB's setting for reaching files, URLs and other databases from SQL.
+EXTERNAL_ACCESS = 'enable_external_access'
 
 # The chunk is registered under this name for the statement that loads it.
 _CHUNK_VIEW = 'bauta_chunk'
@@ -257,11 +259,20 @@ class DuckDBDialect(_OnConflictDialect):
     def connectArguments(self, settings: DatabaseConfig, resolvePassword: bool = True) -> Dict[str, Any]:
         """`options` are DuckDB's own settings (`memory_limit`, `threads`, ...),
         which duckdb.connect takes as one `config` mapping.
+
+        A query can reach nothing outside the database unless `options` sets
+        enable_external_access: DuckDB otherwise reads any file this account
+        can with read_text('/etc/passwd'), and writes one with COPY ... TO,
+        even on a file opened read-only. A readOnly connection's file is
+        opened read-only, so DuckDB itself refuses a write, a sourceQuery's
+        `DELETE ... RETURNING` among them.
         """
 
+        settings = settingsOf(settings, DuckDBConnection)
         arguments = self._ownConnectArguments(settings, None)
-        if settings.options:
-            arguments['config'] = dict(settings.options)
+        arguments['config'] = dict({EXTERNAL_ACCESS: False}, **settings.options)
+        if settings.readOnly and settings.path != ':memory:':
+            arguments['read_only'] = True
 
         return arguments
 
