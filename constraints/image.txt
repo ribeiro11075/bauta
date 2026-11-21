@@ -24,7 +24,9 @@ duckdb==1.5.5
 fastapi==0.143.3
 fsspec==2026.9.0
 h11==0.16.0
+httpcore==1.0.9
 httptools==0.9.0
+httpx==0.28.1
 idna==3.20
 jmespath==1.1.0
 mako==1.4.3
@@ -43,7 +45,9 @@ pydantic==2.13.5
 pydantic-core==2.46.5
 pygments==2.21.0
 pyiceberg==0.12.0
+pyjwt==2.15.1
 pymssql==2.4.1
+pyotp==2.12.1
 pyparsing==3.3.3
 pyroaring==1.1.0
 python-dateutil==2.9.0.post0
@@ -54,6 +58,7 @@ requests==2.34.2
 rich==15.0.0
 ruamel.yaml==0.19.1
 s3transfer==0.19.2
+segno==1.6.6
 six==1.17.0
 sqlalchemy==2.1.1
 starlette==1.8.0

@@ -8,7 +8,7 @@ from .common import UsageError
 
 STUDIO_EXTRA = 'pip install "bauta[studio]"'
 # What the extra installs, checked before anything starts.
-STUDIO_MODULES = ['fastapi', 'uvicorn', 'sqlalchemy', 'alembic', 'argon2']
+STUDIO_MODULES = ['fastapi', 'uvicorn', 'sqlalchemy', 'alembic', 'argon2', 'httpx', 'jwt', 'pyotp', 'segno', 'cryptography']
 
 
 def _commandStudio(arguments: argparse.Namespace, log: Log) -> int:
@@ -24,4 +24,4 @@ def _commandStudio(arguments: argparse.Namespace, log: Log) -> int:
 
     from ..studio import commands
 
-    return {'serve': commands.serve, 'create-user': commands.createUser}[arguments.studio_command](arguments)
+    return {'serve': commands.serve, 'create-user': commands.createUser, 'set-password': commands.setPassword}[arguments.studio_command](arguments)

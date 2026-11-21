@@ -5,6 +5,31 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry here says so: the same value, key and domain give the same mask in every version so far.
 
 
+## Unreleased
+
+Studio signs people in through your identity provider -- single sign-on with OpenID Connect, for Okta, Entra ID, Google Workspace, Auth0, Keycloak and the rest -- and can ask a password for a code from an authenticator app. See [single sign-on](docs/guides/studio.md#single-sign-on) and [two-factor sign-in](docs/guides/studio.md#two-factor-sign-in).
+
+### Breaking
+- **A Studio database made before this release must be made again**: stop Studio, move its database aside (`studio.db` in the data directory, or the one `BAUTA_STUDIO_DATABASE_URL` names), start it, and add the accounts again. Its tables were changed in place rather than by a new migration, so an existing one lacks single sign-on's and two-factor sign-in's.
+- **`/api/auth/me`'s refusal and `/api/users` say more**: how the sign-in page offers to sign in, and how each account signs in.
+- **A right password may not sign in yet**: `/api/auth/login` answers `{"twoFactorStep": ...}` for an account that needs a code next, or must set an app up first.
+
+### Added
+- **Single sign-on for Studio**, with the authorization code flow and PKCE. The provider's ID token is checked against its published keys, and only an asymmetric algorithm is taken. A person is linked to their account by the provider's issuer and subject, never by email once linked. Before that, they are linked by an email the provider vouches for, so a provider that lets people set their own email can't hand over an account.
+  - **Accounts** are made by an admin, or at a person's first sign-in for the email domains you allow.
+  - **Roles** are set on the Users page, or from the person's groups at the provider at every sign-in, with `BAUTA_STUDIO_OIDC_ROLES=provider`.
+  - **Passwords** stay for everyone, or only for admins, keeping a break-glass account for when the provider is down, or are turned off, with `BAUTA_STUDIO_PASSWORD_LOGIN`. Linking an account removes a password the policy wouldn't let it use, a break-glass admin is never linked, and the provider's groups can't take the admin role from the last admin.
+  - **Sessions** through the provider last 8 hours by default, where a password's last 12, so someone disabled there loses access sooner.
+  - **Admins** can add an account with no password, and unlink one from the provider when a person's identity there was made again. `bauta studio create-user --sso-only` does the same from the command line.
+  - **Logs:** the callback's authorization code is kept out of the access log.
+  - **Google Workspace** accounts can be limited to your workspaces with `BAUTA_STUDIO_OIDC_HOSTED_DOMAINS`, and Entra ID's `xms_edov` vouches for an email.
+- **Two-factor sign-in for passwords**, with any authenticator app (TOTP), set up from a QR code on a new Account page, with ten one-time recovery codes. `BAUTA_STUDIO_REQUIRE_2FA` requires it of admins, the default once single sign-on is on, or of everyone. Secrets are encrypted with a key kept in `secret.key`, or where `BAUTA_STUDIO_SECRET_KEY_FILE` says; each code is taken once, and wrong ones are throttled per account. An admin resets it for someone who lost their app.
+- **Changing your own password** on the Account page, giving the one you have; wrong ones count as failed sign-ins, and every other session of yours ends. An admin sets someone's password on the Users page.
+- **`bauta studio set-password`**, the way back in for a locked-out admin: sets an account's password from the server's shell, and with `--reset-2fa` turns its two-factor sign-in off.
+- **`BAUTA_STUDIO_SESSION_HOURS`** sets how long a session signed in with a password lasts.
+- **A new sign-in ends the session the browser had.**
+- The `studio` extra installs httpx and PyJWT, for single sign-on, and pyotp, segno and cryptography, for two-factor sign-in.
+
 ## 0.2.11 — 2026-11-21
 
 The native masker no longer crashes Studio, a `--forever` run keeps a manifest of what it masked, DuckDB connections are locked down, MySQL upserts drop the deprecated `VALUES()`, and a dozen smaller fixes. No mask changes, though `dateShift` writes some ISO text back closer to how it came; see below.

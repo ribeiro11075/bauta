@@ -9,17 +9,19 @@ import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
 import './styles.css'
 import { App } from './App'
-import { ApiError } from './api'
+import { ApiError, SIGNING_IN } from './api'
 
 // A 401 anywhere means the session ended -- signed out elsewhere, expired,
 // or the user deactivated: ask again who is signed in, which shows sign-in.
-function signedOut(error: unknown, key?: readonly unknown[]) {
-  if (error instanceof ApiError && error.status === 401 && key?.[0] !== 'me') client.invalidateQueries({ queryKey: ['me'] })
+// Not while signing in, where a 401 is a wrong password or code: asking
+// again would start the sign-in page over, and lose what it said was wrong.
+function signedOut(error: unknown, meta: Record<string, unknown> | undefined, key?: readonly unknown[]) {
+  if (error instanceof ApiError && error.status === 401 && key?.[0] !== 'me' && !meta?.[SIGNING_IN]) client.invalidateQueries({ queryKey: ['me'] })
 }
 
 const client: QueryClient = new QueryClient({
-  queryCache: new QueryCache({ onError: (error, query) => signedOut(error, query.queryKey) }),
-  mutationCache: new MutationCache({ onError: (error) => signedOut(error) }),
+  queryCache: new QueryCache({ onError: (error, query) => signedOut(error, query.meta, query.queryKey) }),
+  mutationCache: new MutationCache({ onError: (error, _variables, _context, mutation) => signedOut(error, mutation.meta) }),
   defaultOptions: {
     queries: {
       // A 401 or 403 won't pass on a retry; anything else may.

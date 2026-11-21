@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
-import { api, ApiError, can, type User } from './api'
+import { api, can, signInOptions, type User } from './api'
 import { Loading } from './components/ui'
 import { SignIn } from './pages/SignIn'
 import { Overview } from './pages/Overview'
@@ -12,6 +12,7 @@ import { Proof } from './pages/Proof'
 import { Connections } from './pages/Connections'
 import { Configuration } from './pages/Configuration'
 import { Users } from './pages/Users'
+import { Account } from './pages/Account'
 import { ActivityPage } from './pages/Activity'
 import { Schedule } from './pages/Schedule'
 import { Discovery } from './pages/Discovery'
@@ -31,11 +32,7 @@ export function App() {
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<User>('/auth/me'), retry: false })
 
   if (me.isPending) return <Loading />
-  if (me.error) {
-    const hasUsers = me.error instanceof ApiError && typeof me.error.detail === 'object' && me.error.detail !== null
-      ? (me.error.detail as { hasUsers?: boolean }).hasUsers !== false : true
-    return <SignIn hasUsers={hasUsers} />
-  }
+  if (me.error) return <SignIn options={signInOptions(me.error)} />
 
   return (
     <UserContext.Provider value={me.data}>
@@ -56,6 +53,7 @@ export function App() {
           <Route path="/proof" element={<Proof />} />
           <Route path="/connections" element={<Connections />} />
           <Route path="/configuration" element={<Configuration />} />
+          <Route path="/account" element={<Account />} />
           {can(me.data, 'admin') && <Route path="/users" element={<Users />} />}
           {can(me.data, 'admin') && <Route path="/activity" element={<ActivityPage />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -97,7 +95,7 @@ function Shell({ children }: { children: ReactNode }) {
           </>
         )}
         <div className="who">
-          <span>{user.name || user.email}<br />{user.role}</span>
+          <NavLink className="navlink" to="/account">{user.name || user.email}<br /><span className="small">{user.role}</span></NavLink>
           <button type="button" className="btn link" onClick={() => signOut.mutate()}>Sign out</button>
         </div>
       </nav>

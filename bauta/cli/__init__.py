@@ -243,7 +243,7 @@ def _buildParser() -> argparse.ArgumentParser:
     statusParser.set_defaults(handler=_commandStatus)
 
     studioParser = subparsers.add_parser('studio', help='run bauta Studio, a web console for a team, on your own infrastructure')
-    studioCommands = studioParser.add_subparsers(dest='studio_command', required=True, metavar='{serve,create-user}')
+    studioCommands = studioParser.add_subparsers(dest='studio_command', required=True, metavar='{serve,create-user,set-password}')
     studioServe = studioCommands.add_parser('serve', help='run Studio')
     studioServe.add_argument('--host', default='127.0.0.1', help='address to listen on (default: 127.0.0.1, this machine only)')
     studioServe.add_argument('--port', type=int, default=8710, help='default: 8710')
@@ -252,7 +252,13 @@ def _buildParser() -> argparse.ArgumentParser:
     studioUser.add_argument('--email', required=True, help='the account\'s email, which is its sign-in')
     studioUser.add_argument('--name', help='shown beside what they do')
     studioUser.add_argument('--role', default='admin', choices=['viewer', 'operator', 'admin'], help='default: admin')
-    for studioCommand in (studioParser, studioServe, studioUser):
+    studioUser.add_argument('--sso-only', action='store_true', help='set no password: they sign in only through single sign-on')
+    studioPassword = studioCommands.add_parser('set-password', help='set an account\'s password, signing it out everywhere; the way back in '
+                                                                     'for a locked-out admin')
+    studioPassword.add_argument('--email', required=True, help='the account\'s email')
+    studioPassword.add_argument('--reset-2fa', action='store_true', help='also turn its two-factor sign-in off, for someone who lost their '
+                                                                         'authenticator app and their recovery codes')
+    for studioCommand in (studioParser, studioServe, studioUser, studioPassword):
         studioCommand.add_argument('--config', default=argparse.SUPPRESS, help='bauta\'s configuration directory (default: $BAUTA_STUDIO_CONFIG, '
                                                                         '$BAUTA_CONFIG or ./configuration)')
         studioCommand.add_argument('--data', default=argparse.SUPPRESS, help='Studio\'s own data: accounts, activity, run logs, backups '

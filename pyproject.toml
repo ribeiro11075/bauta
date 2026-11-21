@@ -90,7 +90,12 @@ native = ["bauta-rs==0.2.11"]
 # built into bauta/studio/static, so nothing here needs Node.
 # ruamel.yaml changes one job in a jobs file and keeps its comments and layout.
 # alembic upgrades Studio's own tables in place from one release to the next.
-studio = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "sqlalchemy>=2.0.18", "alembic>=1.13", "argon2-cffi>=23.1", "ruamel.yaml>=0.18"]
+# httpx and PyJWT talk to an identity provider and verify its ID tokens, for
+# single sign-on; PyJWT's crypto extra is cryptography, for RSA and EC keys.
+# pyotp checks authenticator codes, segno draws the QR code an app scans, and
+# cryptography encrypts the secrets, for two-factor sign-in.
+studio = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "sqlalchemy>=2.0.18", "alembic>=1.13", "argon2-cffi>=23.1", "ruamel.yaml>=0.18",
+          "httpx>=0.27", "pyjwt[crypto]>=2.10", "pyotp>=2.9", "segno>=1.6", "cryptography>=42"]
 # The documentation site (mkdocs.yml), pinned like dev so a build is the same
 # everywhere; website/ holds its theme and hooks
 docs = ["mkdocs==1.6.1", "mkdocs-material==9.7.7", "mike==2.2.0"]

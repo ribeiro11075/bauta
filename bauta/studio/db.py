@@ -1,4 +1,5 @@
-"""Studio's own state: its users and their sessions, a record of everything
+"""Studio's own state: its users, the identities they sign in with through an
+identity provider, and their sessions, a record of everything
 anyone did through it, and the runs it started. Nothing of bauta's -- run
 state, history and manifests stay where `run` keeps them.
 
@@ -8,12 +9,13 @@ through BAUTA_STUDIO_DATABASE_URL otherwise.
 from __future__ import annotations
 
 import datetime
+import hashlib
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, event, inspect
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 VIEWER = 'viewer'
 OPERATOR = 'operator'
@@ -57,11 +59,22 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200), default='')
-    passwordHash: Mapped[str] = mapped_column(String(200))
+    # None for someone who signs in only through the identity provider.
+    passwordHash: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     role: Mapped[str] = mapped_column(String(16), default=VIEWER)
     active: Mapped[bool] = mapped_column(default=True)
     createdAt: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     lastLoginAt: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Two-factor sign-in with an authenticator app: its secret, encrypted
+    # (see twofactor.py), once confirmed with a code; one being set up until
+    # then; and the last 30-second step a code was taken for, so no code is
+    # taken twice.
+    totpSecret: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    totpPendingSecret: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    totpLastStep: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    recoveryCodes: Mapped[List['RecoveryCode']] = relationship(back_populates='user', cascade='all, delete-orphan', passive_deletes=True)
+    ssoIdentity: Mapped[Optional['SsoIdentity']] = relationship(back_populates='user', uselist=False, lazy='selectin', cascade='all, delete-orphan',
+                                                                passive_deletes=True)
 
     def can(self, role: str) -> bool:
 
@@ -71,7 +84,56 @@ class User(Base):
     def asDict(self) -> Dict[str, Any]:
 
         return {'id': self.id, 'email': self.email, 'name': self.name, 'role': self.role, 'active': self.active,
-                'createdAt': iso(self.createdAt), 'lastLoginAt': iso(self.lastLoginAt)}
+                'createdAt': iso(self.createdAt), 'lastLoginAt': iso(self.lastLoginAt), 'sso': self.ssoIdentity is not None,
+                'passwordSet': self.passwordHash is not None, 'twoFactor': self.totpSecret is not None}
+
+
+class SsoIdentity(Base):
+    """Who a user is at the identity provider: its issuer and the subject it
+    names them by, which, unlike an email, the provider never gives another
+    person. One per user; an admin unlinks it when a person's identity at the
+    provider was made again.
+
+    The subject is kept as its SHA-256. Providers' subjects are case-sensitive,
+    and MySQL's and SQL Server's usual collations compare text without case:
+    two subjects differing only in case would be one person there. A digest
+    in hex compares the same everywhere.
+    """
+
+    __tablename__ = 'studio_sso_identity'
+
+    issuer: Mapped[str] = mapped_column(String(255), primary_key=True)
+    subjectHash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    userId: Mapped[int] = mapped_column(ForeignKey('studio_user.id', ondelete='CASCADE'), unique=True)
+    linkedAt: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    user: Mapped[User] = relationship(back_populates='ssoIdentity')
+
+    @staticmethod
+    def key(issuer: str, subject: str) -> Tuple[str, str]:
+        """The primary key of `subject`'s identity at `issuer`."""
+
+        return issuer, hashlib.sha256(subject.encode('utf-8')).hexdigest()
+
+
+    @classmethod
+    def of(cls, issuer: str, subject: str) -> 'SsoIdentity':
+
+        issuer, subjectHash = cls.key(issuer, subject)
+
+        return cls(issuer=issuer, subjectHash=subjectHash)
+
+
+class RecoveryCode(Base):
+    """A one-time code that stands in for an authenticator's, for someone who
+    lost theirs. Only its SHA-256 is kept: it is random enough that a slow hash
+    would add nothing.
+    """
+
+    __tablename__ = 'studio_recovery_code'
+
+    codeHash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    userId: Mapped[int] = mapped_column(ForeignKey('studio_user.id', ondelete='CASCADE'), index=True)
+    user: Mapped[User] = relationship(back_populates='recoveryCodes')
 
 
 class UserSession(Base):

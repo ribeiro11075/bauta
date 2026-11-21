@@ -35,6 +35,16 @@ LOGIN_ATTEMPTS = 5
 LOGIN_ATTEMPTS_PER_ADDRESS = 30
 LOGIN_ATTEMPTS_PER_EMAIL = 100
 LOGIN_WINDOW_SECONDS = 300
+# The same for authenticator codes, after a right password: tighter for the
+# account, since a code is six digits and whoever tries already has the
+# password. Ten guesses in the window, with three codes valid at a time, is a
+# chance in about three thousand a day.
+CODE_ATTEMPTS = 5
+CODE_ATTEMPTS_PER_ADDRESS = 30
+CODE_ATTEMPTS_PER_EMAIL = 10
+# Single sign-ons that come back failed, by address: each that reaches the
+# identity provider costs a request against its rate limits.
+SSO_FAILURES_PER_ADDRESS = 30
 # Each check takes argon2's 64 MiB and tens of milliseconds, and needs no
 # account to ask for, so only so many run at once; past the wait, it is refused.
 PASSWORD_CHECKS_AT_ONCE = 4
@@ -45,6 +55,10 @@ hasher = PasswordHasher()
 # a wrong password and the time says nothing about who has an account.
 _DUMMY_HASH = hasher.hash(secrets.token_urlsafe(16))
 _passwordChecks = threading.BoundedSemaphore(PASSWORD_CHECKS_AT_ONCE)
+# One change to an account at a time, from the Users page or a sign-in that
+# links or makes one: two admins demoting each other at once each counted the
+# other as the admin who'd remain. Studio runs as one process.
+changingAccounts = threading.Lock()
 
 
 class PasswordCheckBusy(Exception):
@@ -60,11 +74,15 @@ def hashPassword(password: str) -> str:
 
 
 def checkPassword(user: Optional[User], password: str) -> bool:
+    """Whether `password` is `user`'s. An account with no password, which
+    signs in only through the identity provider, takes as long to refuse.
+    """
 
     if not _passwordChecks.acquire(timeout=PASSWORD_CHECK_WAIT_SECONDS):
         raise PasswordCheckBusy('too many sign-ins at once; try again shortly')
     try:
-        return hasher.verify(user.passwordHash if user is not None else _DUMMY_HASH, password) and user is not None
+        stored = user.passwordHash if user is not None else None
+        return hasher.verify(stored or _DUMMY_HASH, password) and stored is not None
     except (VerifyMismatchError, VerificationError, InvalidHashError):
         return False
     finally:
@@ -84,17 +102,18 @@ class LoginThrottle:
     window, so what it holds can't grow with who asks.
     """
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic,
+                 limits: Tuple[int, int, int] = (LOGIN_ATTEMPTS, LOGIN_ATTEMPTS_PER_ADDRESS, LOGIN_ATTEMPTS_PER_EMAIL)) -> None:
+        self._both, self._perAddress, self._perEmail = limits
         self._failures: Dict[Tuple[str, ...], List[float]] = {}
         self._lock = threading.Lock()
         self._clock = clock
         self._swept = clock()
 
 
-    @staticmethod
-    def _limits(email: str, address: str) -> List[Tuple[Tuple[str, ...], int]]:
+    def _limits(self, email: str, address: str) -> List[Tuple[Tuple[str, ...], int]]:
 
-        return [(('both', email, address), LOGIN_ATTEMPTS), (('address', address), LOGIN_ATTEMPTS_PER_ADDRESS), (('email', email), LOGIN_ATTEMPTS_PER_EMAIL)]
+        return [(('both', email, address), self._both), (('address', address), self._perAddress), (('email', email), self._perEmail)]
 
 
     def _recent(self, key: Tuple[str, ...]) -> int:
@@ -143,8 +162,16 @@ class LoginThrottle:
             self._failures.pop(self._limits(email, address)[0][0], None)
 
 
-def startSession(session: Session, user: User, response: Response, hours: int, secure: bool) -> None:
+def startSession(session: Session, user: User, response: Response, hours: int, secure: bool, request: Optional[Request] = None) -> None:
+    """Signs `user` in, in a new session. The session `request`'s browser had,
+    if any, ends: a sign-in never leaves the browser's old session behind.
+    """
 
+    previous = request.cookies.get(SESSION_COOKIE) if request is not None else None
+    if previous:
+        found = session.get(UserSession, _tokenHash(previous))
+        if found is not None:
+            session.delete(found)
     token = secrets.token_urlsafe(32)
     session.add(UserSession(tokenHash=_tokenHash(token), userId=user.id, expiresAt=utcnow() + datetime.timedelta(hours=hours)))
     user.lastLoginAt = utcnow()

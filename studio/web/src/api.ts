@@ -49,6 +49,31 @@ export interface User {
   active: boolean
   createdAt: string | null
   lastLoginAt: string | null
+  // Linked to an identity at the identity provider, through single sign-on.
+  sso: boolean
+  passwordSet: boolean
+  // Two-factor sign-in with an authenticator app, after a password.
+  twoFactor: boolean
+}
+
+export type PasswordLogin = 'all' | 'admins' | 'off'
+
+// Marks a request made while signing in, whose 401 is a wrong password or
+// code, not a session that ended: see main.tsx.
+export const SIGNING_IN = 'signingIn'
+export const signingIn = { meta: { [SIGNING_IN]: true } }
+
+// What the signed-out page offers, from /auth/me's refusal.
+export interface SignInOptions {
+  hasUsers: boolean
+  sso: { label: string } | null
+  passwordLogin: PasswordLogin
+}
+
+export function signInOptions(error: unknown): SignInOptions {
+  const detail = error instanceof ApiError && typeof error.detail === 'object' && error.detail !== null
+    ? error.detail as Partial<SignInOptions> : {}
+  return { hasUsers: detail.hasUsers !== false, sso: detail.sso ?? null, passwordLogin: detail.passwordLogin ?? 'all' }
 }
 
 export function can(user: User, role: Role): boolean {

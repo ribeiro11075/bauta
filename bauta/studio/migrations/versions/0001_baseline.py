@@ -1,5 +1,6 @@
-"""Studio's tables as 0.2.7 created them. A database from then has them with
-no record of it, and is stamped at this revision rather than running it.
+"""Studio's tables. A database 0.2.7 made has them, but for single sign-on's
+and two-factor sign-in's, with no record of it, and is stamped at this
+revision rather than running it.
 """
 import sqlalchemy as sa
 from alembic import op
@@ -17,12 +18,28 @@ def upgrade() -> None:
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('email', sa.String(320), nullable=False),
         sa.Column('name', sa.String(200), nullable=False),
-        sa.Column('passwordHash', sa.String(200), nullable=False),
+        sa.Column('passwordHash', sa.String(200), nullable=True),
         sa.Column('role', sa.String(16), nullable=False),
         sa.Column('active', sa.Boolean(), nullable=False),
         sa.Column('createdAt', sa.DateTime(timezone=True), nullable=False),
-        sa.Column('lastLoginAt', sa.DateTime(timezone=True), nullable=True))
+        sa.Column('lastLoginAt', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('totpSecret', sa.Text(), nullable=True),
+        sa.Column('totpPendingSecret', sa.Text(), nullable=True),
+        sa.Column('totpLastStep', sa.Integer(), nullable=True))
     op.create_index('ix_studio_user_email', 'studio_user', ['email'], unique=True)
+
+    op.create_table(
+        'studio_recovery_code',
+        sa.Column('codeHash', sa.String(64), primary_key=True),
+        sa.Column('userId', sa.Integer(), sa.ForeignKey('studio_user.id', ondelete='CASCADE'), nullable=False))
+    op.create_index('ix_studio_recovery_code_userId', 'studio_recovery_code', ['userId'])
+
+    op.create_table(
+        'studio_sso_identity',
+        sa.Column('issuer', sa.String(255), primary_key=True),
+        sa.Column('subjectHash', sa.String(64), primary_key=True),
+        sa.Column('userId', sa.Integer(), sa.ForeignKey('studio_user.id', ondelete='CASCADE'), nullable=False, unique=True),
+        sa.Column('linkedAt', sa.DateTime(timezone=True), nullable=False))
 
     op.create_table(
         'studio_session',
@@ -82,5 +99,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
 
-    for table in ('studio_manifest', 'studio_setting', 'studio_check', 'studio_launched_run', 'studio_activity', 'studio_session', 'studio_user'):
+    for table in ('studio_manifest', 'studio_setting', 'studio_check', 'studio_launched_run', 'studio_activity', 'studio_session', 'studio_sso_identity',
+                  'studio_recovery_code', 'studio_user'):
         op.drop_table(table)

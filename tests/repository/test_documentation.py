@@ -117,7 +117,7 @@ def test_every_documented_subcommand_exists():
 def test_every_documented_flag_exists():
     documented = set()
     for document in DOCUMENTS:
-        documented.update(re.findall(r'\| `(--[a-z-]+)', document.read_text()))
+        documented.update(re.findall(r'\| `(--[a-z][a-z0-9-]*)', document.read_text()))
 
     real = set()
 

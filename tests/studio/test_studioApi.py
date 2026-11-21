@@ -4,6 +4,8 @@ starts and writes is what bauta itself would.
 import json
 import time
 
+import pytest
+
 from tests.studio.conftest import KEY, PASSWORD
 from fastapi.testclient import TestClient
 
@@ -25,7 +27,7 @@ def test_nothing_is_readable_signed_out_and_me_says_whether_accounts_exist(app):
 
     assert client.get('/api/runs').status_code == 401
     response = client.get('/api/auth/me')
-    assert response.status_code == 401 and response.json()['detail'] == {'signedIn': False, 'hasUsers': True}
+    assert response.status_code == 401 and response.json()['detail'] == {'signedIn': False, 'hasUsers': True, 'sso': None, 'passwordLogin': 'all'}
 
 
 def test_a_wrong_password_is_refused_and_repeated_failures_are_throttled(app):
@@ -210,3 +212,45 @@ def test_no_password_or_its_hash_is_ever_returned(signIn):
 
     text = json.dumps(admin.get('/api/users').json()) + json.dumps(admin.get('/api/activity').json())
     assert PASSWORD not in text and 'argon2' not in text
+
+
+# Changing your own password ---------------------------------------------------
+
+NEW_PASSWORD = 'a brand new passphrase'
+
+
+def _login(app, password, email='viewer@example.com'):
+    return TestClient(app, headers={'X-Bauta-Studio': '1'}).post('/api/auth/login', json={'email': email, 'password': password}).status_code
+
+
+def test_someone_changes_their_password_and_is_signed_out_everywhere_else(app, signIn):
+    elsewhere = signIn('viewer')
+    viewer = signIn('viewer')
+
+    changed = viewer.post('/api/auth/password', json={'current': PASSWORD, 'new': NEW_PASSWORD})
+
+    assert changed.status_code == 200
+    assert viewer.get('/api/auth/me').status_code == 200 and elsewhere.get('/api/auth/me').status_code == 401
+    assert _login(app, PASSWORD) == 401 and _login(app, NEW_PASSWORD) == 200
+    activity = json.dumps(signIn('admin').get('/api/activity').json())
+    assert 'changed their password' in activity and NEW_PASSWORD not in activity and PASSWORD not in activity
+
+
+def test_a_password_change_needs_the_current_password_and_is_throttled(signIn):
+    viewer = signIn('viewer')
+    statuses = [viewer.post('/api/auth/password', json={'current': 'not my password', 'new': NEW_PASSWORD}).status_code for _ in range(6)]
+
+    assert statuses[:5] == [403] * 5 and statuses[5] == 429
+
+
+@pytest.mark.parametrize('new, says', [(PASSWORD, 'other than the one you have'), ('too short', 'at least 12')])
+def test_a_new_password_must_differ_and_be_long_enough(signIn, new, says):
+    refused = signIn('viewer').post('/api/auth/password', json={'current': PASSWORD, 'new': new})
+
+    assert refused.status_code == 400 and says in refused.json()['detail']
+
+
+def test_a_password_change_needs_studios_header(signIn):
+    viewer = signIn('viewer')
+
+    assert viewer.post('/api/auth/password', json={'current': PASSWORD, 'new': NEW_PASSWORD}, headers={'X-Bauta-Studio': ''}).status_code == 403

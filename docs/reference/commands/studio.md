@@ -36,6 +36,23 @@ bauta studio create-user --email EMAIL [options]
 | `--email EMAIL` | required | The account's email, which is its sign-in. |
 | `--name NAME` |  | Shown beside what they do. |
 | `--role {viewer,operator,admin}` | `admin` | One of `viewer`, `operator`, `admin`. |
+| `--sso-only` | off | Set no password: they sign in only through single sign-on. |
+| `--data DATA` | $BAUTA_STUDIO_DATA or ./studio-data | Studio's own data: accounts, activity, run logs, backups. |
+
+It also takes these [common flags](index.md#common-flags): `--config`, `--log`, `--log-format`, `--log-level`, `--quiet`.
+
+## `bauta studio set-password`
+
+Set an account's password, signing it out everywhere; the way back in for a locked-out admin.
+
+```
+bauta studio set-password --email EMAIL [options]
+```
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--email EMAIL` | required | The account's email. |
+| `--reset-2fa` | off | Also turn its two-factor sign-in off, for someone who lost their authenticator app and their recovery codes. |
 | `--data DATA` | $BAUTA_STUDIO_DATA or ./studio-data | Studio's own data: accounts, activity, run logs, backups. |
 
 It also takes these [common flags](index.md#common-flags): `--config`, `--log`, `--log-format`, `--log-level`, `--quiet`.

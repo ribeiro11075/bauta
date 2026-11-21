@@ -12,7 +12,9 @@ import logging
 import threading
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+import httpx
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
@@ -20,11 +22,14 @@ from fastapi.responses import FileResponse, JSONResponse
 from ..log.scrubbing import describeError, scrubWithin
 from ..project import UsageError
 from . import checks, configfiles, evidence, routes, workspace
-from .auth import LoginThrottle, endExpiredSessions, requireRole
+from .auth import (CODE_ATTEMPTS, CODE_ATTEMPTS_PER_ADDRESS, CODE_ATTEMPTS_PER_EMAIL, SSO_FAILURES_PER_ADDRESS, LoginThrottle, endExpiredSessions,
+                   requireRole)
 from .db import ADMIN, OPERATOR, VIEWER, Database
 from .launcher import Launcher, endInterruptedBenches
 from .routes.context import Context
 from .settings import Settings
+from .sso import OidcClient
+from .twofactor import SecretBox
 
 STATIC_DIRECTORY = Path(__file__).parent / 'static'
 # How often the manifest `run` last wrote is looked at, to keep it by run.
@@ -109,9 +114,13 @@ def _addWebApp(app: FastAPI) -> None:
         return FileResponse(index, headers={'Cache-Control': 'no-cache'})
 
 
-def createApp(settings: Settings) -> FastAPI:
+def createApp(settings: Settings, ssoTransport: Optional[httpx.BaseTransport] = None) -> FastAPI:
+    """`ssoTransport` is how the identity provider is reached, when not over
+    the network: a test's stand-in for one.
+    """
 
     database = Database(settings.databaseUrl)
+    oidc = OidcClient(settings.sso, transport=ssoTransport) if settings.sso is not None else None
     launcher = Launcher(settings)
     endInterruptedBenches(database)
     endExpiredSessions(database)
@@ -120,7 +129,10 @@ def createApp(settings: Settings) -> FastAPI:
         yield from database.session()
 
     context = Context(settings=settings, database=database, launcher=launcher, throttle=LoginThrottle(), sessions=sessions,
-                      viewer=requireRole(VIEWER, sessions), operator=requireRole(OPERATOR, sessions), admin=requireRole(ADMIN, sessions))
+                      viewer=requireRole(VIEWER, sessions), operator=requireRole(OPERATOR, sessions), admin=requireRole(ADMIN, sessions),
+                      secretBox=SecretBox.load(settings.keyFile),
+                      codeThrottle=LoginThrottle(limits=(CODE_ATTEMPTS, CODE_ATTEMPTS_PER_ADDRESS, CODE_ATTEMPTS_PER_EMAIL)),
+                      ssoThrottle=LoginThrottle(limits=(SSO_FAILURES_PER_ADDRESS,) * 3), oidc=oidc)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
@@ -132,9 +144,11 @@ def createApp(settings: Settings) -> FastAPI:
             yield
         finally:
             stop.set()
+            if oidc is not None:
+                oidc.close()
 
     app = FastAPI(title='bauta Studio', docs_url=None, redoc_url=None, openapi_url='/api/openapi.json', lifespan=lifespan)
-    app.state.database, app.state.launcher, app.state.settings = database, launcher, settings
+    app.state.database, app.state.launcher, app.state.settings, app.state.oidc = database, launcher, settings, oidc
 
     api = APIRouter(prefix='/api')
     for module in routes.MODULES:

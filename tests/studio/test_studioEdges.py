@@ -13,8 +13,10 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from bauta.cli import EXIT_BAD_CONFIGURATION, EXIT_SUCCESS, main
+from bauta.studio.db import User
 from tests.studio.conftest import KEY, PASSWORD
 from tests.studio.test_studioFeatures import _plantLive, _run
 from tests.studio.test_studioApi import _waitForRun
@@ -338,6 +340,44 @@ def test_create_user_refuses_and_says_why(commandLine, app, capsys, passwords, w
     email = 'admin@example.com' if wanted == 'already has an account' else 'someone@example.com'
 
     assert commandLine('create-user', '--email', email, passwords=passwords) == 2
+    assert wanted in capsys.readouterr().err
+
+
+NEW_PASSWORD = 'a password set from the shell'
+
+
+def test_set_password_lets_a_locked_out_admin_back_in_and_signs_them_out_elsewhere(commandLine, app, signIn, capsys):
+    elsewhere = signIn('admin')
+
+    assert commandLine('set-password', '--email', 'Admin@Example.com', passwords=[NEW_PASSWORD, NEW_PASSWORD]) == EXIT_SUCCESS
+
+    assert 'Set admin@example.com\'s password' in capsys.readouterr().out
+    assert elsewhere.get('/api/auth/me').status_code == 401
+    client = TestClient(app, headers={'X-Bauta-Studio': '1'})
+    assert client.post('/api/auth/login', json={'email': 'admin@example.com', 'password': PASSWORD}).status_code == 401
+    assert client.post('/api/auth/login', json={'email': 'admin@example.com', 'password': NEW_PASSWORD}).status_code == 200
+    assert any(entry['action'] == 'set a password from the command line' for entry in client.get('/api/activity').json()['activity'])
+
+
+def test_set_password_can_reset_two_factor_for_someone_who_lost_their_app(commandLine, app, capsys):
+    with app.state.database.open() as session:
+        admin = session.scalar(select(User).where(User.email == 'admin@example.com'))
+        admin.totpSecret = 'an encrypted secret'
+        session.commit()
+
+    assert commandLine('set-password', '--email', 'admin@example.com', passwords=[NEW_PASSWORD, NEW_PASSWORD]) == EXIT_SUCCESS
+    assert 'still on' in capsys.readouterr().out
+    assert commandLine('set-password', '--email', 'admin@example.com', '--reset-2fa', passwords=[NEW_PASSWORD, NEW_PASSWORD]) == EXIT_SUCCESS
+
+    assert 'turned off their two-factor sign-in' in capsys.readouterr().out
+    client = TestClient(app, headers={'X-Bauta-Studio': '1'})
+    assert client.post('/api/auth/login', json={'email': 'admin@example.com', 'password': NEW_PASSWORD}).json()['twoFactor'] is False
+
+
+@pytest.mark.parametrize('email, passwords, wanted', [('nobody@example.com', [], 'No account has the email'),
+                                                       ('admin@example.com', [NEW_PASSWORD, NEW_PASSWORD + 'x'], 'The passwords differ.')])
+def test_set_password_refuses_and_says_why(commandLine, app, capsys, email, passwords, wanted):
+    assert commandLine('set-password', '--email', email, passwords=passwords) == 2
     assert wanted in capsys.readouterr().err
 
 
