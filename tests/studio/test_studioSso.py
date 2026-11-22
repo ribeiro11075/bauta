@@ -292,6 +292,10 @@ def test_a_pending_cookie_studio_did_not_sign_is_refused(ssoApp, provider):
     start = client.get('/api/auth/sso/start', follow_redirects=False)
     code, state = provider.authorize(start.headers['location'], _person())
     payload = base64.urlsafe_b64encode(json.dumps({'s': state, 'n': 'n', 'v': 'v', 'e': 2 ** 40}).encode()).rstrip(b'=').decode()
+    # Without the genuine cookie: left in the jar beside the forged one, under
+    # the server's domain, which of the two is sent first depends on the
+    # versions installed.
+    client.cookies.delete(pendingCookie(state))
     client.cookies.set(pendingCookie(state), payload + '.forged', path='/api/auth/sso')
 
     assert _failure(client.get('/api/auth/sso/callback', params={'code': code, 'state': state}, follow_redirects=False)) == 'state'
