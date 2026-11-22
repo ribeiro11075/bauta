@@ -5,9 +5,9 @@ What changed in each release of `bauta` and `bauta-rs`, which are always release
 Masks never change between releases unless an entry says so: the same value, key and domain give the same mask in every version so far.
 
 
-## Unreleased
+## 0.2.12 — 2026-11-22
 
-Studio signs people in through your identity provider (OpenID Connect single sign-on, for Okta, Entra ID, Google Workspace, Auth0, Keycloak and the rest), and can ask for a code from an authenticator app after a password. See [single sign-on](docs/guides/studio.md#single-sign-on) and [two-factor sign-in](docs/guides/studio.md#two-factor-sign-in).
+Studio signs people in through your identity provider (OpenID Connect single sign-on, for Okta, Entra ID, Google Workspace, Auth0, Keycloak and the rest), and can ask for a code from an authenticator app after a password. See [single sign-on](docs/guides/studio.md#single-sign-on) and [two-factor sign-in](docs/guides/studio.md#two-factor-sign-in). No mask changes.
 
 ### Breaking
 - **A Studio database from an earlier release must be made again**: its tables were changed in place, not by a migration. Stop Studio, move the database aside (`studio.db` in the data directory, or the one `BAUTA_STUDIO_DATABASE_URL` names), start it, and add the accounts again.
@@ -29,6 +29,9 @@ Studio signs people in through your identity provider (OpenID Connect single sig
 - **`BAUTA_STUDIO_SESSION_HOURS`** sets how long a password session lasts.
 - **A new sign-in ends the session the browser had.**
 - The `studio` extra installs httpx and PyJWT for single sign-on, and pyotp, segno and cryptography for two-factor sign-in.
+
+### Changed
+- **The documentation is shorter and easier to scan**: every guide and reference page is rewritten, keeping every setting, limit and breaking change.
 
 ## 0.2.11 — 2026-11-21
 

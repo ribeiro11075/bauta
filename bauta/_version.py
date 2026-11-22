@@ -4,4 +4,4 @@ which must be the same version -- rather than what pip recorded, which an
 editable install keeps from whenever it was installed.
 """
 
-__version__ = '0.2.11'
+__version__ = '0.2.12'
