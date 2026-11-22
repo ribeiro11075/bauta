@@ -45,6 +45,10 @@ jobs:
 
 @pytest.fixture
 def settings(tmp_path):
+    """Studio's settings over a configuration directory with a SQLite database
+    of people and orders to copy.
+    """
+
     configuration = tmp_path / 'configuration'
     configuration.mkdir()
     connection = sqlite3.connect(str(tmp_path / 'demo.db'))
@@ -64,6 +68,10 @@ def settings(tmp_path):
 
 @pytest.fixture
 def app(settings):
+    """Studio's app, with a viewer, an operator and an admin who all sign in
+    with PASSWORD.
+    """
+
     application = createApp(settings)
     with application.state.database.open() as session:
         for role in ('viewer', 'operator', 'admin'):

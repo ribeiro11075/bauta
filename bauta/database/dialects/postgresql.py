@@ -14,10 +14,11 @@ from .base import ColumnCategory, settingsOf, _OnConflictDialect, _holdsOnly
 from .names import unqualifiedName
 
 
-# The types COPY is trusted with: psycopg's text dumpers spell each exactly as
-# PostgreSQL parses it back, whatever the column. datetime.datetime is a date.
-# Anything else -- a list, which may be an array or JSON, a Jsonb, a duration --
-# sends the chunk through the driver's own adapters, a statement a row.
+# _COPYABLE: the types COPY is trusted with: psycopg's text dumpers spell each
+#   exactly as PostgreSQL parses it back, whatever the column.
+#   datetime.datetime is a date. Anything else -- a list, which may be an array
+#   or JSON, a Jsonb, a duration -- sends the chunk through the driver's own
+#   adapters, a statement a row.
 _COPYABLE = (type(None), bool, int, float, decimal.Decimal, str, datetime.date, datetime.time, uuid.UUID, bytes, bytearray, memoryview)
 
 
@@ -38,6 +39,10 @@ def _copyIn(cursor: Cursor, statement: str, rows: Sequence[Sequence[Any]]) -> bo
 
 
 class PostgreSQLDialect(_OnConflictDialect):
+    """PostgreSQL, through psycopg 3. Rows are loaded with COPY where every
+    value is of a type COPY is trusted with, and upserts staged through a
+    temporary table.
+    """
 
     databaseType = DatabaseType.POSTGRESQL
 
@@ -46,22 +51,27 @@ class PostgreSQLDialect(_OnConflictDialect):
     _TEXT_OIDS = {1043, 18, 25}
 
     def openConnection(self, settings: DatabaseConfig) -> Any:
+        """A psycopg connection, with two choices made for it.
+
+        Its cursors are ClientCursors, which write parameters into the
+        statement as the other drivers do, rather than binding them
+        server-side, where a parameter takes one fixed type that a value can't
+        always fit.
+
+        json and jsonb are read as their text, as MySQL, SQLite and DuckDB
+        return them, rather than parsed. Parsed, a document lost what it was:
+        the string "123" came back as the number 123, a number went to a jsonb
+        column as an integer and failed the job, and every number with a
+        fraction passed through a float, so 12345678901234567890.123 arrived as
+        12345678901234567000. Arrays of either hold their elements as text the
+        same way.
+        """
 
         import psycopg
         from psycopg.types.string import TextLoader
 
-        # ClientCursor writes parameters into the statement, as the other
-        # drivers do, rather than binding them server-side: a server-side
-        # parameter takes one fixed type, which a value can't always fit.
         connection = psycopg.connect(**self.connectArguments(settings), cursor_factory=psycopg.ClientCursor)
 
-        # json and jsonb as their text, as MySQL, SQLite and DuckDB return
-        # them, rather than parsed into Python. Parsed, a document lost what
-        # it was: the string "123" was loaded back as the number 123, a
-        # number went to a jsonb column as an integer and failed the job,
-        # and every number with a fraction passed through a float, so
-        # 12345678901234567890.123 arrived as 12345678901234567000. Arrays of
-        # either hold their elements as text the same way.
         for name in ('json', 'jsonb'):
             connection.adapters.register_loader(name, TextLoader)
 
@@ -69,11 +79,13 @@ class PostgreSQLDialect(_OnConflictDialect):
 
 
     def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
+        """PostgreSQL's: the search path set to currentSchema alone, with no
+        fallback such as `public` that catalog lookups wouldn't see, and
+        committed, or a later rollback would undo it.
+        """
 
         cursor = connection.cursor()
 
-        # Only this schema, with no fallback such as `public` that catalog
-        # lookups wouldn't see. Committed, or a later rollback would undo it.
         currentSchema = settingsOf(settings, PostgreSQLConnection).currentSchema
         if currentSchema:
             cursor.execute('SET search_path TO {}'.format(currentSchema))
@@ -83,6 +95,7 @@ class PostgreSQLDialect(_OnConflictDialect):
 
 
     def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
+        """The login, host and database, for psycopg."""
 
         settings = settingsOf(settings, PostgreSQLConnection)
 
@@ -112,11 +125,13 @@ class PostgreSQLDialect(_OnConflictDialect):
 
 
     def readOnlySessionStatement(self) -> Optional[str]:
+        """PostgreSQL's: every transaction of the session read-only."""
 
         return 'SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY'
 
 
     def placeholders(self, count: int) -> List[str]:
+        """psycopg's format style: `%s`."""
 
         return count * ['%s']
 
@@ -131,6 +146,7 @@ class PostgreSQLDialect(_OnConflictDialect):
 
 
     def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
+        """PostgreSQL's: whether pg_stat_ssl says this backend's session uses TLS."""
 
         cursor.execute('SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()')
         row = cursor.fetchone()
@@ -147,9 +163,11 @@ class PostgreSQLDialect(_OnConflictDialect):
 
 
     def __init__(self) -> None:
-        # The upsert staging tables each connection has created. One dialect
-        # serves every connection, so this is keyed by connection, weakly, so
-        # a closed one is forgotten with it.
+        """Starts the record of the upsert staging tables each connection has
+        created. One dialect serves every connection, so it is keyed by
+        connection, weakly, and a closed one is forgotten with it.
+        """
+
         self._stagingTables: 'weakref.WeakKeyDictionary[Any, Set[str]]' = weakref.WeakKeyDictionary()
 
 
@@ -218,6 +236,7 @@ class PostgreSQLDialect(_OnConflictDialect):
 
 
     def foreignKeyCountsQuery(self) -> str:
+        """PostgreSQL's, from pg_constraint, leaving out the system schemas."""
 
         return ("SELECT ns.nspname, count(*), current_schema() FROM pg_constraint con "
                 "JOIN pg_class cl ON cl.oid = con.conrelid JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
@@ -229,9 +248,11 @@ class PostgreSQLDialect(_OnConflictDialect):
     # NULL schema a type COALESCE can use.
 
     def columnsQuery(self) -> str:
+        """PostgreSQL's, from information_schema, with an array given as its
+        element type and size, `character varying(20)[]`, which
+        information_schema reports only as ARRAY.
+        """
 
-        # An array as its element type and size, `character varying(20)[]`,
-        # which information_schema reports only as ARRAY.
         return ("SELECT column_name, CASE WHEN data_type = 'ARRAY' THEN (SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a "
                 "WHERE a.attrelid = (quote_ident(table_schema) || '.' || quote_ident(table_name))::regclass AND a.attname = column_name) "
                 "ELSE data_type END, character_maximum_length, numeric_precision, numeric_scale, is_nullable "
@@ -240,6 +261,7 @@ class PostgreSQLDialect(_OnConflictDialect):
 
 
     def primaryKeyQuery(self) -> str:
+        """PostgreSQL's, from pg_index, in key order."""
 
         return ("SELECT att.attname FROM pg_index idx "
                 "JOIN pg_class cl ON cl.oid = idx.indrelid "
@@ -251,6 +273,7 @@ class PostgreSQLDialect(_OnConflictDialect):
 
 
     def checkConstraintsQuery(self) -> Optional[str]:
+        """PostgreSQL's: each check constraint as pg_get_constraintdef writes it."""
 
         return ("SELECT pg_get_constraintdef(con.oid) FROM pg_constraint con JOIN pg_class cl ON cl.oid = con.conrelid "
                 "JOIN pg_namespace ns ON ns.oid = cl.relnamespace "
@@ -306,6 +329,7 @@ class PostgreSQLDialect(_OnConflictDialect):
 
 
     def tableExistsQuery(self) -> str:
+        """PostgreSQL's, from information_schema."""
 
         return ("SELECT count(*) FROM information_schema.tables "
                 "WHERE table_schema = COALESCE({}::text, current_schema()) AND table_name = {}::text")
@@ -330,8 +354,9 @@ class PostgreSQLDialect(_OnConflictDialect):
             stageTable, unqualifiedName(tempTable), targetTable, unqualifiedName(stageTable), tempTable, unqualifiedName(targetTable))]
 
 
-    # Views built directly on a table: their names, and their definitions as
-    # PostgreSQL would write them now, table names and all.
+    # DEPENDENT_VIEWS_QUERY: views built directly on a table: their names, and
+    #   their definitions as PostgreSQL would write them now, table names and
+    #   all.
     DEPENDENT_VIEWS_QUERY = (
         "SELECT DISTINCT view.oid::regclass::text, pg_get_viewdef(view.oid) "
         "FROM pg_depend dependency "

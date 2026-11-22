@@ -28,9 +28,9 @@ from typing import AbstractSet, Any, Callable, List, NamedTuple, Optional, Proto
 
 from ..configuration import ConfigurationError, FileCompression, FileFormat
 
+# _NOT_FINITE: JSON has no NaN or infinity; BigQuery and Snowflake read these
+#   strings as them.
 _TIMESTAMP = '%Y-%m-%d %H:%M:%S.%f'
-
-# JSON has no NaN or infinity; BigQuery and Snowflake read these strings as them.
 _NOT_FINITE = {'nan': '"NaN"', 'inf': '"Infinity"', '-inf': '"-Infinity"'}
 
 
@@ -39,11 +39,11 @@ class PartSettings(NamedTuple):
     Iceberg table as Parquet.
     """
 
+    # fileSize: where a part is closed and the next begun.
+    # delimiter: CSV's; a comma when None.
     format: FileFormat
     compression: FileCompression
-    # Where a part is closed and the next begun.
     fileSize: int
-    # CSV's; a comma when None.
     delimiter: Optional[str] = None
 
 
@@ -62,25 +62,31 @@ class PartWriter:
 
     def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
                  rawColumns: AbstractSet[str] = frozenset()) -> None:
+        """A writer of one part to `stream`. `jsonColumns` are written as JSON
+        documents; `rawColumns` hold JSON text alone, a PostgreSQL json or
+        jsonb column's, written as it is: "123" a string, 123 a number.
+        """
+
         self.stream = stream
         self.schema = schema
         self.settings = settings
         self.jsonColumns = jsonColumns
-        # Columns whose every value is JSON text, a PostgreSQL json or jsonb
-        # column's, written as it is: "123" a string, 123 a number.
         self.rawColumns = rawColumns
 
     def write(self, table: Any) -> None:
+        """Writes an Arrow table's rows to the part."""
 
         raise NotImplementedError
 
     def close(self) -> None:
+        """Finishes the part, and closes its stream."""
 
         raise NotImplementedError
 
 
 def partWriter(stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
                rawColumns: AbstractSet[str] = frozenset()) -> PartWriter:
+    """A writer for the settings' format."""
 
     writer = {FileFormat.PARQUET: _Parquet, FileFormat.CSV: _Csv, FileFormat.NDJSON: _JsonLines}[settings.format]
 
@@ -92,6 +98,8 @@ class _Parquet(PartWriter):
 
     def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
                  rawColumns: AbstractSet[str] = frozenset()) -> None:
+        """A Parquet writer, compressed as the settings say."""
+
         super().__init__(stream, schema, settings, jsonColumns, rawColumns)
         import pyarrow.parquet
 
@@ -99,10 +107,12 @@ class _Parquet(PartWriter):
         self._writer = pyarrow.parquet.ParquetWriter(stream, schema, compression=None if compression == FileCompression.NONE else compression.value)
 
     def write(self, table: Any) -> None:
+        """Writes the table as one row group."""
 
         self._writer.write_table(table, row_group_size=max(1, table.num_rows))
 
     def close(self) -> None:
+        """Writes the footer, and closes the stream."""
 
         self._writer.close()
         self.stream.close()
@@ -115,20 +125,25 @@ class _Text(PartWriter):
 
     def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
                  rawColumns: AbstractSet[str] = frozenset()) -> None:
+        """The text formats' output: the stream itself, or a gzip stream over it."""
+
         super().__init__(stream, schema, settings, jsonColumns, rawColumns)
         import pyarrow
 
         self.output = pyarrow.CompressedOutputStream(stream, 'gzip') if settings.compression == FileCompression.GZIP else stream
 
     def close(self) -> None:
+        """Closes the output; closing a gzip stream writes its trailer and
+        closes the one beneath, which is closed here otherwise.
+        """
 
-        # Closing the gzip stream writes its trailer and closes the one beneath.
         self.output.close()
         if not self.stream.closed:
             self.stream.close()
 
 
 def _base64(values: List[Optional[bytes]]) -> List[Optional[str]]:
+    """Binary values as base64 text, for a format with no binary type."""
 
     return [None if value is None else base64.b64encode(value).decode('ascii') for value in values]
 
@@ -138,6 +153,10 @@ class _Csv(_Text):
 
     def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
                  rawColumns: AbstractSet[str] = frozenset()) -> None:
+        """A CSV writer with the settings' delimiter, quoting only where
+        needed, its binary columns written as base64 text.
+        """
+
         super().__init__(stream, schema, settings, jsonColumns, rawColumns)
         import pyarrow
         import pyarrow.csv
@@ -151,6 +170,7 @@ class _Csv(_Text):
         self._writer = pyarrow.csv.CSVWriter(self.output, textSchema, write_options=options)
 
     def write(self, table: Any) -> None:
+        """Writes the table's rows, binary columns as base64."""
 
         import pyarrow
 
@@ -160,12 +180,14 @@ class _Csv(_Text):
         self._writer.write_table(table)
 
     def close(self) -> None:
+        """Closes the CSV writer, then the output."""
 
         self._writer.close()
         super().close()
 
 
 def _jsonText(value: Any) -> str:
+    """A value as compact JSON text, non-ASCII kept."""
 
     return json.dumps(value, ensure_ascii=False)
 
@@ -178,6 +200,8 @@ def _rawJson(column: str) -> Callable[[str], str]:
     """
 
     def encode(value: str) -> str:
+        """A JSON text value as it is, after checking it is JSON. Raises FileTypeError."""
+
         try:
             json.loads(value)
         except ValueError:
@@ -206,6 +230,7 @@ def _document(value: str) -> str:
 
 
 def _float(value: float) -> str:
+    """A float as JSON, NaN and the infinities as the strings _NOT_FINITE gives."""
 
     return json.dumps(value) if math.isfinite(value) else _NOT_FINITE[str(value)]
 
@@ -240,12 +265,14 @@ def _encoder(field: Any, isDocument: bool) -> Callable[[Any], str]:
 class _JsonLines(_Text):
     """One object per line, keyed by column, every column present."""
 
-    # Rows turned into Python at once: a row group whole would be several
-    # times its size in memory.
+    # BATCH_ROWS: rows turned into Python at once: a row group whole would be
+    #   several times its size in memory.
     BATCH_ROWS = 4096
 
     def __init__(self, stream: Any, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str],
                  rawColumns: AbstractSet[str] = frozenset()) -> None:
+        """A JSON Lines writer, with each column's key and encoder built once."""
+
         super().__init__(stream, schema, settings, jsonColumns, rawColumns)
 
         self._keys = [_jsonText(field.name) + ':' for field in schema]
@@ -255,6 +282,9 @@ class _JsonLines(_Text):
                           else _encoder(field, field.name in jsonColumns) for field in schema]
 
     def write(self, table: Any) -> None:
+        """Writes each row as one JSON object on its own line, BATCH_ROWS rows
+        at a time.
+        """
 
         columns = list(zip(self._keys, self._encoders))
         for batch in table.to_batches(max_chunksize=self.BATCH_ROWS):
@@ -283,6 +313,10 @@ class Parts:
 
     def __init__(self, output: PartOutput, directory: str, runId: str, schema: Any, settings: PartSettings, jsonColumns: AbstractSet[str] = frozenset(),
                  singleFile: bool = False, rawColumns: AbstractSet[str] = frozenset()) -> None:
+        """The parts of one run, written in `directory` and named for `runId`.
+        `written` lists (path, rows) for each part closed so far.
+        """
+
         self.output = output
         self.directory = directory
         self.runId = runId
@@ -299,6 +333,7 @@ class Parts:
 
 
     def _open(self) -> None:
+        """Opens the next part."""
 
         name = 'part-{}-{:05d}{}'.format(self.runId, len(self.written) + 1, extension(self.settings))
         self._path = posixpath.join(self.directory, name)
@@ -331,6 +366,7 @@ class Parts:
 
 
     def _close(self) -> None:
+        """Closes the open part, recording it in `written`."""
 
         if self._writer is None:
             return

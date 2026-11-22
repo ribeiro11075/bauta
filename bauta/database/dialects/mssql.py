@@ -27,12 +27,16 @@ def _mssqlKind(kind: type) -> str:
 
 
 class MSSQLDialect(DatabaseDialect):
+    """SQL Server, through pymssql. Upserts are MERGE statements of many rows
+    at once, since pymssql's executemany sends a statement per row.
+    """
 
     databaseType = DatabaseType.MSSQL
 
     REFUSED_FLOATS = frozenset({'nan', 'inf'})
 
     def openConnection(self, settings: DatabaseConfig) -> Any:
+        """A pymssql connection."""
 
         import pymssql
 
@@ -53,15 +57,18 @@ class MSSQLDialect(DatabaseDialect):
 
 
     def placeholders(self, count: int) -> List[str]:
+        """pymssql's format style: `%s`."""
 
         return count * ['%s']
 
 
-    # Bound twice: without a schema, every schema's keys, as SQL Server has
-    # always been read, so a subset follows a child table in another schema.
+    # FOREIGN_KEY_SCHEMA_BINDS: bound twice: without a schema, every schema's
+    #   keys, as SQL Server has always been read, so a subset follows a child
+    #   table in another schema.
     FOREIGN_KEY_SCHEMA_BINDS = 2
 
     def foreignKeysQuery(self) -> str:
+        """SQL Server's, from sys.foreign_keys and the tables and columns it joins."""
 
         return ("SELECT sp.name, tp.name, cp.name, sr.name, tr.name, cr.name, fk.name, SCHEMA_NAME() "
                 "FROM sys.foreign_keys fk "
@@ -77,6 +84,7 @@ class MSSQLDialect(DatabaseDialect):
 
 
     def foreignKeyCountsQuery(self) -> str:
+        """SQL Server's, from sys.foreign_keys, by schema."""
 
         return ("SELECT s.name, count(*), SCHEMA_NAME() FROM sys.foreign_keys fk JOIN sys.schemas s ON s.schema_id = fk.schema_id "
                 "GROUP BY s.name")
@@ -111,6 +119,7 @@ class MSSQLDialect(DatabaseDialect):
 
 
     def primaryKeyQuery(self) -> str:
+        """SQL Server's, from information_schema."""
 
         return ("SELECT k.column_name FROM information_schema.table_constraints t "
                 "JOIN information_schema.key_column_usage k ON k.constraint_name = t.constraint_name AND k.table_schema = t.table_schema "
@@ -119,6 +128,7 @@ class MSSQLDialect(DatabaseDialect):
 
 
     def checkConstraintsQuery(self) -> Optional[str]:
+        """SQL Server's: the definitions of the table's enabled check constraints."""
 
         return ("SELECT cc.definition FROM sys.check_constraints cc JOIN sys.tables t ON t.object_id = cc.parent_object_id "
                 "JOIN sys.schemas s ON s.schema_id = t.schema_id "
@@ -134,6 +144,7 @@ class MSSQLDialect(DatabaseDialect):
 
 
     def tableGrantsQuery(self) -> Optional[str]:
+        """SQL Server's: the table's GRANT and GRANT WITH GRANT OPTION permissions."""
 
         return ("SELECT p.permission_name, pr.name, CASE WHEN p.state = 'W' THEN 1 ELSE 0 END FROM sys.database_permissions p "
                 "JOIN sys.database_principals pr ON pr.principal_id = p.grantee_principal_id "
@@ -165,14 +176,18 @@ class MSSQLDialect(DatabaseDialect):
                 "ORDER BY i.name, ic.key_ordinal").format(1 if unique else 0, '' if unique else 'AND i.type = 2 AND i.is_hypothetical = 0 ')
 
 
-    # How sys.columns' type, size and collation are written back into a
-    # column definition, for making a column NOT NULL: ALTER COLUMN restates
-    # the whole of it, and a size or collation left out would change it.
+    # _SIZED_IN_BYTES: how sys.columns' type, size and collation are written
+    #   back into a column definition, for making a column NOT NULL: ALTER
+    #   COLUMN restates the whole of it, and a size or collation left out would
+    #   change it.
     _SIZED_IN_BYTES = {'varchar', 'char', 'varbinary', 'binary'}
     _SIZED_IN_CHARACTERS = {'nvarchar', 'nchar'}
     _SCALED = {'datetime2', 'time', 'datetimeoffset'}
 
     def _columnDefinition(self, typeName: str, maxLength: int, precision: int, scale: int, collation: Optional[str]) -> str:
+        """A column's type as a definition restates it, size, precision, scale
+        and collation included; see _SIZED_IN_BYTES.
+        """
 
         if typeName in self._SIZED_IN_BYTES | self._SIZED_IN_CHARACTERS:
             size = 'max' if maxLength == -1 else str(maxLength // 2 if typeName in self._SIZED_IN_CHARACTERS else maxLength)
@@ -206,6 +221,7 @@ class MSSQLDialect(DatabaseDialect):
 
 
     def tableExistsQuery(self) -> str:
+        """SQL Server's, from information_schema."""
 
         return "SELECT count(*) FROM information_schema.tables WHERE table_schema = COALESCE({}, SCHEMA_NAME()) AND table_name = {}"
 
@@ -224,18 +240,20 @@ class MSSQLDialect(DatabaseDialect):
 
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str], rowCount: int = 1,
                     placeholders: Optional[List[str]] = None) -> str:
+        """SQL Server's: a MERGE of `rowCount` rows given as VALUES, ended with
+        the semicolon T-SQL requires of a MERGE.
+        """
 
         rowValues = ', '.join(['({})'.format(', '.join(placeholders or self.placeholders(len(allColumns))))] * rowCount)
         columnNames = ', '.join(allColumns)
         mergeClause = _mergeUpdateInsertClause('target', 'source', allColumns, primaryKeyColumns, nonPrimaryKeyColumns)
 
-        # MERGE requires a terminating semicolon in T-SQL, unlike Oracle
         return 'MERGE INTO {} AS target USING (VALUES {}) AS source ({}) {};'.format(table, rowValues, columnNames, mergeClause)
 
 
-    # A VALUES list in an INSERT takes at most 1000 rows. pymssql binds
-    # parameters by quoting them into the statement itself, so SQL Server's
-    # 2100-parameter limit doesn't apply.
+    # VALUES_ROW_LIMIT: a VALUES list in an INSERT takes at most 1000 rows.
+    #   pymssql binds parameters by quoting them into the statement itself, so
+    #   SQL Server's 2100-parameter limit doesn't apply.
     VALUES_ROW_LIMIT = 1000
 
 
@@ -339,6 +357,7 @@ class MSSQLDialect(DatabaseDialect):
 
 
     def upsertFromStageQuery(self, targetTable: str, stageTable: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """SQL Server's: a MERGE of every row in the stage."""
 
         mergeClause = _mergeUpdateInsertClause('target', 'source', allColumns, primaryKeyColumns, nonPrimaryKeyColumns)
 
@@ -352,11 +371,17 @@ class MSSQLDialect(DatabaseDialect):
         """
 
         def literal(text: str) -> str:
-            # Both arguments are string literals, so a quote in a table's name
-            # ends the literal unless doubled.
+            """`text` as a string literal for sp_rename, its quotes doubled so
+            a quote in a table's name can't end it.
+            """
+
             return "'{}'".format(text.replace("'", "''"))
 
         def renamed(table: str) -> str:
+            """The table's bare name as a literal: sp_rename takes the new name
+            without its schema.
+            """
+
             return literal(bareName(unqualifiedName(table)))
 
         return ['EXEC sp_rename {}, {}; EXEC sp_rename {}, {}; EXEC sp_rename {}, {};'.format(

@@ -32,10 +32,11 @@ use crate::error::{MaskError, Masked};
 use crate::key::{Charset, KeyStrategy};
 use crate::KeyedHash;
 
-/// The kinds Python detects, in its order: where matches overlap, the earlier
-/// kind wins. `documents._DETECTOR_KINDS`.
+// KINDS: the kinds Python detects, in its order: where matches overlap, the
+//   earlier kind wins. `documents._DETECTOR_KINDS`.
 pub const KINDS: [&str; 6] = ["email", "iban", "card", "ssn", "ip", "phone"];
 
+/// What `redact` looks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Email,
@@ -47,6 +48,7 @@ enum Kind {
 }
 
 impl Kind {
+    /// A kind by its name in `detect`.
     fn parse(name: &str) -> Option<Self> {
         Some(match name {
             "email" => Kind::Email,
@@ -59,6 +61,7 @@ impl Kind {
         })
     }
 
+    /// The label a found identifier is replaced with.
     fn label(&self) -> &'static str {
         match self {
             Kind::Email => "[EMAIL]",
@@ -85,10 +88,12 @@ struct Detector {
     trims: bool,
 }
 
+/// Whether a byte is a digit or a dash, for the card and SSN lookarounds.
 fn isDigitOrDash(byte: u8) -> bool {
     byte.is_ascii_digit() || byte == b'-'
 }
 
+/// Whether a byte is a digit or a dot, for the IP lookarounds.
 fn isDigitOrDot(byte: u8) -> bool {
     byte.is_ascii_digit() || byte == b'.'
 }
@@ -183,6 +188,8 @@ fn phoneLike(found: &[u8], dateLike: &Regex) -> bool {
     (7..=15).contains(&digits) && !dateLike.is_match(text)
 }
 
+/// What a found identifier is replaced with: its label, or a keyed value of the
+/// same shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Replacement {
     Label,
@@ -190,6 +197,7 @@ pub enum Replacement {
 }
 
 impl Replacement {
+    /// A replacement by its option's name.
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "label" => Some(Replacement::Label),
@@ -199,6 +207,8 @@ impl Replacement {
     }
 }
 
+/// The `redact` strategy: its detectors in order, what replaces what they find,
+/// and the `key` strategy that masks an IBAN.
 pub struct RedactStrategy {
     detectors: Vec<Detector>,
     replacement: Replacement,
@@ -320,6 +330,7 @@ impl RedactStrategy {
 mod tests {
     use super::*;
 
+    /// Each span the strategy finds in `text`, as the text and its kind.
     fn kinds(strategy: &RedactStrategy, text: &str) -> Vec<(String, Kind)> {
         strategy.spans(text).into_iter().map(|(start, end, kind)| (text[start..end].to_owned(), kind)).collect()
     }

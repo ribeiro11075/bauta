@@ -16,10 +16,10 @@ from ..auth import changingAccounts, record, startSession
 from ..sso import BUSY, PENDING_PATH, PENDING_SECONDS, PROVIDER, STATE, TOKEN, SsoFailure, pendingCookie, signInWith
 from .context import Context
 
+# PROVIDER_ERROR_LENGTH: the longest error code from the provider written to
+#   the log.
 CALLBACK_PATH = '/api/auth/sso/callback'
-# The longest error code from the provider written to the log.
 PROVIDER_ERROR_LENGTH = 100
-
 logger = logging.getLogger(__name__)
 
 
@@ -40,6 +40,9 @@ class CallbackQueryFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Writes the callback's line in the access log without its query,
+        which holds the authorization code and state. Never drops a record.
+        """
 
         arguments: Any = record.args
         if isinstance(arguments, tuple) and len(arguments) >= 3 and isinstance(arguments[2], str) and arguments[2].startswith(CALLBACK_PATH + '?'):
@@ -49,12 +52,19 @@ class CallbackQueryFilter(logging.Filter):
 
 
 def build(context: Context) -> APIRouter:
+    """The routes of single sign-on: starting one, and the provider's callback."""
 
     router = APIRouter()
     sessions, settings, oidc, throttle = context.sessions, context.settings, context.oidc, context.ssoThrottle
 
     @router.get('/auth/sso/start')
     def start() -> Response:
+        """GET /auth/sso/start: sends the browser to the identity provider,
+        with the sign-in's state, nonce and PKCE challenge kept in a sealed
+        cookie of its own; back to the sign-in page, saying why, where the
+        provider can't be reached.
+        """
+
         if oidc is None:
             raise HTTPException(status_code=404, detail='single sign-on is off')
         login = oidc.newLogin()
@@ -71,6 +81,14 @@ def build(context: Context) -> APIRouter:
     @router.get(CALLBACK_PATH.removeprefix('/api'))
     def callback(request: Request, session: Session = Depends(sessions), code: Optional[str] = None, state: Optional[str] = None,
                  error: Optional[str] = None) -> Response:
+        """GET /auth/sso/callback: the provider's answer. Checks the state
+        against the pending cookie, exchanges the code for verified claims, and
+        signs the person in to the account they link to or make; a refusal is
+        logged, recorded where it names someone, throttled by address, and sent
+        back to the sign-in page as a code saying why. The pending cookie is
+        cleared either way.
+        """
+
         if oidc is None:
             raise HTTPException(status_code=404, detail='single sign-on is off')
         address = request.client.host if request.client is not None else ''

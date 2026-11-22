@@ -26,8 +26,8 @@ import yaml
 
 from bauta import readJobsFile
 
-# Where the configuration is: $BAUTA_CONFIG, as the command reads it, else
-# the demo's own beside this file.
+# CONFIG_DIRECTORY: where the configuration is: $BAUTA_CONFIG, as the command
+#   reads it, else the demo's own beside this file.
 CONFIG_DIRECTORY = Path(os.environ.get('BAUTA_CONFIG') or Path(__file__).resolve().parent / 'configuration')
 
 

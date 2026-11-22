@@ -42,6 +42,11 @@ class _CycleReporter:
 
     def __init__(self, arguments: argparse.Namespace, jobsFile: DataJobsFile, connectionConfiguration: Dict[str, ConnectionConfig],
                  log: Log) -> None:
+        """A reporter for every cycle of a run: where history and the manifest
+        go, as the flags or jobs.yaml say, and the URL to notify, as
+        --notify-url or the environment says.
+        """
+
         from ..jobs.reporting import RunHistory
 
         self.arguments, self.jobsFile, self.connectionConfiguration, self.log = arguments, jobsFile, connectionConfiguration, log
@@ -53,6 +58,9 @@ class _CycleReporter:
 
 
     def _attempt(self, what: str, step: Callable[[], Any]) -> bool:
+        """Runs one reporting step, logging rather than raising its failure, so
+        one that fails doesn't stop the others. Whether it succeeded.
+        """
 
         try:
             step()
@@ -63,6 +71,9 @@ class _CycleReporter:
 
 
     def __call__(self, result: RunResult) -> None:
+        """Reports one cycle: appends its history, writes its masking manifest,
+        remembering a failure to, and notifies the URL as --notify-on says.
+        """
 
         from ..jobs.reporting import notify, runIdOf
 
@@ -89,6 +100,7 @@ def _applyJobSelection(jobsFile: DataJobsFile, arguments: argparse.Namespace, lo
 
 
 def _reportRun(result: RunResult, log: Log) -> int:
+    """Logs each completed job, and returns the run's exit code."""
 
     for outcome in result.completed:
         log.logging.info('{}: completed in {:.1f}s, {} row(s)'.format(outcome.job, outcome.durationSeconds, outcome.rowCount),

@@ -2,22 +2,15 @@
 
 **Put a mask on production:** a safe, realistic stand-in for your production data, in whichever database you need it. Bauta masks what it copies, copies only the slice you need with every relationship intact, generates what may not be copied at all, and moves data between databases on a schedule you already run, with nothing to host.
 
-- **Masking:** consistent across tables and runs, one-to-one for keys (NIST FF1 where policy requires it), applied before anything reaches the target, and every column must be covered.
-- **Discovery, subsets and synthetic data:** propose a masking policy from a live schema, copy a referentially complete slice of production, create the copy's tables in whichever database it goes to, and fill tables that can't be copied with generated rows.
-- **Audit:** report what every job does with data and what a reviewer should question, and seal each run's masking manifest so it can be verified later.
-- **Provable coverage:** list every table in production and what the jobs do with each, so a table nobody wrote a job for fails the build rather than going unnoticed. A database can require that nothing reaches it unmasked.
+- **Masking:** consistent across tables and runs, one-to-one for keys (NIST FF1 where policy requires it), applied before anything reaches the target. Every column must be covered.
+- **Discovery, subsets and synthetic data:** propose a policy from a live schema, copy a referentially complete slice of production, create the copy's tables in the target's dialect, and generate rows for tables that can't be copied.
+- **Proof for a reviewer:** an audit of what every job does with data, coverage of every production table, so a table nobody wrote a job for fails the build, and a sealed manifest of each run. A database can refuse anything unmasked.
 - **Seven databases:** Oracle, SQL Server, PostgreSQL, MySQL, MariaDB, SQLite and DuckDB, as source or target in any combination.
-- **Files as a source:** Parquet, CSV or JSON Lines in a directory or a bucket, read with SQL through the same pipeline, so a lake's files are masked and copied as a database's tables are.
-- **Files as a target:** a masked copy in Parquet, CSV or JSON Lines, in a directory or in S3, Google Cloud Storage or Azure, for a data lake that Athena, Snowflake or Databricks reads: appended to incrementally or published whole as a snapshot, with nothing visible until a run succeeds.
-- **Iceberg tables:** a masked copy as Iceberg tables in any of the three clouds, through a Glue, REST or SQL catalog: each run one commit, upserts that merge by key, and old snapshots' files deleted with them.
-- **Streaming:** memory stays flat however large the table, and PostgreSQL and SQL Server targets load in bulk.
-- **Fast:** a million rows of six masked columns, two of them one-to-one keys, in under 8 seconds on one core with the optional native masker, and 74 without; more cores for wide tables. Either way the masks are the same.
-- **Incremental loads:** extract only what changed since the last successful run.
-- **A dependency graph:** jobs run in order, concurrently where they can, each in its own process with an optional timeout.
-- **Operable:** webhook alerts; run state, history and manifests each in a file or a table, with the seconds each job spent reading, masking and writing; a read limit per source, so a copy takes no more of production than it was given; and passwords from a command for cloud IAM tokens.
-- **Studio, a web console for the team (preview):** sign in to watch runs as they go, start, rerun and cancel them, review new columns, read each job's trend, hand a reviewer a run's evidence, and edit jobs -- on your own infrastructure, with roles and a record of who did what. See [Studio](docs/guides/studio.md).
-- **No infrastructure:** a `pip install`, some YAML, and a command you run from cron. Studio is optional, and one more command.
-
+- **Files and lakes:** read Parquet, CSV or JSON Lines with SQL; write them to a directory, S3, Google Cloud Storage or Azure, or write Iceberg tables through a Glue, REST or SQL catalog. Nothing is visible until a run succeeds.
+- **Built for large tables:** rows stream in chunks, so memory stays flat; loads are incremental where you want; a million rows of six masked columns take under 8 seconds on one core with the optional native masker (74 without), with the same masks either way.
+- **Operable:** jobs run as a dependency graph, each in its own process; webhook alerts; history with the time each job spent reading, masking and writing; a read limit per source; passwords from a command, for cloud IAM tokens.
+- **Studio (preview):** a web console to watch, start and cancel runs, review new columns, edit jobs and hand a reviewer a run's evidence, with roles and an activity log. See [Studio](docs/guides/studio.md).
+- **No infrastructure:** a `pip install`, some YAML, and a command you run from cron.
 
 ## Documentation
 
@@ -108,32 +101,12 @@ bauta --version          print the version, and which masker it would use
 | `2` | Invalid configuration or usage. |
 | `130` | Interrupted by a signal: running jobs finished, the rest were skipped. |
 
-`run` makes one pass and exits, so it fits under cron or a Kubernetes CronJob. A second `run` sharing the same run state refuses to start while the first is still going, except that runs of different jobs with `--job`, as an orchestrator starts one task per job, go side by side; the same job never runs twice at once (see [overlapping runs](docs/guides/run-on-a-schedule.md#run-state)). `bauta <command> --help` lists every flag.
+`run` makes one pass and exits, so it fits under cron or a Kubernetes CronJob. A second `run` refuses to start while the first is still going, though runs of different jobs (`--job`) go side by side, as an orchestrator starts them; the same job never runs twice at once ([overlapping runs](docs/guides/run-on-a-schedule.md#run-state)). Every command and flag has its own page under [commands](docs/reference/commands/index.md), and `bauta <command> --help` lists them too.
 
 
-Every command and flag is on its own page under [commands](docs/reference/commands/index.md).
+## Contributing
 
-
-## Layout
-
-| Path | What it is |
-| --- | --- |
-| `bauta/configuration/` | reading and validating the YAML: `${NAME}` and `passwordCommand` in `environment.py`, the models in `models.py` |
-| `bauta/database/` | streaming and loading rows in `connection.py`, swaps and what a stage table is given in `maintenance.py`; what differs between the seven databases in `dialects/`, one module each |
-| `bauta/jobs/` | `runner.py` runs a cycle of jobs, each in a process of its own (`workers.py`) moving rows a chunk at a time (`pipeline.py`); run state in `memory.py`, history and manifests in `reporting.py` |
-| `bauta/masking/` | the keyed hash, `Strategy` and masking plans in `core.py`, the built-in strategies in `strategies/`, one module a kind |
-| `bauta/transform/` | per-column transforms, applied before masking, and the ones that ship in `builtinTransforms.py` |
-| `bauta/generate/` | `discover`, `subset`, `schema` and `synthesize`: what is built from a live schema |
-| `bauta/review/` | `audit`, `coverage` and `verify-references`: reports that move no data |
-| `bauta/log/` | logging, and the scrubbing that keeps values out of every message |
-| `bauta/cli/` | the `bauta` command, one module per group of subcommands |
-| `bauta/project.py` | a configuration directory as the command reads it, and its checks as data: what the commands and Studio share |
-| `bauta/studio/` | Studio, the web console: its API, accounts, and what it keeps; installed with the `studio` extra |
-| `studio/` | Studio's web app, in React (`studio/web/`), built into `bauta/studio/static`, and a demo to try it on (`studio/demo/`) |
-| `mask-rs/` | the optional native masker, in Rust — see [its README](mask-rs/README.md) |
-| `example/` | runnable demos, each with its `configuration/`, and a starter configuration — see [its README](example/README.md) |
-| `docs/` | the documentation above |
-| `tests/` | the test suite, laid out like the package; see [where the tests are](docs/project/development.md#where-the-tests-are) |
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setting up, where the code is, and what a change needs.
 
 
 ## License

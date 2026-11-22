@@ -17,12 +17,12 @@ You load configuration however you like and hand it over as plain data. Each dri
 
 ## API stability
 
-Everything importable from `bauta` itself is the public API, and this page describes all of it. A few names this page points to in a submodule -- `bauta.database.dialects`' quoting helpers, `bauta.review.references`, `bauta.generate.schema` and `bauta.generate.subset` -- are public there. Anything else reached through a submodule is internal and may change in any release. A custom masking strategy subclasses `bauta.masking.Strategy`, and may use `KeyedHash`, `MaskingError` and `canonical` from `bauta.masking`; see [your own strategies](strategies.md#your-own-strategies).
+Everything importable from `bauta` itself is the public API, described on this page, as are the few submodule names it points to (`bauta.database.dialects`' quoting helpers, `bauta.review.references`, `bauta.generate.schema`, `bauta.generate.subset`). Anything else in a submodule is internal and may change in any release. A custom strategy subclasses `bauta.masking.Strategy`, and may use `KeyedHash`, `MaskingError` and `canonical` from there too; see [your own strategies](strategies.md#your-own-strategies).
 
 
 ## Configuration models
 
-`Configuration.validateConnectionConfiguration(raw, directory=None)` and `Configuration.validateJobConfiguration(raw, DataJobsFile)` turn loaded YAML into these pydantic models, raising `ConfigurationError`. With `directory`, the one `connections.yaml` is in, a relative database path is taken relative to it, as the CLI does; without it, relative to the working directory. `readJobsFile(path)` reads a jobs file with `${NAME}` expanded and the files its [`include`](configuration.md#splitting-the-jobs-across-files) names merged in, returning a `JobsDocument` whose `content` is what to validate, `files` the files read, and `origins` the file each job came from; a mapping that still holds `include` is refused. `Configuration.validateJobGraph(jobs, connections=...)` checks predecessors and aliases. `expandEnvironmentVariables(raw)` does what the CLI does to `${NAME}` first. The fields are the ones [configuration.md](configuration.md) describes.
+`Configuration.validateConnectionConfiguration(raw, directory=None)` and `Configuration.validateJobConfiguration(raw, DataJobsFile)` turn loaded YAML into these pydantic models, raising `ConfigurationError`; `directory`, where `connections.yaml` is, anchors relative database paths as the CLI does. `readJobsFile(path)` reads a jobs file with `${NAME}` expanded and its [`include`](configuration.md#splitting-the-jobs-across-files) files merged, as a `JobsDocument` (`content` to validate, `files` read, `origins` of each job). `Configuration.validateJobGraph(jobs, connections=...)` checks predecessors and aliases, and `expandEnvironmentVariables(raw)` resolves `${NAME}`. The fields are those of [the configuration reference](configuration.md).
 
 | Model | Holds |
 | --- | --- |
@@ -54,7 +54,7 @@ records = history.read(limit=50) if history else []
 manifest = project.readManifest()                # (where it was read from, its JSON), or None
 ```
 
-`Project.load(directory=None, jobsPath=None, connectionsPath=None)` reads `jobs.yaml`, with its includes, and `connections.yaml`, validated as `bauta validate` validates them. It raises `ConfigurationError` for an invalid file and `bauta.project.UsageError` for one that isn't there. `document` is the jobs file as read: `files` every file its `include` brought in, and `origins` the file each job came from.
+`Project.load(directory=None, jobsPath=None, connectionsPath=None)` reads and validates `jobs.yaml`, with its includes, and `connections.yaml`, raising `ConfigurationError` for an invalid file and `bauta.project.UsageError` for a missing one. `document` is the jobs file as read, with its `files` and each job's `origins`.
 
 | Method | What it returns |
 | --- | --- |
@@ -106,9 +106,9 @@ if __name__ == '__main__':
     main()
 ```
 
-**Keep the `if __name__ == '__main__':` guard.** Each job runs in a process of its own, started with Python's `spawn` method on every platform, and each one begins by importing your script. Without the guard, that import starts the run again.
+**Keep the `if __name__ == '__main__':` guard.** Each job runs in a process of its own, which begins by importing your script again ([workers](../concepts/how-it-works.md#workers)); without the guard, that import starts the run again.
 
-`expandEnvironmentVariables` is what resolves `${NAME}` references — the CLI calls it for you, but a library caller must, before validating. It raises `ConfigurationError` naming every unset variable.
+Call `expandEnvironmentVariables` before validating, as the CLI does; it raises `ConfigurationError` naming every unset variable.
 
 ```python
 runDataJobs(jobsFile, connectionConfiguration, memory,
@@ -121,12 +121,12 @@ runDataJobs(jobsFile, connectionConfiguration, memory,
 - **`acceptKeyChange=True`** runs upsert jobs whose masking key changed since their last run; see [the key](../guides/mask-a-table.md#the-key).
 - **`runForever=False`** makes one pass and returns. `True` keeps running, honouring `refresh`, until `SIGINT` or `SIGTERM`. Either signal stops new jobs from starting and lets running ones finish; see [stopping](../concepts/how-it-works.md#single-runs-not-a-daemon).
 - **`logFile`** is optional. Without one, attach a stream yourself: `Log(level=...).addStreamHandler(sys.stderr)`. Workers' records are written by the calling process's handlers, whichever those are.
-- **`logFormat='json'`** writes structured records — see [design.md](../concepts/how-it-works.md#structured-logs).
+- **`logFormat='json'`** writes structured records — see [structured logs](../concepts/how-it-works.md#structured-logs).
 - **`jobsFile.maskingThreads`** sets how many threads each job masks with, as in the CLI; see [masking threads](../guides/make-it-faster.md#masking-threads).
 
-To keep two runs that share run state from overlapping, as the CLI does, hold `exclusiveRun(path)` around the call. It raises `RunInProgressError` if another process holds the same lock file. `exclusiveRun(path, jobs=[...])` is what `run --job` holds: the lock shared, and each of those jobs' own exclusively, so runs of different jobs proceed together.
+To keep two runs sharing run state from overlapping, as the CLI does, hold `exclusiveRun(path)` around the call; it raises `RunInProgressError` if another process holds the lock. `exclusiveRun(path, jobs=[...])` is what `run --job` holds, so runs of different jobs proceed together.
 
-Validation raises `ConfigurationError`. `runDataJobs` also raises it before starting any work if a job sets `watermarkColumn` against a backend that can't store watermarks, or if `maskingThreads` is more than the cores available, and `DependencyGraph` raises it for predecessors that form a cycle.
+`runDataJobs` raises `ConfigurationError` before starting any work for a watermark job against a backend that can't store watermarks, `maskingThreads` beyond the cores available, or predecessors that form a cycle.
 
 
 ## Results
@@ -177,11 +177,11 @@ A `MemoryBackend` holds what the scheduler needs *before* a job runs: when it la
 | `FileMemory(memoryFile=...)` | A filesystem persists between runs and every worker shares it. |
 | `DatabaseMemory(connectionSettings=..., table=...)` | It doesn't: a container without a volume, anything across several machines, or serverless. |
 
-`FileMemory` in the wrong environment doesn't fail loudly: it forgets every watermark and re-extracts from `watermarkInitial`. `DatabaseMemory`'s table must exist first; its shape is `DATABASE_MEMORY_SCHEMA`, shown in [operations.md](tables.md).
+`FileMemory` in the wrong environment doesn't fail loudly: it forgets every watermark and re-extracts from `watermarkInitial`. `DatabaseMemory`'s table must exist first; its shape is `DATABASE_MEMORY_SCHEMA`, shown in [tables](tables.md).
 
 ### Writing your own
 
-Subclass `MemoryBackend` and implement all six methods; a backend that leaves one out can't be created, since a store that forgot key fingerprints would quietly turn off the check that stops two masking keys mixing in one target.
+Subclass `MemoryBackend` and implement all six methods; one left out is an error, since a store that forgot key fingerprints would quietly turn off the check that stops two masking keys mixing in one target.
 
 | Method | Behaviour |
 | --- | --- |
@@ -221,7 +221,7 @@ runDataJobs(jobsFile, connections, memory, onCycle=report)
 | `DatabaseManifests(connectionSettings, table=...)` | Sealed manifests in a table: `write(manifest, runId)`, and `read(runId=None)`, which returns `(runId, manifest)`, the latest if no run is named. `DATABASE_MANIFEST_SCHEMA` is the table. |
 | `notify(url, result, always=False)` | Posts `reporting.notificationPayload(result)` if the cycle didn't succeed, or always; returns whether it posted. |
 
-See [operations.md](../guides/watch-what-ran.md#notifications) for the payload.
+See [notifications](../guides/watch-what-ran.md#notifications) for the payload.
 
 
 ## Masking, discovery and subsets
@@ -245,14 +245,14 @@ with Database(connectionSettings=connections['prod']) as database:
 | --- | --- |
 | `MaskingPlan(key, columns, defaultStrategy=None)` | A validated policy. `bind(columns)` checks coverage and returns an object whose `apply(rows)` masks one chunk, and whose `manifest` lists what each column gets. `fingerprint` is the key's safe identifier. |
 | `STRATEGIES` | Strategy name → class, for the built-in strategies, which are in `bauta.masking.strategies`. Each `Strategy` validates its own options in `validateOptions`. |
-| `masking.setMaskingThreads(n)` | How many threads the native masker spreads a chunk over, in this process; one until set. `runDataJobs` sets it in each job's process from `maskingThreads`, so call it only when using `MaskingPlan` directly. Results are the same for any `n`. |
+| `masking.setMaskingThreads(n)` | How many threads the native masker uses in this process; one until set. `runDataJobs` sets it, so call it only when using `MaskingPlan` directly. |
 | `resolveStrategy(name)` | A built-in strategy, or your own named `module.path:ClassName`; see [your own strategies](strategies.md#your-own-strategies). |
 | `LOCALES` | The fake-data locales, as name → `Locale`, from `bauta.masking.fakeData`, which holds every list the `fake*` strategies pick from. |
 | `keyFingerprint(key)` | The same fingerprint, for a key on its own. |
 | `buildMaskingManifest(outcomes, declared)` | The manifest from outcomes and each masked job's declared target and fingerprint. `RunResult.maskingManifest` wraps it. |
 | `sealManifest(manifest, signingKey=None)`, `verifyManifest(manifest, signingKey=None)` | Add a manifest's digest (and signature), and check them. `verifyManifest` returns `digestValid`, `signed`, `signatureValid` and the signing key's fingerprint, and raises `ValueError` for a manifest with no integrity section. See [sealing and verifying](../guides/keep-a-manifest.md#sealing-and-verifying). |
 | `auditJobs(jobs, returnedColumns=None, encryption=None, unreachable=None, targetColumns=None, foreignKeys=None, declaredForeignKeys=None, rules=...)`, `renderAudit(report)` | The `audit` report as a dict, and as text. The optional arguments carry what `audit --connect` learns from the databases: `foreignKeys` maps a target alias to its keys and its sources', `declaredForeignKeys` to the target's own. |
-| `bauta.review.coverage.coverageReport(alias, tables, jobs, acknowledged=None, columns=None, rules=...)`, `renderCoverage(report)` | What the jobs do with each of `tables`: `masked`, `copied`, `acknowledged` or `uncovered`, with a `summary` of each. `acknowledged` maps a table left out on purpose to why; `columns` maps a table to its columns, so an uncovered one can say which look like personal data. A table counts as covered when a job reading `alias` names it in its `sourceQuery`. |
+| `bauta.review.coverage.coverageReport(alias, tables, jobs, acknowledged=None, columns=None, rules=...)`, `renderCoverage(report)` | What the jobs do with each of `tables`: `masked`, `copied`, `acknowledged` or `uncovered`. `acknowledged` maps a table to why it is left out; `columns` lets an uncovered table say which columns look personal. |
 | `verifyReferences(database, alias, loaded, sourceKeys=())` | A `ReferenceResult` per foreign key on a table the jobs load: the key as the target spells it, whether the target declares it, and its orphaned rows, or the `problem` that stopped it being counted. `loaded` maps each table's upper-cased name to its `targetTableFinal`. From `bauta.review.references`, with `renderReferences(results)`. |
 | `Database.getForeignKeys(schema=None)` | Every foreign key on a table in `schema`, or in the connection's current schema, as `ForeignKey(table, columns, referencedTable, referencedColumns, name)`. A table is named as `listTables(schema)` names it: bare in the current schema, `schema.table` otherwise. |
 | `Database.getForeignKeysFor(tables)` | The foreign keys of every schema `tables` are in, a bare name being in the current schema. |
@@ -269,7 +269,7 @@ with Database(connectionSettings=connections['prod']) as database:
 | `bauta.generate.subset.draftSubset(database, root, where, followChildren=True, ignore=(), mask=False, sampleSize=1000, rules=None, maskKeys=False, count=False)` | What `bauta subset` drafts, from an open `Database`: a `SubsetDraft` with the `plan`, a `JobDraft` per table (with a masking proposal when `mask`) for `bauta.generate.discovery.renderJobs`, and with `count` each table's `rowCounts`, counted by the database. |
 | `bauta.generate.schema.createStageTable(database, table, suffix='_stage')` | A stage table for `table`, made in the same database from `table`'s own definition, as `bauta schema --stage-suffix` makes one with the target as its own source. Returns its name and whether it was created; one already there is left as it is. |
 | `bauta.generate.subset.subsetCountQuery(query)` | A subset query's rows as `SELECT COUNT(*)`, under the same `WITH`, which every database runs, SQL Server included. |
-| `planSubset(foreignKeys, root, where, followChildren=True, ignore=(), materialize=False, quote=None, quoteTable=None)` | A `SubsetPlan`: tables in load order, a query for each, each table's parents, and the foreign keys ignored. Raises `SubsetError` on a cycle, or on a chain deeper than 16 tables. Pass `materialize=database.dialect.supportsMaterializedSelections()`, and (from `bauta.database.dialects`) `quote=lambda name: quoteIdentifier(database.type, name)` and `quoteTable=lambda name: quoteTableName(database.type, name)`, so reserved-word columns and tables work. |
+| `planSubset(foreignKeys, root, where, followChildren=True, ignore=(), materialize=False, quote=None, quoteTable=None)` | A `SubsetPlan`: tables in load order, a query for each, each table's parents, and the keys ignored. Raises `SubsetError` on a cycle or a chain deeper than 16 tables. Pass `materialize=database.dialect.supportsMaterializedSelections()`, and `quote`/`quoteTable` built from `bauta.database.dialects`' `quoteIdentifier` and `quoteTableName`, so reserved words work. |
 | `synthesizeTable(database, table, rows, seed=0, rules=...)`, `planTable(...)` | Fill a table with generated rows, returning how many; or just describe how, with a row generator. Raise `SynthesisError`. |
 
 
@@ -286,7 +286,7 @@ with Database(connectionSettings=connections['app']) as database:
 
 A SQLite or DuckDB file must already exist: `Database` refuses one that doesn't, rather than letting the driver create an empty database. Pass `create=True` where creating it is the point, as `schema --apply` and a job's target do: `Database(connectionSettings=..., create=True)`.
 
-`stream` returns the column names and a `RowStream`: an iterator of row lists, using each dialect's non-buffering cursor. It closes itself when exhausted; one you stop reading early, close with `chunks.close()` or a `with chunks:` block. Closing the `Database` closes any stream still open.
+`stream` returns the column names and a `RowStream`, an iterator of row lists that closes itself when exhausted; close one you stop early with `chunks.close()` or `with chunks:`.
 
 To bind parameters, pass `parameters=` and use the dialect's own placeholder. On the `%s` dialects — mysql, postgresql and mssql — a literal `%` in a query that binds parameters must then be written `%%`.
 

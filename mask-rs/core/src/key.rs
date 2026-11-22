@@ -1,6 +1,6 @@
 //! The `key` strategy: a one-to-one mapping, safe for primary and foreign keys.
 //!
-//! `builtinMasking.KeyStrategy`, and its shape rules are the reason the mapping is
+//! `strategies.KeyStrategy`, and its shape rules are the reason the mapping is
 //! one-to-one overall -- two inputs of different shapes can never collide,
 //! and within a shape it is a permutation.
 //!
@@ -18,18 +18,21 @@ use crate::digits::{decimalDigits, pow10};
 use crate::error::{MaskError, Masked, MAXIMUM_KEY_LENGTH};
 use crate::KeyedHash;
 
+// DIGITS, LOWERCASE, UPPERCASE: the ASCII classes `key` permutes characters
+//   within.
+// HEX_CLASSES: a hex value's classes, per case, so it keeps each character's
+//   case and two spellings of one value never share a mask.
+//   `strategies.keys._HEX_CLASSES`.
+// ALPHANUMERIC_CLASSES: `strategies.keys._ALPHANUMERIC_CLASSES`, in order: a
+//   character is masked within the first class it belongs to, which is what
+//   keeps a digit a digit and a case a case.
 pub const DIGITS: &[u8] = b"0123456789";
 pub const LOWERCASE: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
 pub const UPPERCASE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-/// Per case, so a hex value keeps each character's case and two spellings of
-/// one value never share a mask. `builtinMasking._HEX_CLASSES`.
 const HEX_CLASSES: [&[u8]; 3] = [DIGITS, b"abcdef", b"ABCDEF"];
-
-/// `builtinMasking._ALPHANUMERIC_CLASSES`, in order: a character is masked within the
-/// first class it belongs to, which is what keeps a digit a digit and a case a
-/// case.
 const ALPHANUMERIC_CLASSES: [&[u8]; 3] = [DIGITS, LOWERCASE, UPPERCASE];
 
+/// What `key` permutes: which characters, by class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Charset {
     Alphanumeric,
@@ -38,6 +41,7 @@ pub enum Charset {
 }
 
 impl Charset {
+    /// A charset by its option's name.
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "alphanumeric" => Some(Charset::Alphanumeric),
@@ -47,6 +51,7 @@ impl Charset {
         }
     }
 
+    /// The charset's option name.
     pub fn name(&self) -> &'static str {
         match self {
             Charset::Alphanumeric => "alphanumeric",
@@ -66,11 +71,13 @@ impl Charset {
     }
 }
 
+/// The `key` strategy: a keyed permutation within each value's shape.
 pub struct KeyStrategy {
     pub charset: Charset,
 }
 
 impl KeyStrategy {
+    /// A `key` strategy over `charset`.
     pub fn new(charset: Charset) -> Self {
         Self { charset }
     }

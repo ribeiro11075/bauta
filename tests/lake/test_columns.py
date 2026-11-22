@@ -134,6 +134,10 @@ DECLARED = ['bool', 'int8', 'int32', 'int64', 'uint8', 'uint64', 'float64', 'dec
 
 
 def _outcome(call):
+    """What a call writing a column did: ('written', the array) or ('refused',
+    why).
+    """
+
     try:
         array = call()
     except FileTypeError as error:

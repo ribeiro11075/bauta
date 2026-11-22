@@ -32,6 +32,8 @@ CREATE TABLE days (day DATE PRIMARY KEY, note TEXT);
 
 @pytest.fixture
 def database(tmp_path):
+    """A SQLite database holding the synthesis schema, opened."""
+
     path = tmp_path / 'synthetic.db'
     connection = sqlite3.connect(path)
     connection.executescript(SCHEMA)
@@ -42,6 +44,8 @@ def database(tmp_path):
 
 
 def _fill(database, *tables, seed=0):
+    """Synthesizes rows into each (table, rows) in order."""
+
     return [synthesizeTable(database, table, rows, seed=seed) for table, rows in tables]
 
 

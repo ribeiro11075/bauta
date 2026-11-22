@@ -33,6 +33,10 @@ class PostLoadError(Exception):
     """
 
     def __init__(self, query: str, error: Exception, rowCount: int, targetTable: str) -> None:
+        """The error for a postTargetAdhocQuery that failed after `rowCount`
+        rows had loaded into `targetTable`, which still holds them.
+        """
+
         super().__init__('the load finished and {} holds its {} row(s), but a postTargetAdhocQuery failed -- {}: {}'.format(
             targetTable, rowCount, query, describeError(error)))
         self.rowCount = rowCount
@@ -94,6 +98,7 @@ class LoadTarget:
         """
 
     def write(self, rows: List[Any]) -> None:
+        """Writes one chunk of rows."""
 
         raise NotImplementedError
 
@@ -123,6 +128,8 @@ class ChunkWriter:
     """
 
     def __init__(self, database: Database, table: str, columns: List[str], chunkSize: int, upserts: bool) -> None:
+        """A writer of chunks into `table`, upserting them or inserting them."""
+
         self.database = database
         self.table = table
         self.columns = columns
@@ -131,6 +138,7 @@ class ChunkWriter:
 
 
     def write(self, rows: List[Any]) -> None:
+        """Upserts or inserts the rows, `chunkSize` to a statement."""
 
         if self.upserts:
             self.database.upsert(table=self.table, data=rows, chunkSize=self.chunkSize, columns=self.columns)
@@ -145,6 +153,11 @@ class TableTarget(LoadTarget):
     """
 
     def __init__(self, database: Database, jobConfig: DataJobConfig) -> None:
+        """A target for one job's database table. Rows are loaded into the
+        stage table where there is one, and an upsert without one streams
+        straight into the target.
+        """
+
         self.database = database
         self.jobConfig = jobConfig
         self.loadName = jobConfig.targetTableStage or jobConfig.targetTableFinal
@@ -153,6 +166,12 @@ class TableTarget(LoadTarget):
 
 
     def begin(self, sourceColumns: List[str], description: Optional[Sequence[Sequence[Any]]] = None) -> None:
+        """Readies the table for the job's rows, before any is written:
+        recovers a swap a killed run left part-way, settles the columns the
+        rows bind to by position, refuses an upsert into a table with no
+        primary key, runs preTargetAdhocQueries, empties the stage, and gives a
+        swap's stage the target's keys and grants.
+        """
 
         jobConfig = self.jobConfig
 
@@ -248,6 +267,7 @@ class TableTarget(LoadTarget):
 
 
     def write(self, rows: List[Any]) -> None:
+        """Writes one chunk into the load table."""
 
         ChunkWriter(self.database, self.loadName, self.columns, self.jobConfig.chunkSize, self._streamsDirectlyIntoTarget).write(rows)
 
@@ -264,6 +284,11 @@ class TableTarget(LoadTarget):
 
 
     def finish(self, rowCount: int) -> None:
+        """Completes the load: a swap's tables exchanged, with the stage then
+        emptied for a masked job, since it holds the unmasked original; or an
+        upsert from the stage; then postTargetAdhocQueries, a failure among
+        them raised as PostLoadError.
+        """
 
         jobConfig = self.jobConfig
 

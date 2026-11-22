@@ -40,6 +40,10 @@ SCHEMAS = {
 
 @pytest.fixture(params=sorted(SERVERS))
 def server(request):
+    """Each server, a connection to it, and a function creating a table on it
+    that is dropped after the test.
+    """
+
     settings = serverSettings(request.param)
     database = Database(connectionSettings=settings)
 
@@ -60,6 +64,8 @@ def server(request):
 
 
 def _dropTables(database: Database, tables):
+    """Drops each table, rolling back after one that can't be."""
+
     while tables:
         name = tables.pop()
         try:
@@ -70,6 +76,10 @@ def _dropTables(database: Database, tables):
 
 @pytest.fixture
 def otherSchema(server):
+    """A schema of its own on the server, dropped after the test with its
+    tables, which SQL Server requires go first.
+    """
+
     serverName, database, _ = server
     name = 'other_{}'.format(uuid.uuid4().hex[:6])
     create, drop = SCHEMAS[serverName]
@@ -86,6 +96,8 @@ def otherSchema(server):
 
 
 def _rows(database: Database, table: str):
+    """A table's rows, sorted."""
+
     return sorted(tuple(row) for row in database.query('SELECT * FROM {}'.format(table)))
 
 

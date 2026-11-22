@@ -1,3 +1,6 @@
+"""Tests of DependencyGraph: which jobs are ready when, given predecessors,
+`refresh`, inactive jobs, failures and connection limits.
+"""
 import time
 from typing import List, Optional
 
@@ -8,6 +11,7 @@ from bauta.jobs.dependencyGraph import DependencyGraph, JobOutcome, JobStatus
 
 
 def _job(active: bool = True, predecessors: Optional[list] = None, refresh: Optional[int] = None) -> BaseJobConfig:
+    """A job with only the settings the graph reads."""
 
     return BaseJobConfig(active=active, predecessors=predecessors or [], refresh=refresh)
 
@@ -217,6 +221,8 @@ def test_skips_cascade_even_when_no_job_may_start():
 
 
 def _using(source: str, target: str):
+    """A data job reading `source` and writing `target`."""
+
     from tests.jobConfigs import dataJob
 
     return dataJob(sourceConnection=source, targetConnection=target)
@@ -252,6 +258,8 @@ def test_a_connection_limit_frees_its_place_when_a_job_fails():
 
 
 def _partitioned(source: str, target: str, count: int):
+    """A data job reading `source` and writing `target` in `count` partitions."""
+
     from tests.jobConfigs import dataJob
 
     return dataJob(sourceConnection=source, targetConnection=target, partitions={'column': 'id', 'count': count})

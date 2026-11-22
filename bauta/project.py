@@ -25,17 +25,17 @@ from .log import LOGGER_NAME
 from .log.scrubbing import describeError
 from .masking import MaskingError
 
+# LOCK_SUFFIX, RUNNING_SUFFIX: the lock a run holds, and the directory of live
+#   cycles beside it, take the run-state file's name with these appended.
+# Location: a file in jobs.yaml or a table in one of connections.yaml's
+#   aliases.
 CONFIG_DIRECTORY_VARIABLE = 'BAUTA_CONFIG'
 CONNECTIONS_FILE = 'connections.yaml'
 JOBS_FILE = 'jobs.yaml'
 DEFAULT_TABLES = {'memory': 'bauta_memory', 'history': 'bauta_history', 'manifest': 'bauta_manifest'}
-# The lock a run holds, and the directory of live cycles beside it, take the
-# run-state file's name with these in place of nothing.
 LOCK_SUFFIX = '.run.lock'
 RUNNING_SUFFIX = '.running'
-# A file in jobs.yaml or a table in one of connections.yaml's aliases.
 Location = Union[Path, TableLocation]
-
 logger = logging.getLogger(LOGGER_NAME)
 
 
@@ -61,6 +61,10 @@ def readJobs(jobsPath: Path, replacing: Optional[Mapping[Path, str]] = None) -> 
     texts = {os.path.realpath(path): text for path, text in (replacing or {}).items()}
 
     def load(path: Path) -> Any:
+        """One YAML file of the jobs: the text `replacing` gives for it, where
+        it gives one, else the file on disk.
+        """
+
         return loadYamlFile(path, error=UsageError, text=texts.get(os.path.realpath(path)))
 
     return readJobsFile(jobsPath, load=load)
@@ -85,6 +89,7 @@ def configDirectory(directory: Optional[Union[str, Path]] = None) -> Path:
 
 
 def loadConnections(connectionsPath: Path) -> Dict[str, ConnectionConfig]:
+    """connections.yaml validated, its relative paths taken from its directory."""
 
     return Configuration.validateConnectionConfiguration(loadYaml(connectionsPath), directory=str(connectionsPath.parent))
 
@@ -133,6 +138,7 @@ def runningDirectoryFor(lockFile: Path) -> Path:
 
 
 def describeLocation(location: Location) -> str:
+    """Where state is kept, in words: a path, or a table on a connection."""
 
     return str(location) if isinstance(location, Path) else 'table {} in {}'.format(location.table, location.connection)
 
@@ -153,6 +159,9 @@ def settingsFor(location: TableLocation, connectionConfiguration: Mapping[str, C
 
 
 def requireAlias(connectionConfiguration: Mapping[str, ConnectionConfig], alias: str) -> None:
+    """Raises UsageError, listing the known aliases, for an alias
+    connections.yaml doesn't have.
+    """
 
     if alias not in connectionConfiguration:
         raise UsageError('no connection alias {!r}. Known aliases: {}'.format(alias, ', '.join(sorted(connectionConfiguration))))
@@ -506,6 +515,9 @@ class Project:
 
 
 def _driftOf(project: 'Project', jobs: Optional[Sequence[str]], sample: int, maskKeys: bool, rules: Any) -> List[Any]:
+    """The drift of each selected masked job reading a database: the columns
+    its sourceQuery returns now against those its policy names, by connection.
+    """
 
     from .generate.drift import _wholeTable, findDrift
 

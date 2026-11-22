@@ -1,12 +1,12 @@
 # Security policy
 
-Bauta exists to keep production data out of places it shouldn't be, so a flaw that lets an unmasked value through is treated as the most serious kind of bug there is.
+Bauta exists to keep production data where it belongs, so a flaw that lets an unmasked value through is the most serious bug it can have.
 
 ## Reporting a vulnerability
 
-Please report it privately, through [GitHub's private vulnerability reporting](https://github.com/ribeiro11075/bauta/security/advisories/new), rather than in a public issue. Include what you ran, what you expected, and what reached the target, the logs or run state instead. Never include real personal data; a synthetic value that reproduces it is enough.
+Report it privately, through [GitHub's private vulnerability reporting](https://github.com/ribeiro11075/bauta/security/advisories/new), not in a public issue. Say what you ran, what you expected, and what reached the target, logs or run state instead. Never include real personal data: a synthetic value that reproduces it is enough.
 
-You can expect an acknowledgement within three working days, and a fix or a plan within fourteen. A fix is released as soon as it is ready, noted first in the [changelog](CHANGELOG.md), with credit to the reporter unless they prefer otherwise.
+Expect an acknowledgement within three working days, and a fix or a plan within fourteen. A fix is released as soon as it is ready, noted first in the [changelog](CHANGELOG.md), with credit to the reporter unless they prefer otherwise.
 
 ## What counts
 
@@ -18,8 +18,8 @@ Anything that breaks a promise in the [security model](docs/concepts/security.md
 - a manifest that verifies after being altered
 - a credential written anywhere it shouldn't be
 
-Weaknesses the security model already lists under what masking does not hide are known, and are not vulnerabilities in themselves.
+What the security model lists under what masking does not hide is known, and not a vulnerability in itself.
 
 ## Supported versions
 
-Until 1.0, only the latest release gets fixes. Upgrade to it to receive one.
+Until 1.0, only the latest release gets fixes.

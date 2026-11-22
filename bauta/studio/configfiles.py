@@ -25,11 +25,10 @@ from ..project import UsageError, readJobs
 
 from .settings import PRIVATE_DIRECTORY_MODE, Settings
 
-# bauta's own transforms, which any edit may name.
+# OWN_CODE_MODULES: bauta's own transforms, which any edit may name.
+# _writing: one edit at a time, so two can't both pass the check that the file
+#   is as it was read and the second silently undo the first.
 OWN_CODE_MODULES = ('bauta.transform.builtinTransforms',)
-
-# One edit at a time, so two can't both pass the check that the file is as
-# it was read and the second silently undo the first.
 _writing = threading.Lock()
 
 
@@ -42,6 +41,9 @@ class EditConflict(EditRefused):
 
 
 def digest(text: str) -> str:
+    """The SHA-256 of a file's text, which an edit must quote to show it read
+    the version it changes.
+    """
 
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
@@ -70,6 +72,9 @@ def _resolve(settings: Settings, project: Project, relative: str) -> Path:
 
 
 def readFile(settings: Settings, project: Project, relative: str) -> Dict[str, Any]:
+    """One editable configuration file: its text, and the digest an edit of it
+    must quote.
+    """
 
     text = _resolve(settings, project, relative).read_text()
 
@@ -77,13 +82,15 @@ def readFile(settings: Settings, project: Project, relative: str) -> Dict[str, A
 
 
 def _replace(path: Path, text: str) -> None:
+    """Replaces the file with `text` through a temporary file beside it, on
+    disk before it takes the file's place, so a machine that lost power just
+    after can't leave the file empty.
+    """
 
     descriptor, temporary = tempfile.mkstemp(dir=str(path.parent), prefix='.' + path.name + '.', suffix='.studio')
     try:
         with os.fdopen(descriptor, 'w') as file:
             file.write(text)
-            # On disk before it takes the file's place: a machine that lost
-            # power just after could otherwise leave the file empty.
             file.flush()
             os.fsync(file.fileno())
         shutil.copymode(path, temporary)

@@ -24,12 +24,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bauta.masking import COMPANY_WORDS, DEFAULT_LOCALE, LOCALES, STRATEGIES, KeyedHash
 from bauta.masking.fakeData import LARGE_LOCALES
 
+# PERMUTE_SIZES: domain sizes that exercise the awkward corners of permute():
+#   the degenerate sizes, both parities of bit width, the byte edges where a
+#   Feistel half stops fitting its serialised width, and the sizes real shapes
+#   actually produce.
+# TEXTS: values chosen for the boundaries rather than for volume: the u128
+#   cliff at 21 to 22 alphanumerics and 32 to 33 hex, MAXIMUM_KEY_LENGTH at
+#   256, and the one-character and empty shapes that make `size` degenerate.
+# NUMBERS: what `number` masks besides integers: floats as repr spells them and
+#   Decimals as str does, including the spellings, scales and signed zeros that
+#   decimal arithmetic treats specially.
 KEY = 'a-test-key-that-is-long-enough'
 DOMAIN = 'vectors'
-
-# Domain sizes that exercise the awkward corners of permute(): the degenerate
-# sizes, both parities of bit width, the byte edges where a Feistel half stops
-# fitting its serialised width, and the sizes real shapes actually produce.
 PERMUTE_SIZES = [
     1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 255, 256, 257, 1000,
     10 ** 6, 10 ** 7 - 10 ** 6, 2 ** 16, 2 ** 17, 2 ** 32, 2 ** 33, 2 ** 48, 2 ** 49,
@@ -39,10 +45,6 @@ PERMUTE_SIZES = [
     62 ** 22,                  # the first alphanumeric length past u128
     10 ** 40, 62 ** 60,        # well into bignum
     ]
-
-# Values chosen for the boundaries rather than for volume: the u128 cliff at 21
-# to 22 alphanumerics and 32 to 33 hex, MAXIMUM_KEY_LENGTH at 256, and the
-# one-character and empty shapes that make `size` degenerate.
 TEXTS = [
     '', 'a', '0', 'Z', 'ab', '00', 'user0000001', 'USER0000001',
     '0123456789', '01234567890123456789', '012345678901234567890',
@@ -51,18 +53,17 @@ TEXTS = [
     'DEADBEEF', 'DeadBeef', '00000000-0000-4000-a000-000000000000',
     'x' * 255, 'x' * 256, 'user@example.com', '+1 (555) 010-9999', 'héllo',
     ]
-
 INTEGERS = [0, 1, -1, 9, 10, -10, 99, 100, 12345, -12345, 10 ** 6, 10 ** 18, -10 ** 18, 10 ** 38, 10 ** 40]
-
-# What `number` masks besides integers: floats as repr spells them and Decimals
-# as str does, including the spellings, scales and signed zeros that decimal
-# arithmetic treats specially.
 NUMBERS = INTEGERS + [0.0, -0.0, 0.5, 2.5, -0.001, 1e-07, 123456.789, 1e22, 1.5e16, float('inf'), float('nan')] + [
     decimal.Decimal(text) for text in ('0', '-0.00', '12.30', '-12.3400', '1.2E+5', '0.0000123', '1.005', '99999.99', '-7.5', 'NaN',
                                        '1.2345678901234567890123456789')]
 
 
 def hashVectors() -> dict:
+    """The keyed hash's digests, expansions and permutations over messages,
+    purposes and PERMUTE_SIZES.
+    """
+
     keyedHash = KeyedHash(KEY, DOMAIN)
     messages = [b'', b'\x00', b'a', b'hello', b'x' * 63, b'x' * 64, b'x' * 65, b'\xff' * 200]
     purposes = [b'', b'integer', b'negative', b'text|hex|8']
@@ -103,6 +104,8 @@ def fakeLists() -> dict:
     """
 
     def lists(locale) -> dict:
+        """One locale's `lists: 1` lists, as the native masker is handed them."""
+
         return {'firstNames': list(locale.firstNames), 'lastNames': list(locale.lastNames), 'cities': list(locale.cities),
                 'streets': list(locale.streets), 'streetKinds': list(locale.streetKinds), 'address': locale.address,
                 'companySuffixes': list(locale.companySuffixes), 'companyWords': list(COMPANY_WORDS)}
@@ -162,15 +165,17 @@ def strategyVectors() -> dict:
     return out
 
 
+# REDACT_TEXTS: free text for redact, chosen where the port writes Python's
+#   lookarounds out by hand: a match whose lookahead fails backs off to a
+#   shorter one, one whose lookbehind fails moves on a character, and each
+#   kind's check refuses what only looks like it. Then what goes back to
+#   Python: other scripts, and values that aren't text.
+# IP_ADDRESSES: addresses as each driver returns them, and what ip refuses.
+# SCALED_COORDINATES: degrees times a scale, as a column of microdegrees holds
+#   them; the last two are past the poles even scaled, and refused.
 DATES = [datetime.date(2020, 2, 29), datetime.date(1970, 1, 1), datetime.date.min, datetime.date.max, datetime.date(1, 1, 2),
          datetime.date(9999, 12, 30), datetime.datetime(2026, 9, 21, 16, 30, 5), datetime.datetime(2026, 9, 21, 23, 59, 59, 999999),
          '2026-09-21', '2026-09-21T16:30:05', '2026-09-21 16:30:05', '2026-09-21T16:30:05+02:00', '0001-01-01', 20260921]
-
-# Free text for redact, chosen where the port writes Python's lookarounds out
-# by hand: a match whose lookahead fails backs off to a shorter one, one whose
-# lookbehind fails moves on a character, and each kind's check refuses what
-# only looks like it. Then what goes back to Python: other scripts, and
-# values that aren't text.
 REDACT_TEXTS = [
     'Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com; card 4111 1111 1111 1111 SSN 123-45-6789 '
     'IBAN GB82 WEST 1234 5698 7654 32 from 192.168.1.20. Order 2026-01-02, qty 12, v1.2.3.',
@@ -194,23 +199,13 @@ REDACT_TEXTS = [
     # Python's to mask: text in other scripts.
     'olá, 123-45-6789', 'ssn ١٢٣-٤٥-٦٧٨٩', 'card ４１１１ １１１１ １１１１ １１１１',
     ]
-
 REDACT_COMBINATIONS = [('redact', {}), ('redact', {'replacement': 'mask'}), ('redact', {'detect': ['phone', 'card']}),
                        ('redact', {'replacement': 'mask', 'detect': ['ssn', 'ip', 'iban', 'email']})]
-
-
 COORDINATES = [51.50135, -0.14189, 0.0, 89.9999, -89.9999, 179.9999, -180.0, decimal.Decimal('38.722300'), decimal.Decimal('-9.1'), 7]
-
-# Addresses as each driver returns them, and what ip refuses.
 IP_ADDRESSES = ['192.168.1.1', '10.0.0.1', '0.0.0.0', '255.255.255.255', '2001:db8::1', 'fe80::1/64', '10.1.2.3/24', '10.20.0.0/16',
                 ipaddress.ip_address('172.16.254.3'), ipaddress.ip_interface('10.1.2.3/24'), b'\x0a\x00\x00\x01', 3232235777, 'not an address']
-
-# Degrees times a scale, as a column of microdegrees holds them; the last two
-# are past the poles even scaled, and refused.
 SCALED_COORDINATES = [51501350, -141890, 0, 89999900, decimal.Decimal('38722300.5'), 51501350.0, 90000001, 51501350000]
-
 NORMALIZED_TEXTS = ['AB12CD', 'ab12cd   ', ' Ab12Cd ', '1234567', '-1234567', '0012345', 1234567, '', None]
-
 JSON_DOCUMENTS = [
     {'contact': {'email': 'Ann.Lee@corp.example.com', 'phone': 5550109999}, 'card': 4111111111111111, 'visits': 3, 'total': 12.5,
      'vip': True, 'byEmail': {'bob@corp.example': 1}, 'notes': ['call +1 555 010 9999', None]},
@@ -229,9 +224,15 @@ def pythonOnlyVectors() -> dict:
     """
 
     def build(name, options):
+        """A built-in strategy under the vectors' key and domain."""
+
         return STRATEGIES[name](KeyedHash(KEY, DOMAIN), STRATEGIES[name].validateOptions(options))
 
     def entry(strategy, value):
+        """What a strategy does to one value: its mask and the mask's type, or
+        the error it raised.
+        """
+
         result = {'type': type(value).__name__, 'value': str(value)}
         try:
             masked = strategy.maskColumn([value], 0)[0]
@@ -256,6 +257,8 @@ def pythonOnlyVectors() -> dict:
 
     # Strategies that mask with another column of the row, given as (value, that column's value).
     def contextEntry(strategy, value, context):
+        """As entry, for a strategy masking with a value of another column."""
+
         result = entry(strategy, value)
         result.update(context=str(context), contextType=type(context).__name__)
         try:
@@ -305,6 +308,10 @@ def pythonOnlyVectors() -> dict:
 
 
 def main() -> None:
+    """Writes vectors/reference.json beside this script: every vector the
+    native masker is tested against.
+    """
+
     here = os.path.dirname(os.path.abspath(__file__))
     vectors = {
         'key': KEY,

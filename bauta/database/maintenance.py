@@ -64,6 +64,8 @@ class TableMaintenance:
         self._refuseWrite('add keys to {}'.format(toTable))
 
         def folded(columns: Sequence[str]) -> frozenset:
+            """A key's columns as a set, case folded, for comparing keys."""
+
             return frozenset(column.upper() for column in columns)
 
         primaryKey = self.dialect.primaryKey(self.cursor, fromTable)
@@ -118,12 +120,18 @@ class TableMaintenance:
         self._refuseWrite('add indexes and grants to {}'.format(toTable))
 
         def folded(columns: Sequence[str]) -> Tuple[str, ...]:
+            """An index's columns, case folded, in order, for comparing indexes."""
+
             return tuple(column.upper() for column in columns)
 
         given: List[str] = []
         problems: List[str] = []
 
         def attempt(what: str, statement: str) -> None:
+            """Runs one statement restoring a grant or an index and commits it,
+            noting what was restored or, rolled back, why it couldn't be.
+            """
+
             try:
                 self.cursor.execute(statement)
                 self.connection.commit()

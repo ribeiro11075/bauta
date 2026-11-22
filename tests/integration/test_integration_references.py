@@ -26,6 +26,10 @@ NAMES = EMBEDDED + sorted(SERVERS)
 
 @pytest.fixture(params=NAMES)
 def database(request, tmp_path):
+    """A connection to each database, dropping the tables a test records in
+    `created` after it.
+    """
+
     with Database(connectionSettings=serverSettings(request.param, tmp_path)) as database:
         created = []
         database.created = created  # type: ignore[attr-defined]
@@ -35,6 +39,8 @@ def database(request, tmp_path):
 
 
 def _create(database, name, definition):
+    """Creates a table named `name` and a random suffix, recorded for dropping."""
+
     table = '{}_{}'.format(name, uuid.uuid4().hex[:6])
     database.alter('CREATE TABLE {} ({})'.format(table, definition.format(table=table)))
     database.created.append(table)

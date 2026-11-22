@@ -19,7 +19,7 @@ For each table, `discover` reads the schema and samples rows (`--sample`, defaul
 ```
 
 - **Names first, then values.** Column names are matched against [rules](#your-own-rules-discoveryyaml) for common patterns (email, phone, SSN, card, name, address, birth date and so on). A name-based suggestion is dropped if it doesn't fit the column's type, so `place_of_birth` isn't treated as a date. Sampled values are then checked for emails, national identifiers, card numbers (with a Luhn check), IPv4 and IPv6 addresses, MAC addresses, UUIDs, dates, phone numbers and long free text.
-- **Inside JSON documents.** A JSON column -- a document PostgreSQL or Oracle returns as one, or text MySQL and DuckDB return that parses as an object or array -- is read value by value: each key against the name rules and each key path's values against the value rules, so `{"contact": {"alt_email": ...}}` is found. Anything found is proposed as a [`json`](../reference/strategies.md#json) policy naming each path, with the rest of the document redacted: `{strategy: json, fields: {contact.alt_email: {strategy: email}}}`. An IP address PostgreSQL returns as `inet` is read as its text, so an `ip_address` column is found as a text one would be.
+- **Inside JSON documents.** A JSON column is read key by key and path by path against the same rules, so `{"contact": {"alt_email": ...}}` is found and proposed as a [`json`](../reference/strategies.md#json) policy naming each path: `{strategy: json, fields: {contact.alt_email: {strategy: email}}}`.
 - **Keys are decided together.** Primary keys, the columns that foreign keys reference, and the foreign-key columns themselves get matching domains, so both ends of a relationship agree. Numeric keys are proposed as `keep`, since surrogate ids reveal little, and text keys as `key`. **`--mask-keys` masks the numeric ones too**, in the domain each relationship shares:
 
   ```yaml
@@ -27,20 +27,20 @@ For each table, `discover` reads the schema and samples rows (`--sample`, defaul
   customer_id: {strategy: key, domain: customers} # the other end, same domain
   ```
 
-  Both ends move together, so the copy's references still match. Use it where the ids themselves are meaningful — sequential ids leak how many customers there are, and when each was created — or where the copy's ids must not be production's. Note that masking a key the target uses as its primary key means a later key rotation has to go through `bauta clear`; see [rotating the masking key](rotate-the-key.md).
+  Both ends move together, so references still match. Use it where the ids themselves are meaningful (sequential ids leak how many customers there are, and when each joined) or must not be production's. A masked primary key makes a later key rotation go through `bauta clear` ([rotating the masking key](rotate-the-key.md)).
 - **Sampled values stay in memory.** None of them is printed, logged or written.
 - **Load settings.** With a separate `--target`, jobs upsert and load parent tables before child tables. Without one, the proposal masks in place through a `<table>_masked_stage` swap.
-- **A whole schema at once.** `--all-tables` proposes for every table in the database, instead of naming each with a repeated `--table`; `--schema NAME` lists another schema, and reads that schema's foreign keys, so its keys share domains and its jobs load parents first as the connection's own would. Pair it with [`bauta coverage`](prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover), which starts from the same list and fails on anything the generated jobs then leave out.
+- **A whole schema at once.** `--all-tables` proposes for every table, and `--schema NAME` for another schema's. Pair it with [`bauta coverage`](prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover), which fails on anything the jobs then leave out.
 - `--output` refuses to overwrite an existing file, so it can't replace a policy that has already been reviewed.
 
 Treat the result as a starting point for review. It isn't a finished policy.
 
-**What every job shares is written once.** The connections, the insert strategy and the masking key go under [`defaults`](../reference/jobs.md#defaults), and each job keeps only its query, its table and its columns: what a reviewer has to read. One `key:` line also means no edit to one job can leave it masking under a different key than the jobs it joins with. Settings at their built-in values (`active: true`, `chunkSize: 5000`) are left out. To paste the jobs into a file that has defaults of its own, pass `--self-contained`, which writes every setting into every job instead, so the other file's defaults can't change what they do.
+**What every job shares is written once**, under [`defaults`](../reference/jobs.md#defaults): the connections, the insert strategy and the masking key, so each job holds only what a reviewer has to read, and no edit can leave one job under another key. To paste the jobs into a file with defaults of its own, pass `--self-contained`, which writes every setting into every job.
 
 
 ## Keeping a policy up to date
 
-Production changes after a policy is written. A column added to a table stops every job that reads it, since [every column must be covered](cover-every-column.md), and so does a column dropped from one. `discover --update` reads the jobs file instead of naming tables, runs each masked job's query, and reports both kinds of drift, with a proposal for each new column made the same way as the first time:
+A column added to or dropped from production stops every job reading it, since [every column must be covered](cover-every-column.md). `discover --update` runs each masked job's query and reports both, proposing a policy for each new column:
 
 ```
 $ bauta discover --update
@@ -53,9 +53,9 @@ maskCustomers (configuration/jobs.d/crm.yaml):
 
 It exits 1 when any job has drifted, so it can run in CI beside [`coverage`](prove-the-copy-is-safe.md#coverage-what-the-jobs-do-not-cover): `coverage` catches a new table, and `discover --update` a new column. `--job NAME` narrows it to some jobs.
 
-**`--apply` writes the change** into the file each job is defined in, [included](../reference/configuration.md#splitting-the-jobs-across-files) ones too. New columns are added at the end of the job's `columns:`, each marked `proposed by discover --update` beside its reason, and columns the query no longer returns are removed. Nothing else in the file changes: comments, order and quoting stay as they were. Only a policy written in block style is edited. For one in flow style (`columns: {id: keep}`), or if the edited file wouldn't read back with exactly those changes, that file is left as it was and the error says so. Review what it wrote as you would any policy change: the proposal is what discovery thinks, not what your data needs.
+**`--apply` writes the change** into each job's file, [included](../reference/configuration.md#splitting-the-jobs-across-files) ones too: new columns at the end of `columns:`, marked `proposed by discover --update`, and stale ones removed, with comments, order and quoting kept. A policy in flow style (`columns: {id: keep}`) is left as it is, and the error says so. Review what it wrote as you would any policy change.
 
-A job whose query reads one table whole, as the ones `discover` generates do, gets its proposals from the table: a new foreign key column shares its parent's domain. Any other query's new columns are classified from their names and sampled values. A job with `defaultStrategy` already covers every column it returns, so only its stale columns are reported.
+A job reading one table whole gets proposals from the table, so a new foreign key shares its parent's domain; other queries' columns are classified by name and value. A job with `defaultStrategy` reports only its stale columns.
 
 ### Your own rules: `discovery.yaml`
 
@@ -79,11 +79,11 @@ personalTables: [clientes, utentes]     # a bare `name` column in these is a per
 exclude: [ip]                           # built-in rules to leave out
 ```
 
-- **Yours come first.** Your rules are tried before the built-in ones, in the order written, and the first that matches wins. So a rule of yours also overrides a built-in one, and `keep` says a column isn't personal after all: above, `office_phone` stays as it is while `home_phone` is still masked.
-- **`names`.** A rule matches when any of its `words` is in the column name. Names are split on underscores and camelCase, and also matched run together, so `numero_contribuinte` matches `NumeroContribuinte` and `numero_contribuinte_cliente`. As with the built-in rules, a rule is skipped for a column whose type its policy doesn't fit.
-- **`values`.** A rule matches when at least 80% of a column's sampled values match its `pattern` in full: `\d{9}` matches `501234567`, not `NIF 501234567`. Unlike the built-in value rules, which read text only, yours also read integer columns as their digits, since a tax number is often stored as one.
+- **Yours come first**, in the order written, and the first match wins, so a rule of yours overrides a built-in one: above, `office_phone` is kept while `home_phone` is still masked.
+- **`names`** match when any of `words` is in the column name, split on underscores and camelCase and also run together, so `numero_contribuinte` matches `NumeroContribuinte`. A rule is skipped for a column whose type its policy doesn't fit.
+- **`values`** match when 80% of a column's sampled values match `pattern` in full. Unlike the built-in value rules, yours also read integer columns as their digits.
 - **`policy`** is a column policy as in `jobs.yaml`: a strategy name, or a mapping with its options. `reason` is the comment written beside the proposal; without one, it says the rule came from `discovery.yaml`.
-- **Leaving built-in rules out.** `exclude` names built-in rules to drop, and one name covers a rule's name and value forms both: leaving out `phone` means nothing is taken for a phone number. `builtins: false` drops them all, `personalTables` included, leaving only yours.
+- **Leaving built-in rules out.** `exclude` drops built-in rules by name, both forms of each; `builtins: false` drops them all.
 
 | Field | Required or default | Meaning |
 | --- | --- | --- |

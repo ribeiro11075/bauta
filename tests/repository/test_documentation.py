@@ -39,6 +39,10 @@ def _anchors(path: Path) -> set:
 
 
 def _internalLinks():
+    """Each link from a document to another file in the repository, with its
+    anchor.
+    """
+
     for document in DOCUMENTS:
         for target, anchor in re.findall(r'\]\(([^)#\s]*)(?:#([^)\s]+))?\)', document.read_text()):
             if not target.startswith('http'):
@@ -138,6 +142,8 @@ def test_every_documented_flag_exists():
 
 
 def _commandPages():
+    """The pages the website generates for the commands."""
+
     specification = importlib.util.spec_from_file_location('commands', ROOT / 'website' / 'commands.py')
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)

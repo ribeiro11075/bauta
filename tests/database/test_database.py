@@ -1,3 +1,7 @@
+"""Tests of Database: catalog lookups, loads by insert, upsert and swap,
+streaming, the readOnly and encryption guarantees, and refusing a database file
+that doesn't exist, against mocked drivers and real SQLite and DuckDB.
+"""
 from unittest.mock import MagicMock
 
 import pytest
@@ -7,6 +11,9 @@ from bauta.database import Database
 
 
 def _mockedDatabase(dbType: DatabaseType) -> Database:
+    """A Database of `dbType` whose connection and cursor are mocks, built
+    without connecting.
+    """
 
     if dbType in (DatabaseType.SQLITE, DatabaseType.DUCKDB):
         settings = connectionConfig(type=dbType, path=':memory:')
@@ -293,6 +300,10 @@ def test_upsert_of_an_empty_result_set_issues_no_statement():
 
 
 def _streamingDatabase(dbType=DatabaseType.MYSQL):
+    """A mocked MySQL Database whose streaming cursor returns two one-row
+    chunks, and that cursor.
+    """
+
     database = _mockedDatabase(dbType)
     streamCursor = MagicMock()
     streamCursor.fetchmany.side_effect = [[(1,)], [(2,)], []]
@@ -365,6 +376,8 @@ def test_a_query_that_fails_closes_its_stream():
 # listTables --------------------------------------------------------------------
 
 def _sqliteWithTables(tmp_path, name='tables.db'):
+    """Settings for a SQLite file with two tables and a view."""
+
     import sqlite3
 
     from bauta.configuration import connectionConfig
@@ -515,6 +528,10 @@ def test_processes_opening_a_new_sqlite_file_at_once_all_switch_it_to_wal(tmp_pa
 
 
 def _openAndReadJournalMode(path, barrier):
+    """Opens the SQLite file once `barrier` lets every caller go together, and
+    returns its journal mode.
+    """
+
     from bauta.configuration import connectionConfig
     from bauta.database import Database
 
@@ -651,6 +668,8 @@ def test_a_watermark_in_a_comment_or_a_literal_is_left_unbound(tmp_path):
 
 
 def _duckdbFile(tmp_path):
+    """duckdb, and a DuckDB file with a two-row table; skipped without duckdb."""
+
     duckdb = pytest.importorskip('duckdb')
     path = tmp_path / 'data.duckdb'
     connection = duckdb.connect(str(path))

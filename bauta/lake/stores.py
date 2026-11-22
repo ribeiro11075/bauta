@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ..configuration import S3_LARGEST_COPY, ConfigurationError, FilesConnection, FileStore
 
 def requirePyarrow() -> Any:
+    """pyarrow, or a ConfigurationError saying how to install it."""
 
     try:
         import pyarrow
@@ -39,6 +40,10 @@ class Store:
     """
 
     def __init__(self, settings: FilesConnection) -> None:
+        """The filesystem the connection's root is on: a cloud's, built from
+        its settings, or this machine's.
+        """
+
         requirePyarrow()
         import pyarrow.fs
 
@@ -58,6 +63,7 @@ class Store:
 
 
     def path(self, *parts: str) -> str:
+        """`parts` joined under the root, with forward slashes."""
 
         return posixpath.join(self.root, *(part.replace('\\', '/') for part in parts))
 
@@ -95,6 +101,7 @@ class Store:
 
 
     def writeBytes(self, path: str, content: bytes) -> None:
+        """Writes `content` to `path`, replacing what is there."""
 
         with self.filesystem.open_output_stream(path, compression=None) as stream:
             stream.write(content)
@@ -127,6 +134,7 @@ class Store:
 
 
     def exists(self, path: str) -> bool:
+        """Whether anything is at `path`."""
 
         import pyarrow.fs
 
@@ -184,11 +192,13 @@ class Store:
 
 
     def deleteFile(self, path: str) -> None:
+        """Deletes the file at `path`."""
 
         self.filesystem.delete_file(path)
 
 
     def readBytes(self, path: str) -> bytes:
+        """The contents of the file at `path`."""
 
         with self.filesystem.open_input_stream(path) as stream:
             return bytes(stream.read())

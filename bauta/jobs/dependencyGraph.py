@@ -1,3 +1,11 @@
+"""Which job runs when: the order predecessors impose, `refresh` and the
+connections' job limits, and what became of each job in a cycle.
+
+DependencyGraph is one cycle's schedule. The runner asks it for the jobs that
+may start, starts them, and reports each outcome back; a job whose predecessor
+failed or was skipped is skipped in turn. jobSchedule is what `bauta jobs`
+shows of the same rules without running anything.
+"""
 from __future__ import annotations
 
 import time
@@ -6,13 +14,16 @@ from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Set
 
 from ..configuration import BaseJobConfig, ConfigurationError, findCycle
 
-# A job's place in the schedule, as `bauta jobs` names it.
+# DUE, THROTTLED, INACTIVE: a job's place in the schedule, as `bauta jobs`
+#   names it.
 DUE = 'due'
 THROTTLED = 'throttled'
 INACTIVE = 'inactive'
 
 
 class JobStatus(str, Enum):
+    """How a job ended in a cycle."""
+
     COMPLETED = 'completed'
     FAILED = 'failed'
     SKIPPED = 'skipped'
@@ -23,6 +34,10 @@ class JobOutcome(NamedTuple):
     a string: driver exceptions don't reliably pickle.
     """
 
+    # masking: for a masked job that completed: the policy applied to each
+    #   column, as plain dicts so it pickles. See masking.buildMaskingManifest.
+    # stages: for a job that completed: seconds busy reading, masking, writing
+    #   and waiting on a read limit. See throttle.StageTimes.
     job: str
     status: JobStatus
     rowCount: int = 0
@@ -31,15 +46,12 @@ class JobOutcome(NamedTuple):
     attempts: int = 1
     startedAt: float = 0.0
     finishedAt: float = 0.0
-    # For a masked job that completed: the policy applied to each column, as
-    # plain dicts so it pickles. See masking.buildMaskingManifest.
     masking: Optional[Dict[str, Any]] = None
-    # For a job that completed: seconds busy reading, masking, writing and
-    # waiting on a read limit. See throttle.StageTimes.
     stages: Optional[Dict[str, float]] = None
 
     @property
     def durationSeconds(self) -> float:
+        """How long the job took, from start to finish."""
 
         return max(0.0, self.finishedAt - self.startedAt)
 
@@ -57,6 +69,13 @@ class DependencyGraph:
 
     def __init__(self, jobs: Mapping[str, BaseJobConfig], memory: Optional[Dict[str, float]] = None,
                  connectionLimits: Optional[Mapping[str, int]] = None) -> None:
+        """A cycle over the active jobs, with `memory` the last-run times
+        `refresh` is measured from and `connectionLimits` the most jobs each
+        connection may run at once. _reserved holds the places a job with
+        `partitions: auto` was given as it started (see reserve()). Raises
+        ConfigurationError where predecessors form a cycle.
+        """
+
         self.jobs = jobs
         self.memory = memory
         self.connectionLimits = dict(connectionLimits or {})
@@ -65,8 +84,6 @@ class DependencyGraph:
         self.outcomes: List[JobOutcome] = []
         self._notStarted: List[str] = list(self.activeJobs)
         self._running: Set[str] = set()
-        # The places a job with `partitions: auto` was given as it started:
-        # see reserve().
         self._reserved: Dict[str, int] = {}
         self._completed: Set[str] = set()
         self._unsuccessful: Set[str] = set()
@@ -93,6 +110,7 @@ class DependencyGraph:
 
     @property
     def finished(self) -> bool:
+        """Whether every job has started and finished."""
 
         return not self._notStarted and not self._running
 
@@ -186,6 +204,7 @@ class DependencyGraph:
 
 
     def finish(self, outcome: JobOutcome) -> None:
+        """Records a job's outcome, which may let jobs waiting on it start."""
 
         self._running.discard(outcome.job)
         self.outcomes.append(outcome)
@@ -202,6 +221,7 @@ class DependencyGraph:
 
 
     def _skip(self, job: str, reason: str) -> None:
+        """Records a job as skipped, never started, for `reason`."""
 
         self._notStarted.remove(job)
         self.finish(JobOutcome(job=job, status=JobStatus.SKIPPED, error=reason))

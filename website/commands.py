@@ -17,9 +17,8 @@ sys.path.insert(0, str(ROOT))
 
 from bauta.cli import _buildParser  # noqa: E402
 
+# GUIDES: where each command is explained, relative to docs/reference/commands/
 OUTPUT = ROOT / 'docs' / 'reference' / 'commands'
-
-# Where each command is explained, relative to docs/reference/commands/
 GUIDES = {
     'run': ('Run on a schedule', '../../guides/run-on-a-schedule.md'),
     'validate': ('Validation', '../configuration.md#validation'),
@@ -38,11 +37,11 @@ GUIDES = {
     'bench': ('Make it faster', '../../guides/make-it-faster.md#measure-a-job'),
     'studio': ('Studio', '../../guides/studio.md'),
     }
-
 HEADER = '<!-- Generated from the parser by website/commands.py. Change the flag, then run `python website/commands.py`. -->\n'
 
 
 def _subcommands() -> Dict[str, argparse.ArgumentParser]:
+    """Each `bauta` subcommand's parser, by name."""
 
     (subparsers,) = [action for action in _buildParser()._actions if isinstance(action, argparse._SubParsersAction)]
 
@@ -50,6 +49,7 @@ def _subcommands() -> Dict[str, argparse.ArgumentParser]:
 
 
 def _summaries() -> Dict[str, str]:
+    """Each subcommand's one-line help, by name."""
 
     (subparsers,) = [action for action in _buildParser()._actions if isinstance(action, argparse._SubParsersAction)]
 
@@ -57,11 +57,13 @@ def _summaries() -> Dict[str, str]:
 
 
 def _options(parser: argparse.ArgumentParser) -> List[argparse.Action]:
+    """A parser's arguments, without --help and its subcommands."""
 
     return [action for action in parser._actions if not isinstance(action, (argparse._HelpAction, argparse._SubParsersAction))]
 
 
 def _flags(action: argparse.Action) -> List[str]:
+    """An argument's flags, or its name for a positional one."""
 
     return list(action.option_strings) or [action.dest]
 
@@ -87,24 +89,30 @@ def commonFlags() -> List[str]:
 
 
 def _sentence(text: str) -> str:
+    """Help text as a sentence: capitalized, unless it starts with a name whose
+    case matters, such as chunkSize, and ending with a full stop.
+    """
 
     text = text.strip()
     if not text:
         return ''
     first = text.split(' ', 1)[0]
     if first.islower():
-        # Not a name such as chunkSize or SQL, whose case matters
         text = text[0].upper() + text[1:]
 
     return text if text.endswith(('.', ')')) else text + '.'
 
 
 def _cell(text: str) -> str:
+    """Text escaped for a Markdown table cell."""
 
     return text.replace('|', '\\|')
 
 
 def _row(action: argparse.Action) -> str:
+    """One argument's row of a page's options table: its flags and value, and
+    its help.
+    """
 
     if action.option_strings:
         if action.choices:
@@ -139,6 +147,7 @@ def _row(action: argparse.Action) -> str:
 
 
 def _usage(name: str, parser: argparse.ArgumentParser, common: List[str]) -> str:
+    """A subcommand's usage line: its required arguments, then [options]."""
 
     parts = ['bauta', name]
     for action in _options(parser):
@@ -152,6 +161,10 @@ def _usage(name: str, parser: argparse.ArgumentParser, common: List[str]) -> str
 
 
 def commandPage(name: str, parser: argparse.ArgumentParser, summary: str, common: List[str]) -> str:
+    """A subcommand's page: its summary, usage, a link to the guide that
+    explains it, and its own options; the options every command takes are on
+    the index.
+    """
 
     if _nested(parser):
         return _nestedPage(name, parser, summary, common)
@@ -201,6 +214,7 @@ def _nestedPage(name: str, parser: argparse.ArgumentParser, summary: str, common
 
 
 def _summaryOf(parser: argparse.ArgumentParser, subname: str) -> str:
+    """A nested subcommand's one-line help."""
 
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
@@ -212,6 +226,9 @@ def _summaryOf(parser: argparse.ArgumentParser, subname: str) -> str:
 
 
 def indexPage(summaries: Dict[str, str], common: List[str]) -> str:
+    """The commands' index page: each command's summary, and the options every
+    command takes.
+    """
 
     parser = _buildParser()
     anyParser = next(iter(_subcommands().values()))
@@ -254,6 +271,7 @@ def indexPage(summaries: Dict[str, str], common: List[str]) -> str:
 
 
 def pages() -> Dict[Path, str]:
+    """Every generated page, by path."""
 
     common = commonFlags()
     summaries = _summaries()
@@ -265,6 +283,9 @@ def pages() -> Dict[Path, str]:
 
 
 def main() -> None:
+    """Writes the pages into docs/reference/commands, removing any no command
+    makes any more.
+    """
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     expected = pages()

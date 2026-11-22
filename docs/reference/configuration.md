@@ -1,7 +1,7 @@
 # Configuration files
 
 
-The field reference. For *why* things behave as they do, see [design.md](../concepts/how-it-works.md). `example/starter/configuration/` is a complete set of these files, validated on every test run — copying it is the fastest start.
+The field reference. For *why* things behave as they do, see [how it works](../concepts/how-it-works.md). `example/starter/configuration/` is a complete set of these files, validated on every test run — copying it is the fastest start.
 
 
 ## Where configuration is found
@@ -20,7 +20,7 @@ The CLI reads its configuration from one directory, found in this order:
 
 `--connections FILE`, `--jobs FILE` and `--rules FILE` name a file anywhere else.
 
-A path inside a file is relative to that file: paths in `jobs.yaml` to `jobs.yaml`, and a database file or directory in `connections.yaml` to `connections.yaml`. A cron entry, a shell and CI then find the same files wherever they start. Paths on the command line are relative to the working directory. A layout that keeps what you write apart from what runs write:
+A path inside a file is relative to that file, so cron, a shell and CI find the same files wherever they start; paths on the command line are relative to the working directory. A layout that keeps what you write apart from what runs write:
 
 ```
 configuration/    connections.yaml, jobs.yaml, discovery.yaml
@@ -59,11 +59,9 @@ acknowledged:
     ledger_archive: kept in production only
 ```
 
-An included file holds `jobs` and `acknowledged` and nothing else. Everything else, such as `workers`, `defaults` and where run state goes, is said once, in `jobs.yaml`, and `defaults` reaches every included job as if it were written there. The files are merged before anything is checked, so predecessors, `validate`, `audit` and `coverage` see one set of jobs, and a job may name a predecessor in another file.
+An included file holds `jobs` and `acknowledged` only; everything else is said once, in `jobs.yaml`, whose `defaults` reach every included job. The files are merged before anything is checked, so a job may name a predecessor in another file.
 
-A key given twice in one mapping of any of these files is an error naming both lines, rather than YAML's silent last-one-wins: a masking policy naming a column twice would otherwise apply whichever came second. What would otherwise be ambiguous across files is an error that names both files: a job defined in two files, a table acknowledged in two, a pattern that matches no file (a misspelled directory would otherwise drop every job in it), and an `include` inside an included file. `validate` prints how many jobs came from each file, and the [manifest](../guides/keep-a-manifest.md) records each included file's digest beside the jobs file's.
-
-One file per team or domain lets a code-owners rule give each its reviewers, and keeps unrelated changes out of each other's merges.
+Anything ambiguous is an error naming both places: a key given twice in one mapping (which YAML would silently resolve), a job defined in two files, a table acknowledged in two, a pattern matching no file, or an `include` inside an included file. The [manifest](../guides/keep-a-manifest.md) records each file's digest. One file per team lets a code-owners rule give each its reviewers.
 
 
 ## Credentials
@@ -96,11 +94,11 @@ Each is kept in a file or in a database table, set in [`jobs.yaml`](jobs.md#file
 | **History**: one record per job per cycle, for `bauta history` | `history` | `--history FILE` | `--history-connection ALIAS`, `--history-table NAME` | Not recorded. |
 | **Masking manifest**: what was masked and how, sealed, for `bauta verify-manifest` | `manifest` | `--manifest FILE` | `--manifest-connection ALIAS`, `--manifest-table NAME` | Not written. |
 
-Tables default to `bauta_memory`, `bauta_history` and `bauta_manifest`, and must exist first; [operations.md](tables.md) has their definitions. A manifest is signed when `$BAUTA_MANIFEST_KEY` is set.
+Tables default to `bauta_memory`, `bauta_history` and `bauta_manifest`, and must exist first; [tables](tables.md) has their definitions. A manifest is signed when `$BAUTA_MANIFEST_KEY` is set.
 
 
 ## Validation
 
-`bauta validate` checks everything above without connecting to anything: every field, every alias (including those `memory`, `history` and `manifest` name), every predecessor and that they form no cycle, every transformer reference, every masking strategy, option and key length, `maskingThreads` against the cores available, and `discovery.yaml` if there is one. Problems are reported all at once, as `ConfigurationError`, rather than one per run. It then prints where run state, history and the manifest resolve, how many masking threads a run would use, and which discovery rules apply.
+`bauta validate` checks everything above without connecting: every field, alias, predecessor (and that they form no cycle), transformer reference, masking strategy, option and key, `maskingThreads`, and `discovery.yaml`, reporting every problem at once. It then prints where run state, history and the manifest resolve, the masking threads a run would use, and which discovery rules apply.
 
 `bauta run --dry-run` adds the checks that need a connection: that each database is reachable, that target tables exist, that upsert targets have a primary key, and that each masking policy covers every column its query returns.

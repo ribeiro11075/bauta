@@ -41,11 +41,10 @@ cd py && maturin build --release
 pip install ../target/wheels/bauta_rs-*.whl
 ```
 
-`--release` matters for the tests: two of them measure SHA-256 and AES
-throughput to catch a backend that has silently fallen back to software, and a
-debug build is indistinguishable from one. `cargo test` covers `core/`; `py/`
-needs a Python interpreter to link, so it is tested from Python, by
-`tests/masking/test_nativeMasking.py`.
+`--release` matters: two tests measure SHA-256 and AES throughput to catch a
+backend fallen back to software, which a debug build looks like. `py/` needs
+Python to link, so `tests/masking/test_nativeMasking.py` tests it. See
+[development](../docs/project/development.md#the-native-masker) for the rest.
 
 ## Threads, and remembering masks
 
@@ -81,25 +80,13 @@ every masking thread waits for the results.
 **Python is the reference.** This crate exists to be faster, not to be
 different. Where the two disagree, Python is right.
 
-That is not a style preference. Bauta's masks are deterministic and keyed,
-so a difference between the two implementations would not surface as a wrong
-answer — it would surface as a changed key, months later, as joins between an
-old copy and a new one quietly stopping matching. The key fingerprint would not
-change, because the key did not.
-
-So:
-
-- Every covered strategy is checked against `vectors/reference.json`, over a
-  corpus chosen for boundaries rather than volume: the lengths where a Feistel
-  half stops fitting a machine word, domains of exactly 2\*\*128, the maximum
-  identifier length, single-character alphabets, mixed-case hex, and every
-  refusal with its exact message.
-- Anything whose behaviour depends on Python's own Unicode rules is not
-  reimplemented. Non-ASCII text, `str.isspace()` when an address is stripped,
-  digits normalised across scripts — those values are handed back, and Python
-  masks them.
-- FF1 is checked against NIST SP 800-38G's sample vectors, and the keyed hash
-  against RFC 4231.
+A difference between the two would surface not as a wrong answer but as what
+looks like a changed key: joins between an old copy and a new one quietly
+stopping matching, with the key fingerprint unchanged. So every covered
+strategy is checked against `vectors/reference.json`, values depending on
+Python's Unicode rules are handed back to Python rather than reimplemented,
+and FF1 and the keyed hash are checked against NIST's and RFC 4231's vectors.
+See [two implementations](../docs/concepts/security.md#two-implementations).
 
 ## What it covers
 

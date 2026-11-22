@@ -30,21 +30,19 @@ sys.path[:0] = [str(demoDirectory), str(repositoryDirectory)]
 
 from bautaTasks import command, jobGraph, runCommand, shellCommand  # noqa: E402
 
+# DEMO_MASKING_KEY: a throwaway key for throwaway databases. A real one is
+#   random, comes from a secret store, and is never written into a script.
+# STAGE: the table a full refresh loads before swapping it with orders: the
+#   same columns and key, and no foreign keys, as `bauta schema --stage-suffix`
+#   makes it.
 DEFAULT_WORKING_DIRECTORY = demoDirectory / 'transaction'
-
-# A throwaway key for throwaway databases. A real one is random, comes from a
-# secret store, and is never written into a script.
 DEMO_MASKING_KEY = 'orchestrator-demo-masking-key-not-for-real-use'
-
 SCHEMA = '''
 CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT, full_name TEXT);
 CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price NUMERIC);
 CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INT REFERENCES customers(id), product_id INT REFERENCES products(id),
                      shipping_phone TEXT, updated_at INT);
 '''
-
-# The table a full refresh loads before swapping it with orders: the same
-# columns and key, and no foreign keys, as `bauta schema --stage-suffix` makes it.
 STAGE = 'CREATE TABLE orders_stage (id INTEGER PRIMARY KEY, customer_id INT, product_id INT, shipping_phone TEXT, updated_at INT);'
 
 
@@ -76,6 +74,10 @@ def runTasks(graph: Dict[str, List[str]], environment: Dict[str, str], fullRefre
     running: Dict[Future, str] = {}
 
     def task(job: str) -> Tuple[float, float, int]:
+        """Runs one job as an orchestrator's task would, and returns when it
+        started and finished, and its exit code.
+        """
+
         started = time.monotonic()
         result = runCommand(command('run', job=job, fullRefresh=fullRefresh), environment)
         if result.returncode != 0:
@@ -105,6 +107,7 @@ def shown(argv: List[str]) -> str:
 
 
 def rows(database: Path, query: str) -> List[Any]:
+    """The rows `query` returns from a SQLite file."""
 
     with sqlite3.connect(database) as connection:
         found = connection.execute(query).fetchall()

@@ -76,11 +76,14 @@ def normalized(row):
 
 
 def connect(name, tmp_path_factory):
+    """Settings for each database, an embedded one created first, as a server's
+    already exists before a test connects.
+    """
+
     if name in EMBEDDED:
         if name == 'duckdb':
             pytest.importorskip('duckdb')
         settings = connectionConfig(type=DatabaseType(name), path=str(tmp_path_factory.mktemp(name) / ('schema.db' if name == 'sqlite' else 'schema.duckdb')))
-        # Created here, as a server's database exists before a test connects.
         Database(connectionSettings=settings, create=True).close()
         return settings
 
@@ -246,6 +249,8 @@ def test_schema_applies_a_key_to_a_unique_column_and_constraint_names_that_repea
 
 
 def _copyJob(sourceQuery, final, **fields):
+    """A job upserting what `sourceQuery` returns into `final`, with `fields`."""
+
     job = {'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'sourceQuery': sourceQuery, 'targetTableFinal': final,
            'insertStrategy': 'upsert', 'chunkSize': 10}
     job.update(fields)

@@ -70,6 +70,8 @@ type_zoo        one row per edge value of each type
 
 
 def _types(databaseType):
+    """The type each portable name is on `databaseType`."""
+
     names = ('int', 'bigint', 'decimal', 'float', 'varchar', 'char', 'text', 'date', 'timestamp', 'bool', 'binary')
     return dict(zip(names, TYPES[databaseType]))
 
@@ -237,10 +239,18 @@ def rows(databaseType):
 
 
 def _namespace(name, server):
+    """The schema or database a sandbox `name` lives in on `server`,
+    upper-cased for Oracle.
+    """
+
     return 'sb_{}'.format(name) if server != 'oracle' else 'SB_{}'.format(name.upper())
 
 
 def _admin(server):
+    """A connection to `server` as its administrator, autocommitting on SQL
+    Server, which can't create a database inside a transaction.
+    """
+
     driver, settings = SERVERS[server]
     database = Database(connectionSettings=settings)
     if server == 'mssql':
@@ -249,6 +259,8 @@ def _admin(server):
 
 
 def _create(server, namespace):
+    """Creates the sandbox's database, schema or Oracle user on `server`."""
+
     with _admin(server) as database:
         statement = {
             'mysql': 'CREATE DATABASE {0} CHARACTER SET utf8mb4 COLLATE utf8mb4_bin',
@@ -261,6 +273,8 @@ def _create(server, namespace):
 
 
 def _drop(server, namespace, quiet=False):
+    """Drops the sandbox's namespace on `server`, quietly where asked."""
+
     with _admin(server) as database:
         statements = {
             'mysql': ['DROP DATABASE IF EXISTS {0}'],
@@ -278,6 +292,8 @@ def _drop(server, namespace, quiet=False):
 
 
 def _settings(server, namespace):
+    """Settings that reach the sandbox's namespace on `server`."""
+
     _, settings = SERVERS[server]
     if server in ('mysql', 'mariadb', 'mssql'):
         return settings.model_copy(update={'database': namespace})
@@ -285,6 +301,8 @@ def _settings(server, namespace):
 
 
 def _yaml(alias, settings):
+    """A connections.yaml entry for `settings`, under `alias`."""
+
     lines = ['{}:'.format(alias), '  type: {}'.format(settings.type.value)]
     for field in ('database', 'path'):
         if getattr(settings, field, None):
@@ -299,6 +317,8 @@ def _yaml(alias, settings):
 
 
 def _populate(settings):
+    """Creates the sandbox's tables on a connection and fills them."""
+
     with Database(connectionSettings=settings) as database:
         for statement in schemaStatements(settings.type):
             database.alter(statement)
@@ -312,6 +332,10 @@ def _populate(settings):
 
 
 def create(name, directory):
+    """Creates sandbox `name` on every server, and a SQLite pair, with a
+    configuration directory under `directory` whose connections reach them.
+    """
+
     directory = Path(directory).resolve()
     (directory / 'configuration').mkdir(parents=True, exist_ok=True)
     aliases = []
@@ -341,6 +365,8 @@ def create(name, directory):
 
 
 def drop(name, directory):
+    """Drops sandbox `name` from every server, and its SQLite files."""
+
     for server in sorted(SERVERS):
         for suffix in ('', '_copy'):
             _drop(server, _namespace(name + suffix, server))

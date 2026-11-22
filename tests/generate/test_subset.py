@@ -23,6 +23,8 @@ CREATE TABLE unrelated (id INT PRIMARY KEY);
 
 
 def foreignKeysOf(connection):
+    """The foreign keys SQLite declares on a connection."""
+
     from bauta.database.dialects import SQLiteDialect
 
     return SQLiteDialect().foreignKeys(connection.cursor())
@@ -30,6 +32,10 @@ def foreignKeysOf(connection):
 
 @pytest.fixture
 def shop(tmp_path):
+    """A SQLite shop with regions, customers, suppliers, products, orders and
+    their lines, for subsets to follow the keys of.
+    """
+
     connection = sqlite3.connect(str(tmp_path / 'shop.db'))
     connection.executescript(SCHEMA)
     connection.executemany('INSERT INTO regions VALUES (?, ?)', [(1, 'eu'), (2, 'us'), (3, 'apac')])
@@ -48,6 +54,8 @@ def shop(tmp_path):
 
 
 def selected(connection, plan):
+    """The rows each of a plan's queries selects."""
+
     return {table: connection.execute(plan.queries[table]).fetchall() for table in plan.tables}
 
 
@@ -193,11 +201,15 @@ def test_no_scope_reuses_an_alias_from_a_scope_enclosing_it(shop):
 
 
 def _chain(length):
+    """Foreign keys linking `length` tables in a chain, each to the one before."""
+
     return [ForeignKey(table='c{}'.format(index), columns=('parent_id',), referencedTable='c{}'.format(index - 1),
                        referencedColumns=('id',), name='fk{}'.format(index)) for index in range(1, length)]
 
 
 def _nesting(query):
+    """How deeply a query's parentheses nest."""
+
     depth = deepest = 0
     for character in query:
         depth += {'(': 1, ')': -1}.get(character, 0)
@@ -245,6 +257,8 @@ def test_a_subset_too_deep_for_the_databases_is_refused_up_front():
 
 @pytest.fixture
 def sqliteMemory():
+    """A SQLite database in memory."""
+
     connection = sqlite3.connect(':memory:')
     yield connection
     connection.close()

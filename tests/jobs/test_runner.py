@@ -1,3 +1,9 @@
+"""Tests of running data jobs: one job's pipeline (jobs.pipeline) against fake
+and SQLite databases -- streaming, staging, swaps, upserts, watermarks, masking
+and its key checks -- and the run around it (jobs.runner and jobs.workers):
+worker processes, retries and their backoff, termination, forever mode and
+per-cycle reporting.
+"""
 import contextlib
 import functools
 import json
@@ -149,6 +155,8 @@ def fakeDatabases(installFakeDatabase):
 
 
 def _dbConfig(host: str = 'h') -> ConnectionConfig:
+    """A MySQL connection's settings that nothing connects to."""
+
     return connectionConfig(type=DatabaseType.MYSQL, user='u', password='p', database='d', host=host)
 
 
@@ -490,6 +498,9 @@ def _runJobWithTimeline(jobConfig: DataJobConfig, memory: '_TimelineMemory') -> 
 
 
 def _runDataWorkerOnce(monkeypatch, succeeds: bool, failing: Tuple[str, ...] = (), jobConfig: Optional[DataJobConfig] = None) -> List[Tuple[Any, ...]]:
+    """Runs one job through the worker with its pipeline faked to succeed or
+    fail, and returns what the memory backend saw, in order.
+    """
 
     def fakeExecute(job: Any, jobConfig: Any, connectionConfiguration: Any, watermark: Any = None) -> JobOutcome:
         if not succeeds:
@@ -502,6 +513,8 @@ def _runDataWorkerOnce(monkeypatch, succeeds: bool, failing: Tuple[str, ...] = (
 
 
 def _incrementalMaskedJobConfig() -> DataJobConfig:
+    """An incremental job on `id` that masks `name`."""
+
     return _dataJobConfig(sourceQuery='select id, name from people where id > {{ watermark }}', watermarkColumn='id', watermarkInitial=0,
                           masking={'key': 'a-runner-test-masking-key', 'columns': {'id': 'keep', 'name': 'hash'}})
 
@@ -749,6 +762,8 @@ def test_execute_data_job_applies_transforms_to_every_chunk_not_just_the_first(f
 
 
 def _watermarkJobConfig(**overrides: Any) -> DataJobConfig:
+    """An incremental job on the text column `name`, with `overrides`."""
+
     fields = dict(active=True, sourceConnection='src', targetConnection='tgt', insertStrategy=InsertStrategy.UPSERT,
                    chunkSize=100, targetTableFinal='people', sourceQuery='select id, name from people where name > {{ watermark }}',
                    watermarkColumn='name', watermarkInitial='')
@@ -843,6 +858,7 @@ def test_execute_data_job_rejects_a_watermark_column_the_source_query_does_not_r
 
 
 class _WatermarkTimelineMemory(_TimelineMemory):
+    """A _TimelineMemory that hands back the stored `watermarks` it is given."""
 
     def __init__(self, timeline: List[Tuple[Any, ...]], watermarks: Dict[str, Any]) -> None:
         super().__init__(timeline)
@@ -853,6 +869,10 @@ class _WatermarkTimelineMemory(_TimelineMemory):
 
 
 def _runWatermarkWorkerOnce(monkeypatch, tmp_path, succeeds: bool, watermarks: Dict[str, Any]) -> List[Tuple[Any, ...]]:
+    """Runs one incremental job through the worker with its pipeline faked, the
+    watermark it reached derived from the one it was given, and returns what
+    the memory backend saw.
+    """
 
     def fakeExecute(job: Any, jobConfig: Any, connectionConfiguration: Any, watermark: Any = None) -> JobOutcome:
         if not succeeds:
@@ -1093,6 +1113,8 @@ def test_a_signal_during_the_pause_between_forever_cycles_starts_no_other_cycle(
 
 
 def _retryJobConfig(**overrides: Any) -> DataJobConfig:
+    """A job retried twice with no delay, with `overrides`."""
+
     fields = dict(active=True, sourceConnection='src', targetConnection='tgt', insertStrategy=InsertStrategy.UPSERT,
                    chunkSize=100, targetTableFinal='people', sourceQuery='select * from people',
                    retries=2, retryDelaySeconds=0.0)
@@ -1101,6 +1123,9 @@ def _retryJobConfig(**overrides: Any) -> DataJobConfig:
 
 
 def _runRetryWorker(monkeypatch, tmp_path, attempt: Any, jobConfig: Any = None) -> List[Any]:
+    """Runs one job through the worker, each attempt being a call of `attempt`,
+    and returns its outcome.
+    """
 
     monkeypatch.setattr('bauta.jobs.pipeline._executeDataJob', lambda job, config, databases, watermark=None: attempt())
 
@@ -1230,6 +1255,10 @@ def test_the_stored_watermark_is_read_again_on_each_attempt(monkeypatch):
 
 
 def _sqliteJob(databasePath: Any, **overrides: Any) -> Dict[str, Any]:
+    """A job's settings copying `source` into `target` in one SQLite file, with
+    `overrides`.
+    """
+
     fields = dict(active=True, sourceConnection='lite', targetConnection='lite', insertStrategy='upsert', chunkSize=10,
                   sourceQuery='select id, name from source', targetTableFinal='target')
     fields.update(overrides)
@@ -1238,10 +1267,13 @@ def _sqliteJob(databasePath: Any, **overrides: Any) -> Dict[str, Any]:
 
 @pytest.fixture
 def sqliteDatabase(tmp_path):
+    """A SQLite file with a two-row `source` table and an empty `target`, in
+    WAL mode from the start: jobs starting together would otherwise race to
+    switch its journal mode, which SQLite refuses without waiting.
+    """
+
     path = tmp_path / 'lite.db'
     connection = sqlite3.connect(path)
-    # WAL up front: jobs starting together would otherwise race to switch the
-    # file's journal mode, which SQLite refuses without waiting.
     connection.execute('PRAGMA journal_mode=WAL')
     connection.executescript('create table source (id integer primary key, name text);'
                              "insert into source values (1, 'Ann'), (2, 'Bo');"
@@ -1276,6 +1308,8 @@ def test_a_worker_that_dies_fails_its_job_instead_of_hanging_the_run(tmp_path, s
 
 
 def _runJobs(jobs: Dict[str, Any], databases: Dict[str, Any], tmp_path: Any, workers: int = 1) -> RunResult:
+    """Runs `jobs` once with FileMemory in `tmp_path`, and returns the result."""
+
     jobsFile = Configuration.validateJobConfiguration({'workers': workers, 'jobs': jobs}, DataJobsFile)
 
     return runDataJobs(jobsFile=jobsFile, connectionConfiguration=databases, memory=FileMemory(tmp_path / 'memory.yaml'))
@@ -1375,6 +1409,8 @@ def test_worker_log_records_reach_the_parents_handlers_in_its_format(tmp_path, s
 
 
 def _maskedSqliteJob(databases, key='an-original-masking-key', idStrategy='key', **overrides):
+    """A _sqliteJob masking `id` with `idStrategy` and `name` with fakeName."""
+
     return _sqliteJob(databases, masking={'key': key, 'columns': {'id': idStrategy, 'name': 'fakeName'}}, **overrides)
 
 
@@ -1763,6 +1799,7 @@ def test_masking_threads_reach_each_job_and_change_no_row(tmp_path, monkeypatch)
 
 @contextlib.contextmanager
 def _infoFromThePackage() -> Generator[List[str], None, None]:
+    """The messages the package logs at INFO and above inside the block."""
 
     messages: List[str] = []
 

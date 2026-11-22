@@ -14,6 +14,8 @@ _job = functools.partial(dataJob, sourceConnection='prod', sourceQuery='select i
 
 
 def _states(report):
+    """Each table's state in a coverage report."""
+
     return {entry['table']: entry['state'] for entry in report['tables']}
 
 

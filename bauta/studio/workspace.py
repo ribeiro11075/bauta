@@ -20,11 +20,12 @@ from ..project import UsageError
 
 from .settings import HISTORY_RUNS, Settings
 
+# PROJECT_REUSE_SECONDS: the longest a loaded configuration is reused while
+#   none of its files has changed: what it reads besides them -- a new file an
+#   `include` pattern matches, the environment, a ${file:...} secret -- is read
+#   again this often.
 MANIFEST_KEY_VARIABLE = 'BAUTA_MANIFEST_KEY'
 STAGES = {'read': 'readSeconds', 'mask': 'maskSeconds', 'write': 'writeSeconds', 'wait': 'throttledSeconds'}
-# The longest a loaded configuration is reused while none of its files has
-# changed: what it reads besides them -- a new file an `include` pattern
-# matches, the environment, a ${file:...} secret -- is read again this often.
 PROJECT_REUSE_SECONDS = 30.0
 
 
@@ -33,6 +34,8 @@ class ConfigurationProblem(Exception):
 
 
 class _Loaded(NamedTuple):
+    """A loaded project, the files' state it was loaded from, and when."""
+
     project: Project
     stamp: Tuple[Tuple[str, Optional[str]], ...]
     at: float
@@ -97,6 +100,9 @@ def _strategyName(policy: Any) -> str:
 
 
 def describeJob(project: Project, name: str) -> Dict[str, Any]:
+    """One job as Studio shows it: where it reads and writes, how it masks, by
+    key fingerprint, never the key, and how it is partitioned.
+    """
 
     job = project.jobsFile.jobs[name]
     masking = None
@@ -146,6 +152,9 @@ def readHistory(project: Project, runs: int = HISTORY_RUNS) -> Tuple[bool, List[
 
 
 def _runStatus(jobs: List[Dict[str, Any]]) -> str:
+    """A run's status from its jobs': running while any is, succeeded where
+    none failed or was skipped, failed where all did, else partial.
+    """
 
     statuses = [job['status'] for job in jobs]
     if 'running' in statuses or 'waiting' in statuses:
@@ -158,6 +167,9 @@ def _runStatus(jobs: List[Dict[str, Any]]) -> str:
 
 
 def _stages(jobs: List[Dict[str, Any]]) -> Optional[Dict[str, float]]:
+    """The run's seconds in each stage, summed over its jobs, or None where
+    none recorded any.
+    """
 
     totals = {stage: sum(job.get(field) or 0.0 for job in jobs) for stage, field in STAGES.items()}
 
@@ -165,6 +177,11 @@ def _stages(jobs: List[Dict[str, Any]]) -> Optional[Dict[str, float]]:
 
 
 def summarizeRun(runId: str, jobs: List[Dict[str, Any]], live: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """A run's summary from its jobs: when it started and finished, how its
+    jobs ended, its rows and stages. A live run is running while its process
+    is, even once every job is decided, since it has history and its manifest
+    still to write, and stopped once its process is gone.
+    """
 
     started = [job['startedAt'] for job in jobs if job.get('startedAt')]
     finished = [job['finishedAt'] for job in jobs if job.get('finishedAt')]
@@ -172,8 +189,6 @@ def summarizeRun(runId: str, jobs: List[Dict[str, Any]], live: Optional[Dict[str
     for job in jobs:
         counts[job['status']] = counts.get(job['status'], 0) + 1
 
-    # A live run is running while its process is, even once every job is
-    # decided: it has history and its manifest still to write.
     status = _runStatus(jobs) if live is None else 'stopped' if live.get('alive') is False else 'running'
 
     return {'runId': runId, 'status': status,
@@ -185,10 +200,15 @@ def summarizeRun(runId: str, jobs: List[Dict[str, Any]], live: Optional[Dict[str
 
 
 def _duration(jobs: List[Dict[str, Any]], live: Optional[Dict[str, Any]]) -> Optional[float]:
+    """A run's seconds from its first start to its last finish, or to now while
+    it is live.
+    """
 
     import datetime
 
     def parse(text: str) -> datetime.datetime:
+        """An ISO 8601 timestamp read back."""
+
         return datetime.datetime.fromisoformat(text)
 
     starts = [parse(job['startedAt']) for job in jobs if job.get('startedAt')]
@@ -228,6 +248,9 @@ def _negated(text: str) -> Tuple[int, ...]:
 
 
 def runDetail(project: Project, history: List[Dict[str, Any]], runId: str) -> Optional[Dict[str, Any]]:
+    """One run from history, or running now, with its jobs; None where there is
+    neither.
+    """
 
     for record in project.running():
         if record['runId'] == runId:
@@ -357,6 +380,8 @@ def compareRuns(earlier: Dict[str, Any], later: Dict[str, Any], earlierManifest:
     """
 
     def byJob(run: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        """A run's jobs, by name."""
+
         return {job['job']: job for job in run['jobs']}
 
     before, after = byJob(earlier), byJob(later)

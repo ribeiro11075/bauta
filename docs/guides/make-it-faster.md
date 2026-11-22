@@ -5,15 +5,15 @@ Three things decide how fast a job moves rows, in this order.
 
 **The masking policy**, by about fivefold. `key` is expensive because it must be a permutation; `hash` hides as much for a thirtieth of the work wherever a column needn't stay one-to-one. See [speed](#what-each-strategy-costs).
 
-**The [native masker](#the-native-masker)**, about ten times faster on the same policy, with identical results: a million rows of six masked columns, two of them `key`, take under 8 seconds with it and 74 without. See [speed](#what-each-strategy-costs) for the conditions. On a wide table, where masking rather than the database sets the pace, it can also spread each chunk over several cores ([`maskingThreads`](#masking-threads)): 25 masked columns went from 31,000 rows a second on one thread to 106,000 on the five `auto` gives ten cores.
+**The [native masker](#the-native-masker)**, about ten times faster on the same policy, with identical results. On a wide table, where masking sets the pace, it can also spread each chunk over several cores ([`maskingThreads`](#masking-threads)).
 
-**`chunkSize` — for latency, not throughput.** On a local database, chunks from 500 rows to 200,000 finish the same job in 8.6 to 9.2 seconds. What a chunk costs is a round trip: against a database 25 ms away, a million rows take 123 seconds at `chunkSize: 500` and 8.8 at `10000`. Latency stops mattering once a chunk's masking outlasts its round trips:
+**`chunkSize`, for latency rather than throughput.** Locally, chunks from 500 to 200,000 rows finish the same job within 7% of each other. What a chunk costs is a round trip: 25 ms away, a million rows take 123 seconds at `chunkSize: 500` and 8.8 at `10000`. Latency stops mattering once a chunk's masking outlasts its round trips:
 
 ```
 chunkSize  >  2 x latency / per-row masking cost
 ```
 
-— a few thousand rows at 5 ms, about six thousand at 25 ms. Cheap policies need *larger* chunks, having less work to hide the wait behind. With the native masker, reading, masking and writing also overlap; a job then holds four chunks.
+That is a few thousand rows at 5 ms, about six thousand at 25 ms. Cheap policies need *larger* chunks, having less work to hide the wait behind.
 
 To see which of these sets a job's pace, [`bauta history`](watch-what-ran.md#where-the-time-went) shows the seconds each run spent reading, masking and writing, and [`bauta bench`](#measure-a-job) measures reading and masking against your own source before anything is copied.
 
@@ -22,7 +22,7 @@ If a job is still slow, look at the database: the target's indexes and constrain
 
 ## What each strategy costs
 
-**The policy decides throughput, by about fivefold.** A million rows of six columns plus an id, SQLite to SQLite, with the [native masker](#the-native-masker) on one thread (`maskingThreads: 1`), reading, masking and writing overlapped. The columns are a ten-character reference (`C` and nine digits), a ten-digit integer, an email address, a twelve-character hex token, a session string and a phone number; the id is kept. Ten cores, an M1 Pro; `python benchmarks/masking.py` measures it again (see [benchmarks](../project/development.md#benchmarks)):
+A million rows of six columns plus a kept id (a reference, an integer, an email, a hex token, a session string, a phone number), SQLite to SQLite, with the [native masker](#the-native-masker) on one thread, on a ten-core M1 Pro. `python benchmarks/masking.py` measures it again (see [benchmarks](../project/development.md#benchmarks)):
 
 | Policy | Rows a second |
 | --- | --- |
@@ -33,7 +33,7 @@ If a job is still slow, look at the database: the target's indexes and constrain
 
 `key` costs the most because it has to be a *permutation*: a Feistel network per value, about thirty times the work of `hash`'s one digest. Where nothing joins on a column, `hash` hides as much far more cheaply. `fpe` is a permutation too, but FF1's ten AES rounds cost less natively than `key`'s forty-odd digests.
 
-`key`, `fpe`, `hash`, `email`, `digits` and the `fake*` strategies remember up to 16,384 masked values per column (text up to 256 characters, integers and UUIDs), so foreign keys and low-cardinality columns mask many times faster. The native masker masks each distinct value in a chunk once, and for `key`, `fpe` and the `fake*` strategies remembers up to 65,536 values per column across chunks (text up to 64 bytes, and integers). For how `chunkSize` and latency interact, see [throughput](make-it-faster.md).
+Repeated values are remembered per column (up to 16,384 in Python, and 65,536 across chunks in the native masker for `key`, `fpe` and `fake*`), so foreign keys and low-cardinality columns mask many times faster.
 
 
 ## The native masker
@@ -46,15 +46,13 @@ pip install "bauta[native]"
 
 Wheels are published for Linux (x86-64 and ARM, glibc 2.17 or newer) and macOS (Apple silicon and Intel), each covering every supported Python. Elsewhere pip compiles it, which needs Rust 1.83 or newer.
 
-**Only the matching version is used.** `bauta-rs` is released with every version of `bauta`, and the extra pins the one that matches. Any other version is ignored with a warning and masking runs in Python, since two versions aren't certain to mask identically, and a difference would reach a deployment as joins that quietly stop matching. `maskingImplementation`, recorded with each job's key fingerprint and in the manifest, says which one masked.
+**Only the matching version is used.** `bauta-rs` is released with every `bauta`, and the extra pins the match. Another version is ignored, since two versions aren't certain to mask identically, and a difference would surface as joins that quietly stop matching. The manifest records which implementation masked.
 
-**Upgrading `bauta` alone leaves the extension behind**, which would make every masked job about ten times slower. So a run with masked jobs stops before it starts where the extension is installed but another version, naming the version to install, and `bauta validate` fails the same way. [`requireNative: false`](../reference/jobs.md#file-level) in `jobs.yaml`, or `BAUTA_REQUIRE_NATIVE=0`, masks in Python instead.
-
-Where the extension was never installed, or `BAUTA_NATIVE=0` turns it off, a run masks in Python and says so as it starts, and `validate` and `bauta --version` say why. Where a run has a window to keep, `requireNative: true` (or `BAUTA_REQUIRE_NATIVE=1`) stops it in those cases too.
+**Upgrading `bauta` alone leaves the extension behind**, so a run with masked jobs stops before it starts, naming the version to install; [`requireNative: false`](../reference/jobs.md#file-level) or `BAUTA_REQUIRE_NATIVE=0` masks in Python instead. Where the extension was never installed, or `BAUTA_NATIVE=0`, a run masks in Python and says so; `requireNative: true` stops it there too.
 
 From a clone, `pip install ./mask-rs/py` builds the extension at the checkout's version.
 
-It covers `key`, `fpe`, `hash`, `email`, `digits`, `number`, `redact` and the `fake*` strategies, which is where the time goes; the `fake*` ones pick from the lists Python hands it, so there is one copy of those. `number` repeats Python's decimal arithmetic digit for digit, integers, floats and `Decimal`s alike, and hands back what it would have to guess at: a mask that comes out as zero, whose sign Python keeps, and values too long or too far from 1. `redact` finds what Python finds in text, five to fifteen times as fast on one thread -- the more of the text is identifiers, the less -- except with `patterns` of a policy's own, which Python matches. Everything else stays in Python: the strategies that are already cheap, and [custom strategies](../reference/strategies.md#your-own-strategies), which are Python by definition and mask on one thread whatever `maskingThreads` says. So do values the extension doesn't handle (`Decimal` outside `number`, `UUID`, dates, and non-ASCII text for the strategies that read characters), so a value Python would refuse still refuses with the same message.
+It covers `key`, `fpe`, `hash`, `email`, `digits`, `number`, `redact` (but its custom `patterns`) and the `fake*` strategies, which is where the time goes. Everything else stays in Python: the already-cheap strategies, [custom strategies](../reference/strategies.md#your-own-strategies), and values the extension doesn't handle (dates, UUIDs, non-ASCII text where characters matter), which are handed back one by one, so a value Python would refuse still refuses with the same message.
 
 The second policy above, a million rows, SQLite to SQLite:
 
@@ -65,7 +63,7 @@ The second policy above, a million rows, SQLite to SQLite:
 | Rust, one thread, overlapped with the database (the default) | 132,000 |
 | Rust, `maskingThreads: auto` (5 threads) | 329,000 |
 
-**The two implementations compute identical masks**, a release requirement: a difference would silently break joins between old and new copies. See [two implementations](../concepts/security.md#two-implementations). `BAUTA_NATIVE=0` masks in Python even with the extension installed, and the manifest records which one ran as `maskedBy`.
+**The two implementations compute identical masks**, a release requirement; see [two implementations](../concepts/security.md#two-implementations).
 
 
 ## Masking threads
@@ -78,7 +76,7 @@ The native masker can spread each chunk over several cores. Every mask depends o
 | A number, such as `4` | That many threads, every job. | You want a fixed share. It can't exceed the cores available: `validate` and `run` refuse it. |
 | `auto` | Half the cores available, divided between the jobs running when it starts. | Bauta has the machine to itself, and you want masking as fast as the job can use it. |
 
-**Why half.** Masking only has to keep up with the job's reading and writing, which need cores of their own, and so may the database. On a wide table on ten cores, four masking threads copied as fast as six or eight, and all ten were slower than any of them: the extra threads took cores the reading and writing needed. The other half is left to them.
+**Why half.** Masking only has to keep up with reading and writing, which need cores of their own, as may the database. On a wide table on ten cores, four masking threads copied as fast as six or eight, and ten were slower than any.
 
 **How `auto` divides the cores.** When a job starts, it gets `half the cores ÷ jobs running`, counting the jobs already running and those starting with it, and at least one. A running job keeps its share; cores freed later go to the next job to start. With `workers: 2` on 8 cores, where `a` and `b` run together and `c` waits for both:
 
@@ -92,7 +90,7 @@ The native masker can spread each chunk over several cores. Every mask depends o
 
 **With partitions**, slices may take over `auto`'s threads: see [`partitions: auto`](#partitions-auto).
 
-**A number applies to every job.** It's checked against the cores, not multiplied by `workers`: `workers: 4` with `maskingThreads: 4` on 8 cores runs 16 masking threads at once. Only `auto` shares the cores between jobs. A number can still use every core, where you have measured that it pays.
+**A number applies to every job**, not shared: `workers: 4` with `maskingThreads: 4` on 8 cores runs 16 masking threads. Only `auto` divides the cores.
 
 **`BAUTA_MASKING_THREADS`** overrides the setting for one environment, as a number or `auto`, and is checked the same way.
 
@@ -130,7 +128,7 @@ partitions:
   count: 4
 ```
 
-A masked `swap` copy, PostgreSQL to PostgreSQL in Docker on the same ten-core machine as the job: an id and six columns, two masked with `key`, one with `email`, two with `hash` and one with `digits`; chunks of 5,000, one masking thread per slice; best of two runs, interleaved. Every run wrote the same masked table, byte for byte:
+A masked `swap` copy, PostgreSQL to PostgreSQL in Docker on the job's ten-core machine, the second policy above, one masking thread per slice; every run wrote the same table, byte for byte:
 
 | Masker | Partitions | Time | Rows a second |
 | --- | --- | --- | --- |
@@ -143,9 +141,9 @@ A masked `swap` copy, PostgreSQL to PostgreSQL in Docker on the same ten-core ma
 
 Past four slices the machine had no cores left: the database server and the job shared the same ten. With the source, the target and the job on machines of their own, the ceiling is whichever of them runs out first.
 
-**It pays where the database waits, not where Python masks.** Slices overlap their reading and writing, which spend most of their time waiting on a socket, and the slower the target writes, the more there is to overlap. Slices are threads of the job's process, and masking in Python holds the interpreter lock, so they take turns at it: a masked job without the native masker gains nothing, as the table shows. The [native masker](#the-native-masker) releases the lock, so slices mask at once too.
+**It pays where the database waits, not where Python masks.** Slices overlap their reading and writing, mostly waits on a socket. They are threads, and Python masking holds the interpreter lock, so without the [native masker](#the-native-masker) a masked job gains nothing, as the table shows.
 
-**Size it to the databases.** Each slice is another connection reading from the source and another writing to the target, and the job holds a place in each connection's `maxConcurrentJobs` for every one. Beyond what the servers can serve at once, more slices only queue there.
+**Size it to the databases.** Each slice is another connection to each, counted against `maxConcurrentJobs`; beyond what the servers serve at once, more slices only queue.
 
 **Partition on an indexed column that doesn't change**, such as the primary key: each slice then reads only its range, and no row moves between slices while the job runs. Slices are as even as the column's values are spread.
 
@@ -169,11 +167,11 @@ defaults:
 | One slice per 250,000 rows, reckoned from the span of the key | A small table gains less than another pair of connections costs |
 | One, for a masked job without the native masker | Its slices would take turns at Python's interpreter lock, and gain nothing (the table above) |
 
-A job it can't slice is read as one stream, the query as it is, with a line in the log saying why: no primary key, a key of several columns, a key the query doesn't return or that isn't a number, a query the database won't read as a derived table (SQL Server refuses one holding `WITH` or `ORDER BY`), a target in SQLite, which commits one write at a time, or files and Iceberg, which one writer publishes. `auto` never stops a job that runs without it, so it can sit under `defaults` -- the one setting for partitions that can.
+A job it can't slice is read as one stream, with a log line saying why: no single numeric primary key the query returns, a query SQL Server won't wrap (one holding `WITH` or `ORDER BY`), a SQLite target, or files and Iceberg. So `auto` never stops a job, and can sit under `defaults`.
 
-**With `maskingThreads`.** One masking thread masks on the calling thread, so each slice masks on its own, all at once; more than one share one pool, which a job's slices queue for. So where `maskingThreads: auto` gave a job no more threads than it has slices, each slice masks on its own thread instead: as many maskers, without the queue, and the job's share of the cores spent on slices once rather than on slices and threads both. With fewer slices than threads, the pool masks for all of them. A number set for `maskingThreads` is kept as it is, and the slices share that many threads.
+**With `maskingThreads`.** Where `maskingThreads: auto` gave a job no more threads than it has slices, each slice masks on its own thread, so the job's share of the cores is spent once; with fewer slices than threads, the slices share the pool. A number set for `maskingThreads` is kept, and the slices share it.
 
-A job holds the places its connections had free, up to its share, from the moment it starts, and may use fewer once it has looked at the key, so jobs started after it don't take places it then needs. The log says what it chose and what set the count:
+The log says what each job chose and why:
 
 ```
 partitions: reading events as 4 slices of id at once, set by its share of the cores (4)
@@ -202,8 +200,8 @@ maskCustomers                  200,000+     0.04      412,000      134,000     0
 
 - **`--rows`** (default 100,000) is how many rows of each query to read, to the next whole chunk. A query that returns fewer is read whole, and its row count has no `+`.
 - **`--job`** names a job to measure, and repeats; without it, every active job is.
-- **`READ ROWS/S`** covers running the query and fetching its rows over the network, and nothing else. **`MASK ROWS/S`** covers transforms and masking, on the threads `maskingThreads` would give a job running alone. **`CONNECT`** is seconds to open the connection.
-- **What it doesn't measure** is the write: nothing touches the target. Where `bench` says reading or masking is fast enough but a run is slow, the target is the limit; `bauta history` shows its `WRITE` seconds after a run.
+- **`READ ROWS/S`** covers running the query and fetching its rows; **`MASK ROWS/S`** transforms and masking, on the threads a job running alone would get; **`CONNECT`** opening the connection.
+- **It doesn't measure the write.** Where reading and masking are fast but a run is slow, the target is the limit; `bauta history` shows its `WRITE` seconds.
 - **An incremental job** is read from its `watermarkInitial`, as its first run or a full refresh would read it. **A job with partitions** is read as one stream.
 - **It reads production**, as a run does, and the source's [read limit](#limiting-what-a-job-reads) applies: `WAITED` is seconds it held `bench` back. `--format json` gives the same as JSON, with the seconds of each stage.
 
@@ -221,10 +219,10 @@ production:
   maxRowsReadPerSecond: 50000
 ```
 
-- **One budget for the connection.** Every job reading from it, and every [partition](#partitions) of each, shares it, across the run's processes. Two jobs reading at once each get about half; one alone gets all of it.
-- **A chunk at a time.** A job reads a chunk, then waits for as long as its rows owe before reading the next, so the rate holds on average over a few chunks. A pause earns at most a second's worth of rows to read at once.
-- **What it holds back is reading.** With the native masker, masking and writing go on during the wait, and the time spent waiting is recorded as `WAITED` in [history](watch-what-ran.md#where-the-time-went), apart from the reading itself.
-- **What it doesn't count.** Rows read by `discover`, `audit --connect`, `coverage` and the other commands that sample a source aren't limited, and neither are writes. `bauta bench` honours the limit.
+- **One budget for the connection**, shared by every job and [partition](#partitions) reading it, across processes: two jobs at once get about half each.
+- **A chunk at a time.** A job waits after each chunk for as long as its rows owe, so the rate holds over a few chunks; a pause earns at most a second's worth.
+- **It holds back reading only.** With the native masker, masking and writing go on during the wait, recorded as `WAITED` in [history](watch-what-ran.md#where-the-time-went).
+- **Sampling commands aren't limited** (`discover`, `audit --connect`, `coverage`), nor are writes; `bauta bench` is.
 
-Choose it from what the source can spare, not what a run would like: a limit below what a job could otherwise read makes the job take longer, by exactly as much as `WAITED` says. With `--forever`, the cycles of a run share the limit too.
+Choose it from what the source can spare: a limit below what a job could read makes it take longer, by exactly `WAITED`.
 

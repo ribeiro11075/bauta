@@ -1,3 +1,5 @@
+// Tests of the Account page: changing a password, and two-factor sign-in.
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -9,11 +11,13 @@ let signedIn = user
 vi.mock('../App', () => ({ useUser: () => signedIn }))
 const { Account } = await import('./Account')
 
+/** Renders the Account page for `who`. */
 function show(who: User) {
   signedIn = who
   render(<QueryClientProvider client={new QueryClient()}><Account /></QueryClientProvider>)
 }
 
+/** Types the three password fields. */
 function fill(current: string, next: string, again: string) {
   fireEvent.change(screen.getByLabelText('Current password'), { target: { value: current } })
   fireEvent.change(screen.getByLabelText('New password, at least 12 characters'), { target: { value: next } })

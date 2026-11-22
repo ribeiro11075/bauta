@@ -1,3 +1,6 @@
+// The web app's entry: the query client, which sends a signed-out session back
+// to sign-in and retries only what a retry can fix, and the router.
+
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -11,10 +14,12 @@ import './styles.css'
 import { App } from './App'
 import { ApiError, SIGNING_IN } from './api'
 
-// A 401 anywhere means the session ended -- signed out elsewhere, expired,
-// or the user deactivated: ask again who is signed in, which shows sign-in.
-// Not while signing in, where a 401 is a wrong password or code: asking
-// again would start the sign-in page over, and lose what it said was wrong.
+/**
+ * A 401 anywhere means the session ended -- signed out elsewhere, expired, or
+ * the user deactivated: ask again who is signed in, which shows sign-in. Not
+ * while signing in, where a 401 is a wrong password or code: asking again would
+ * start the sign-in page over, and lose what it said was wrong.
+ */
 function signedOut(error: unknown, meta: Record<string, unknown> | undefined, key?: readonly unknown[]) {
   if (error instanceof ApiError && error.status === 401 && key?.[0] !== 'me' && !meta?.[SIGNING_IN]) client.invalidateQueries({ queryKey: ['me'] })
 }

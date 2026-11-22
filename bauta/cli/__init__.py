@@ -40,6 +40,9 @@ __all__ = [
 
 
 def _addCommonArguments(parser: argparse.ArgumentParser, jobs: bool = True, memory: bool = True) -> None:
+    """The flags every command takes: where the configuration is, and, for
+    those that read jobs and run state, where those are.
+    """
 
     parser.add_argument('--config', help='directory holding jobs.yaml and connections.yaml (default: ${} or ./configuration)'.format(
         CONFIG_DIRECTORY_VARIABLE))
@@ -55,6 +58,7 @@ def _addCommonArguments(parser: argparse.ArgumentParser, jobs: bool = True, memo
 
 
 def _addHistoryArguments(parser: argparse.ArgumentParser) -> None:
+    """The flags naming where run history is kept."""
 
     parser.add_argument('--history', metavar='FILE', help='run history as JSON lines (default: jobs.yaml\'s `history`)')
     parser.add_argument('--history-connection', metavar='ALIAS', help='run history in a table of this connection')
@@ -62,18 +66,21 @@ def _addHistoryArguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _addManifestLocationArguments(parser: argparse.ArgumentParser) -> None:
+    """The flags naming a manifest table."""
 
     parser.add_argument('--manifest-connection', metavar='ALIAS', help='the masking manifest in a table of this connection')
     parser.add_argument('--manifest-table', help='the manifest table (default: jobs.yaml\'s, else bauta_manifest)')
 
 
 def _addManifestKeyArgument(parser: argparse.ArgumentParser) -> None:
+    """The flag naming the variable that holds the manifest signing key."""
 
     parser.add_argument('--manifest-key-variable', default=MANIFEST_KEY_VARIABLE,
                         help='environment variable holding the manifest signing key (default: {})'.format(MANIFEST_KEY_VARIABLE))
 
 
 def _addLoggingArguments(parser: argparse.ArgumentParser) -> None:
+    """The flags for where logs go, how much, and in what format."""
 
     parser.add_argument('--log', help='also write logs to this file (logs always go to stderr; --quiet leaves only errors there)')
     parser.add_argument('--log-level', default='info', choices=['debug', 'info', 'warning', 'error'], help='default: info')
@@ -83,6 +90,7 @@ def _addLoggingArguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _positiveInteger(text: str) -> int:
+    """An argument that must be a whole number of at least 1."""
 
     value = int(text)
     if value < 1:
@@ -92,6 +100,7 @@ def _positiveInteger(text: str) -> int:
 
 
 def _nonNegativeInteger(text: str) -> int:
+    """An argument that must be a whole number of at least 0."""
 
     value = int(text)
     if value < 0:
@@ -101,6 +110,9 @@ def _nonNegativeInteger(text: str) -> int:
 
 
 def _addRunArguments(parser: argparse.ArgumentParser) -> None:
+    """The flags of `run`: forever, forcing, jobs, workers, a dry run, a full
+    refresh, and where history, the manifest and notifications go.
+    """
 
     parser.add_argument('--forever', action='store_true',
                         help='keep running, honoring each job\'s refresh window. Prefer a single run from cron or a CronJob; '
@@ -113,12 +125,16 @@ def _addRunArguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _addRulesArgument(parser: argparse.ArgumentParser) -> None:
+    """The flag naming a discovery.yaml of your own rules."""
 
     parser.add_argument('--rules', metavar='FILE', help='your own rules for recognising personal data, ahead of the built-in ones '
                                                         '(default: discovery.yaml in the configuration directory, if there is one)')
 
 
 def _addGeneratorArguments(parser: argparse.ArgumentParser) -> None:
+    """The flags shared by the commands that generate jobs: sampling, the key's
+    variable, chunk size, defaults, masked keys and the output file.
+    """
 
     parser.add_argument('--sample', type=_positiveInteger, default=1000, help='rows sampled per table to classify columns (default: 1000)')
     parser.add_argument('--key-variable', default='MASKING_KEY', help='environment variable the generated jobs read the masking key from')
@@ -138,14 +154,19 @@ class _PrintVersion(argparse.Action):
 
     def __init__(self, option_strings: Sequence[str], dest: str = argparse.SUPPRESS, default: Any = argparse.SUPPRESS,
                  help: Optional[str] = None) -> None:
+        """An action taking no value, as --version does."""
+
         super().__init__(option_strings, dest=dest, default=default, nargs=0, help=help)
 
     def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace, values: Any, option_string: Optional[str] = None) -> None:
+        """Prints bauta's version and the masker it would use, with why it
+        would mask in Python where it would: "not installed" and "installed,
+        another version" need different fixes. Then exits.
+        """
+
         from ..masking import nativeUnavailableReason, nativeVersion
 
         native = nativeVersion()
-        # Why not, as the extension found it: "not installed" and "installed,
-        # another version" need different fixes.
         masker = 'bauta-rs {}'.format(native) if native else 'python ({})'.format(nativeUnavailableReason())
         print('bauta {}'.format(toolVersion()))
         print('masking: {}'.format(masker))
@@ -153,6 +174,9 @@ class _PrintVersion(argparse.Action):
 
 
 def _buildParser() -> argparse.ArgumentParser:
+    """The `bauta` command's parser: every subcommand and its flags, and the
+    function each runs.
+    """
 
     parser = argparse.ArgumentParser(prog='bauta', description='Move, mask and subset data between databases, with jobs defined in YAML.')
     parser.add_argument('--version', action=_PrintVersion, help='print the version, and which masker it would use')
@@ -361,6 +385,11 @@ def _fillSharedFlags(parser: argparse.ArgumentParser, arguments: argparse.Namesp
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """The `bauta` command: parses the arguments, configures logging, and runs
+    the subcommand. A configuration or usage error is exit status 2, an
+    interrupt 130, and any other failure 1, logged so a driver's quoted values
+    are scrubbed. Returns the exit status.
+    """
 
     parser = _buildParser()
     arguments = parser.parse_args(argv)

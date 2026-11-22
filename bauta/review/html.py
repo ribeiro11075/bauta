@@ -18,8 +18,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from .coverage import ACKNOWLEDGED, COPIED, MASKED, STATE_ORDER, UNCOVERED
 
-# Colours as tokens, redefined for a dark system. Severity and state colours
-# carry a word beside them, never meaning alone.
+# _STYLE: colours as tokens, redefined for a dark system. Severity and state
+#   colours carry a word beside them, never meaning alone.
+# _STATE_HEADINGS: section headings, in sentence case where the text report
+#   shouts.
 _STYLE = '''
 :root { color-scheme: light dark; --page: #ffffff; --text: #1b1f24; --muted: #57606a; --line: #d8dee4; --panel: #f6f8fa;
   --error: #b42318; --error-bg: #fef3f2; --warning: #9a6700; --warning-bg: #fff8e5; --info: #0b62c4; --info-bg: #eef6ff;
@@ -60,24 +62,23 @@ article { border: 1px solid var(--line); border-radius: 8px; padding: 16px; marg
 article p { margin: 4px 0 12px; }
 footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
 '''
-
 _SEVERITY_LABELS = {'error': 'Error', 'warning': 'Warning', 'info': 'Note'}
-
 _STATE_BADGES = {UNCOVERED: 'error', COPIED: 'warning', MASKED: 'good', ACKNOWLEDGED: 'plain'}
-
-# Section headings, in sentence case where the text report shouts.
 _STATE_HEADINGS = {UNCOVERED: 'Not covered', COPIED: 'Copied as it stands', MASKED: 'Copied and masked', ACKNOWLEDGED: 'Not copied, declared'}
-
 _FOOTER = ('This report holds the names of jobs, connections, tables and columns, how each column is masked, key fingerprints and '
            'findings. It holds no value from any table, and no masking key.')
 
 
 def _text(value: Any) -> str:
+    """A value as HTML text, escaped."""
 
     return html.escape('' if value is None else str(value), quote=True)
 
 
 def _page(title: str, heading: str, meta: str, body: Sequence[str]) -> str:
+    """A whole report page: its title, heading and meta line above the
+    sections, with the styles inline so the file stands alone.
+    """
 
     return ('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
@@ -88,12 +89,14 @@ def _page(title: str, heading: str, meta: str, body: Sequence[str]) -> str:
 
 
 def _tiles(tiles: Iterable[Sequence[Any]]) -> str:
+    """A row of tiles, each a count, a label and the kind that colours it."""
 
     return '<section class="tiles">{}</section>'.format(''.join(
         '<div class="tile {}"><strong>{}</strong><span>{}</span></div>'.format(kind, _text(count), _text(label)) for count, label, kind in tiles))
 
 
 def _badge(label: str, kind: str) -> str:
+    """A label as a coloured badge."""
 
     return '<span class="badge {}">{}</span>'.format(kind, _text(label))
 
@@ -107,6 +110,7 @@ def _table(headings: Sequence[str], rows: Iterable[Sequence[str]]) -> str:
 
 
 def _findings(findings: Sequence[Mapping[str, Any]], withJob: bool = True) -> str:
+    """Findings as a list, each with its severity's badge and, where asked, its job."""
 
     items = []
     for finding in findings:
@@ -117,6 +121,7 @@ def _findings(findings: Sequence[Mapping[str, Any]], withJob: bool = True) -> st
 
 
 def _plural(count: int, noun: str) -> str:
+    """`count` and `noun`, plural unless the count is one."""
 
     return '{} {}{}'.format(count, noun, '' if count == 1 else 's')
 
@@ -173,6 +178,9 @@ def renderAuditHtml(report: Mapping[str, Any], version: Optional[str] = None) ->
 
 
 def _auditJob(job: Mapping[str, Any], findings: Sequence[Mapping[str, Any]]) -> str:
+    """One job's section of the audit report: how it is masked, from and to
+    where, its findings and its columns.
+    """
 
     status = _badge('masked', 'good') if job['masked'] else _badge('not masked, declared', 'warning') if job.get('unmasked') \
         else _badge('not masked', 'error')

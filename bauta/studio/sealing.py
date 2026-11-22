@@ -14,16 +14,19 @@ from typing import Any, Dict, Optional
 
 
 def b64(data: bytes) -> str:
+    """Bytes as unpadded URL-safe base64."""
 
     return base64.urlsafe_b64encode(data).rstrip(b'=').decode('ascii')
 
 
 def _unb64(text: str) -> bytes:
+    """Unpadded URL-safe base64 back to bytes."""
 
     return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
 
 
 def _signature(key: bytes, payload: str) -> str:
+    """The HMAC-SHA256 of a sealed payload, as base64."""
 
     return b64(hmac.new(key, payload.encode('ascii', 'replace'), hashlib.sha256).digest())
 

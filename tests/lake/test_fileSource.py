@@ -27,12 +27,16 @@ KEY = 'a-file-source-test-masking-key-never-shown'
 
 
 def _parquet(path, **columns):
+    """Writes `columns` as a Parquet file at `path`."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     pyarrow.parquet.write_table(pyarrow.table(columns), path)
 
 
 @pytest.fixture
 def lake(tmp_path):
+    """An empty directory for a files connection's root."""
+
     root = tmp_path / 'lake'
     root.mkdir()
     return root
@@ -40,6 +44,8 @@ def lake(tmp_path):
 
 @pytest.fixture
 def target(tmp_path):
+    """A SQLite file with an empty customers table."""
+
     path = tmp_path / 'copy.db'
     connection = sqlite3.connect(path)
     connection.execute('create table customers (id integer primary key, email text)')
@@ -49,10 +55,14 @@ def target(tmp_path):
 
 
 def _connections(lake, target, **settings):
+    """A files connection on `lake`, with `settings`, and the SQLite target."""
+
     return {'source': connectionConfig(type='files', root=str(lake), **settings), 'target': connectionConfig(type='sqlite', path=str(target))}
 
 
 def _rows(target):
+    """The target's customers, by id."""
+
     connection = sqlite3.connect(target)
     try:
         return connection.execute('select id, email from customers order by id').fetchall()
@@ -61,6 +71,8 @@ def _rows(target):
 
 
 def _read(lake, query, **settings):
+    """The rows a query on the lake reads, sorted."""
+
     with FileSource(connectionConfig(type='files', root=str(lake), **settings)) as source:
         _, chunks = source.stream(query, chunkSize=1000)
         with chunks:

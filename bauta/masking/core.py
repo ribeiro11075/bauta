@@ -32,60 +32,59 @@ from typing import Any, Callable, ClassVar, Dict, List, Mapping, NamedTuple, Opt
 
 from ..log import LOGGER_NAME
 
+# KEY_MINIMUM_LENGTH: the shortest masking key accepted, in characters.
+# KEY_MINIMUM_DISTINCT_CHARACTERS: fewer different characters than this and a
+#   key is a pattern rather than a secret (`aaaa...`, `abab...`, `1212...`),
+#   refused whatever its length.
+# KEY_RECOMMENDED_BITS: what a key should hold as keyStrengthBits estimates it;
+#   weaker keys are warned about, not refused. 32 random bytes, as the docs
+#   recommend, estimate at about 215 and never near this (the lowest of 200,000
+#   was 189); 16 random bytes in hex fall just under it.
+# MASK_CACHE_SIZE, MASK_CACHE_MAXIMUM_TEXT: the masks remembered per column,
+#   for the repeated values of foreign keys and low-cardinality columns, and
+#   the longest text remembered; a few megabytes a column at most.
+# _CACHEABLE_TYPES: the types whose equal values always mask the same way.
+#   Equal Decimals, floats and datetimes can differ in scale, sign of zero or
+#   time zone, which some strategies keep; bool equals 1.
+# MAXIMUM_KEY_LENGTH: the longest value `key` and `fpe` mask, in characters or
+#   digits; their cost grows with the square of the length.
+# FEISTEL_ROUNDS: rounds of `key`'s permutation, FF1's 10, the conservative end.
+# HMAC_BLOCK_SIZE: SHA-256's compression block, which HMAC pads its key to.
+# _nativeUnavailable, _nativeUnavailableKind: why _nativeModule found no
+#   extension to use, for requireNativeProblem to say, and which reason it was:
+#   `off` (BAUTA_NATIVE=0), `missing` (not installed) or `mismatch` (another
+#   version installed).
+# _NATIVE_FALLBACK: what the extension puts in `problems` for a value it leaves
+#   to Python.
+# NORMALIZE_STEPS: the steps a policy's `normalize` can take, in the order they
+#   are applied whatever order it names them in.
+# _INTEGER_TEXT: text that spells an integer one way only: no sign but a minus,
+#   no leading zero, no spaces; `007` stays text, as an integer column holds 7.
+# POLICY_FIELDS: the fields of a column policy that belong to the policy rather
+#   than its strategy; everything else in the mapping is a strategy option.
+# _CHARACTER_CLASSES: the classes keyStrengthBits counts a key's alphabet by.
+# INTEGRITY_FIELD: the section of a sealed manifest holding its digest.
+# _warnedKeys: fingerprints of the weak keys already warned about this process.
 KEY_MINIMUM_LENGTH = 16
-
-# Fewer different characters than this, and a key is a pattern rather than a
-# secret: `aaaa...`, `abab...`, `1212...`. Refused, whatever its length.
 KEY_MINIMUM_DISTINCT_CHARACTERS = 8
-
-# What a key should hold, in bits, as keyStrengthBits estimates it. Weaker keys
-# are warned about, not refused. 32 random bytes, as the docs recommend,
-# estimate at about 215, and never near this: the lowest of 200,000 was 189,
-# when repeated characters happened to count against it. 16 random bytes in
-# hex, just under this.
 KEY_RECOMMENDED_BITS = 128
-
-# Masks remembered per column, for the repeated values of foreign keys and
-# low-cardinality columns. Bounded to a few megabytes a column.
 MASK_CACHE_SIZE = 16384
 MASK_CACHE_MAXIMUM_TEXT = 256
-
-# The types whose equal values always mask the same way. Equal Decimals,
-# floats and datetimes can differ in scale, sign of zero or time zone, which
-# some strategies keep, so they aren't cached; nor is bool, which equals 1.
 _CACHEABLE_TYPES = frozenset({str, int, uuid.UUID})
-
-# The longest value `key` and `fpe` mask, in characters or digits. Their cost
-# grows with the square of the length.
 MAXIMUM_KEY_LENGTH = 256
-
-# Feistel rounds for `key`'s permutation: FF1's 10, the conservative end.
 FEISTEL_ROUNDS = 10
-
-# SHA-256's compression block, which is what HMAC pads its key out to.
 HMAC_BLOCK_SIZE = 64
-
-
-# Why _nativeModule found no extension to use, for requireNative to say, and
-# which of the three reasons it was: `off` (BAUTA_NATIVE=0), `missing` (not
-# installed) or `mismatch` (installed, another version).
 _nativeUnavailable: Optional[str] = None
 _nativeUnavailableKind: Optional[str] = None
 REQUIRE_NATIVE_VARIABLE = 'BAUTA_REQUIRE_NATIVE'
 MASKING_THREADS_VARIABLE = 'BAUTA_MASKING_THREADS'
-# What the extension puts in `problems` for a value it doesn't mask itself.
 _NATIVE_FALLBACK = 'fallback'
-# The steps a policy's `normalize` can take, in the order they are applied,
-# whatever order it names them in.
 NORMALIZE_STEPS = ('strip', 'lower', 'integer')
-# Text that spells an integer one way only: no sign but a minus, no leading
-# zero, no spaces. `007` is left as text, since an integer column holds 7.
 _INTEGER_TEXT = re.compile(r'-?[1-9][0-9]*|0')
-# Fields of a column policy that belong to the policy itself rather than to its
-# strategy. Everything else in the mapping is a strategy option.
 POLICY_FIELDS = ('strategy', 'domain')
 _CHARACTER_CLASSES = (str.islower, str.isupper, str.isdigit)
 INTEGRITY_FIELD = 'integrity'
+_warnedKeys: set = set()
 
 
 @functools.cache
@@ -350,10 +349,13 @@ class KeyedHash:
     """HMAC-SHA256 under a per-domain subkey, derived once per column."""
 
     def __init__(self, key: str, domain: str) -> None:
+        """Derives the domain's subkey from the key, and HMAC's two padded-key
+        states from the subkey. The states are built once and copied per
+        value, which gives the same digest as hmac in about a third less time;
+        that only holds for a key no longer than the block, hence the assert.
+        """
+
         self._subkey = hmac.digest(key.encode('utf-8'), b'domain\x00' + domain.encode('utf-8'), 'sha256')
-        # HMAC's two padded-key states, built once and copied per value: the
-        # same digest in about a third less time. Only valid for a key shorter
-        # than the block, hence the assert.
         assert len(self._subkey) == 32
         paddedKey = self._subkey.ljust(HMAC_BLOCK_SIZE, b'\x00')
         self._inner = hashlib.sha256(bytes(byte ^ 0x36 for byte in paddedKey))
@@ -368,6 +370,9 @@ class KeyedHash:
 
 
     def digest(self, message: bytes, purpose: bytes = b'') -> bytes:
+        """HMAC-SHA256 of `message` under the subkey, separated by `purpose`
+        so that one value hashed for two uses gives unrelated digests.
+        """
 
         inner = self._inner.copy()
         inner.update(purpose + b'\x00' + message)
@@ -474,33 +479,39 @@ class Strategy:
     unless a strategy overrides maskColumn.
     """
 
+    # NAME: how a policy names the strategy.
+    # OPTIONS, REQUIRED: the options it takes, as name -> check applied to the
+    #   configured value, and those a policy must give.
+    # KEYED: whether it uses the key at all; the manifest records it.
+    # PASSTHROUGH: whether it returns the column exactly as given, so a plan can
+    #   carry those values through rather than reading and rewriting them.
+    #   Declared here rather than by naming `keep`, which would make the core
+    #   depend on the strategies.
+    # CACHEABLE: whether mask() depends only on the value, key and options, so
+    #   results can be remembered.
+    # NATIVE: the native masker's name for the strategy, where it has one.
+    # CONTEXT_OPTION: the option naming another column of the row it masks with
+    #   (`dateShift`'s shiftBy); a plan hands that column's values, read before
+    #   any column is masked, to maskColumnWith.
     NAME: ClassVar[str]
     OPTIONS: ClassVar[Dict[str, Callable[[Any], Any]]] = {}
     REQUIRED: ClassVar[Tuple[str, ...]] = ()
-    # Whether the strategy uses the key at all; the manifest records it.
     KEYED: ClassVar[bool] = True
-    # Whether the strategy returns the column exactly as it was given, so a
-    # plan can carry those values through rather than reading and rewriting
-    # them. Declared here rather than by naming a built-in strategy from this
-    # module, which would make the core depend on the strategies module.
     PASSTHROUGH: ClassVar[bool] = False
-    # Whether mask() depends only on the value, key and options, so results
-    # can be remembered.
     CACHEABLE: ClassVar[bool] = False
-    # The native masker's name for this strategy, where it has one.
     NATIVE: ClassVar[Optional[str]] = None
-    # The option naming another column of the row this strategy masks with --
-    # `dateShift`'s shiftBy -- for a strategy that reads one. A plan hands
-    # its values to maskColumnWith, read before any column is masked.
     CONTEXT_OPTION: ClassVar[Optional[str]] = None
 
     def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
+        """A strategy bound to one column's keyed hash and its validated
+        options. The `normalize` steps, for a strategy that takes them, are
+        applied in Python by maskColumn before each value is masked, so the
+        native masker never sees the option.
+        """
+
         self.keyedHash = keyedHash
         self.options = dict(options)
         self._cache: Dict[Tuple[type, Any], Any] = {}
-        # The `normalize` steps, for a strategy that takes them: applied to
-        # each value before it is masked, here, so the native masker never
-        # sees the option.
         self.normalize: Tuple[str, ...] = tuple(self.options.get('normalize', ()))
         self._native = self._buildNative()
 
@@ -529,8 +540,10 @@ class Strategy:
 
     @classmethod
     def validateOptions(cls, options: Mapping[str, Any], label: Optional[str] = None) -> Dict[str, Any]:
-        """`label` is how the policy named the strategy, for messages -- a
-        custom strategy needn't set NAME.
+        """`options` as a policy gave them, each checked and converted by
+        OPTIONS, with REQUIRED present and checkOptions' rules met. Raises
+        ValueError. `label` is how the policy named the strategy, for messages:
+        a custom strategy needn't set NAME.
         """
 
         label = label or getattr(cls, 'NAME', cls.__name__)
@@ -592,6 +605,10 @@ class Strategy:
 
 
     def maskColumn(self, values: Sequence[Any], chunkIndex: int) -> List[Any]:
+        """The column masked, NULLs kept: normalized first where the policy
+        asks, and through the native masker where there is one. Override to
+        mask a column as a whole, as `shuffle` does.
+        """
 
         if self.normalize:
             return self._maskNormalized(values)
@@ -613,6 +630,9 @@ class Strategy:
 
 
     def _maskValues(self, values: Sequence[Any]) -> List[Any]:
+        """The column masked value by value: natively where possible, else
+        through mask(), from the cache for a CACHEABLE strategy.
+        """
 
         if self._native is not None:
             return self._maskColumnNatively(values)
@@ -674,6 +694,10 @@ class Strategy:
 
 
     def mask(self, value: Any) -> Any:
+        """One non-NULL value masked. Every strategy implements this, even one
+        that masks natively, since Python finishes what the extension hands
+        back.
+        """
 
         raise NotImplementedError
 
@@ -789,9 +813,6 @@ def keyStrengthBits(key: str) -> float:
     return len(key) * min(math.log2(pool), math.log2(max(2, len(set(key)))))
 
 
-_warnedKeys: set = set()
-
-
 def warnIfWeakKey(key: str, what: str = 'masking key') -> None:
     """Warns, once a process for each key, where keyStrengthBits puts a key
     below KEY_RECOMMENDED_BITS. A warning rather than a refusal while keys made
@@ -831,6 +852,10 @@ class MaskingPlan:
     """
 
     def __init__(self, key: str, columns: Mapping[str, Mapping[str, Any]], defaultStrategy: Optional[Mapping[str, Any]] = None) -> None:
+        """Validates the key and every column policy, and refuses two columns
+        whose names differ only in case, since names match case-insensitively.
+        """
+
         validateKey(key)
         self.key = key
         self.columns = {name: validateColumnPolicy(policy) for name, policy in columns.items()}
@@ -846,11 +871,16 @@ class MaskingPlan:
 
     @property
     def fingerprint(self) -> str:
+        """The key's fingerprint, as keyFingerprint gives it."""
 
         return keyFingerprint(self.key)
 
 
     def bind(self, columns: Sequence[str]) -> 'BoundMasking':
+        """The plan bound to the columns a query returned, in their order.
+        Raises MaskingError for a returned column no policy covers, or a policy
+        naming a column that isn't returned.
+        """
 
         returned = {column.upper() for column in columns}
         unknown = sorted(name for folded, name in self._byFoldedName.items() if folded not in returned)
@@ -879,6 +909,20 @@ class BoundMasking:
     """Applies a bound plan to chunks of rows."""
 
     def __init__(self, key: str, resolved: Sequence[Tuple[str, Dict[str, Any], str]]) -> None:
+        """Builds each column's strategy under its domain, and the manifest
+        entry recording it, then works out how apply() goes about a chunk.
+
+        _contexts holds, for a strategy masking with another column of the
+        row, that column's position. _maskedIndexes are the columns that have
+        to be read and rewritten; a policy usually keeps far more than it
+        masks, and carrying those through costs nothing. _transposeToSplice
+        says whether to rebuild rows from columns, which is faster up to about
+        twenty columns and, past that, once a third or more are masked.
+        _natives holds the extension's masker for each column it masks with
+        the rest of the chunk in one call, or None for a column kept or masked
+        in Python; a strategy that masks its column its own way keeps doing so.
+        """
+
         self.strategies: List[Strategy] = []
         self.manifest: List[ColumnMasking] = []
 
@@ -892,8 +936,6 @@ class BoundMasking:
             self.manifest.append(ColumnMasking(column=column, strategy=policy['strategy'], domain=domain if strategyType.KEYED else None, source=source))
 
         self._chunkIndex = 0
-        # For each strategy that masks with another column of the row, that
-        # column's position.
         folded = [column.upper() for column, _, _ in resolved]
         self._contexts: List[Optional[int]] = []
         for (column, _, _), strategy in zip(resolved, self.strategies):
@@ -905,19 +947,11 @@ class BoundMasking:
                     column, strategy.CONTEXT_OPTION, context))
             else:
                 self._contexts.append(folded.index(context.upper()))
-        # The columns that actually have to be read and rewritten. A policy
-        # usually keeps far more columns than it masks, and carrying those
-        # through costs nothing.
         self._maskedIndexes = [index for index, strategy in enumerate(self.strategies) if not strategy.PASSTHROUGH]
         self._passthrough = not self._maskedIndexes
         self._masks = [not strategy.PASSTHROUGH for strategy in self.strategies]
-        # Rebuilding rows from columns is faster up to about twenty columns,
-        # and past that once a third or more of them are masked.
         width = len(self.strategies)
         self._transposeToSplice = width <= 20 or 3 * len(self._maskedIndexes) >= width
-        # The extension's masker for each column it masks with the rest of the
-        # chunk, in one call; None for a column kept, or masked in Python. A
-        # strategy that masks its column its own way keeps doing so.
         self._natives = [strategy._native if not strategy.PASSTHROUGH and not strategy.normalize and type(strategy).maskColumn is Strategy.maskColumn
                          else None for strategy in self.strategies]
         self._chunkNatively = any(native is not None for native in self._natives)
@@ -939,7 +973,10 @@ class BoundMasking:
 
 
     def apply(self, rows: Sequence[Tuple[Any, ...]], chunkIndex: Optional[int] = None) -> List[Tuple[Any, ...]]:
-        """`chunkIndex` is the chunk's position in the source, which `shuffle`
+        """The chunk of rows masked, as new tuples in the same order. Raises
+        MaskingError, naming the column, for a value its strategy refuses.
+
+        `chunkIndex` is the chunk's position in the source, which `shuffle`
         keys on. Left out, it counts calls.
 
         Columns are masked in read order, whichever path below runs, since
@@ -1045,7 +1082,6 @@ def buildMaskingManifest(outcomes: Sequence[Any], declared: Mapping[str, Mapping
 
     timestamp = generatedAt or datetime.datetime.now(datetime.timezone.utc)
 
-    # The implementation, for the reason given in maskingIdentity.
     manifest: Dict[str, Any] = {'generatedAt': timestamp.isoformat(timespec='seconds'), 'jobs': jobs}
     manifest['maskedBy'] = maskingImplementation()
 

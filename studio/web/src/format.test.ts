@@ -1,3 +1,5 @@
+// Tests of how times, durations and counts read.
+
 import { describe, expect, it, vi } from 'vitest'
 import { ago, count, duration, plural, seconds, when } from './format'
 

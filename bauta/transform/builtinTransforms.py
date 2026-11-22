@@ -3,9 +3,9 @@ sourceQueryColumnTransforms by import path, as your own are:
 
     sourceQueryColumnTransforms:
       amount:
-      - bauta.builtinTransforms:currency
+      - bauta.transform.builtinTransforms:currency
       name:
-      - bauta.builtinTransforms:truncate(50)
+      - bauta.transform.builtinTransforms:truncate(50)
 
 Each passes NULL through -- except defaultIfNull -- and raises on a value it
 can't convert rather than guessing.
@@ -25,6 +25,7 @@ _FALSE = frozenset({'n', 'no', 'false', 'f', '0', 'off'})
 
 
 def _blank(value: Any) -> bool:
+    """Whether a value is text with nothing but whitespace."""
 
     return isinstance(value, str) and not value.strip()
 
@@ -32,11 +33,13 @@ def _blank(value: Any) -> bool:
 # Text -------------------------------------------------------------------------
 
 def upper(value: Optional[str]) -> Optional[str]:
+    """Text in upper case; NULL as it is."""
 
     return value.upper() if value is not None else value
 
 
 def lower(value: Optional[str]) -> Optional[str]:
+    """Text in lower case; NULL as it is."""
 
     return value.lower() if value is not None else value
 
@@ -48,6 +51,7 @@ def title(value: Optional[str]) -> Optional[str]:
 
 
 def strip(value: Optional[str]) -> Optional[str]:
+    """Text without leading and trailing whitespace; NULL as it is."""
 
     return value.strip() if value is not None else value
 

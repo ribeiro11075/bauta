@@ -24,6 +24,14 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Context:
+    """What every route of Studio's shares: its settings, database, launcher,
+    throttles, secret box and identity provider's client, and the dependencies
+    that require each role.
+    """
+
+    # secretBox: encrypts authenticator secrets, and throttles their codes.
+    # ssoThrottle: counts single sign-ons that failed, by address.
+    # oidc: the identity provider's client, when single sign-on is on.
     settings: Settings
     database: Database
     launcher: Launcher
@@ -32,12 +40,9 @@ class Context:
     viewer: Callable[..., Any]
     operator: Callable[..., Any]
     admin: Callable[..., Any]
-    # Encrypts authenticator secrets, and throttles their codes.
     secretBox: SecretBox
     codeThrottle: LoginThrottle
-    # Counts single sign-ons that failed, by address.
     ssoThrottle: LoginThrottle
-    # The identity provider's client, when single sign-on is on.
     oidc: Optional['OidcClient'] = None
 
     def project(self) -> Project:

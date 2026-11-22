@@ -1,3 +1,6 @@
+"""Tests of per-column transforms: applying them, resolving a reference with
+its arguments, and errors that never show a value.
+"""
 import pytest
 
 from bauta.transform import Transform, TransformError, TransformResolutionError, resolveTransformer

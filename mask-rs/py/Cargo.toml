@@ -8,7 +8,7 @@ license.workspace = true
 [lib]
 name = "bauta_rs"
 crate-type = ["cdylib"]
-# Tested from Python (tests/test_nativeMasking.py), which it needs to run: a
+# Tested from Python (tests/masking/test_nativeMasking.py), which it needs to run: a
 # test binary can't link Python's symbols, which only the interpreter provides.
 test = false
 doctest = false

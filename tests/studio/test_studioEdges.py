@@ -23,6 +23,8 @@ from tests.studio.test_studioApi import _waitForRun
 
 
 def _jobs(settings, old, new):
+    """Replaces `old` with `new` in jobs.yaml."""
+
     path = settings.configDirectory / 'jobs.yaml'
     path.write_text(path.read_text().replace(old, new))
 
@@ -260,6 +262,8 @@ def test_settings_come_from_the_environment(monkeypatch, tmp_path):
 # The job form's checks ---------------------------------------------------------------
 
 def _form(client, name='copyPeople'):
+    """A job's form, as the API gives it."""
+
     return client.get('/api/jobs/{}/form'.format(name)).json()
 
 
@@ -316,6 +320,10 @@ def test_a_new_masked_job_needs_a_variable_for_its_key(signIn):
 
 @pytest.fixture
 def commandLine(settings, monkeypatch):
+    """A function running `bauta studio` with the test's directories, answering
+    password prompts with `passwords`.
+    """
+
     monkeypatch.setenv('BAUTA_STUDIO_DATABASE_URL', settings.databaseUrl)
 
     def run(*arguments, passwords=()):

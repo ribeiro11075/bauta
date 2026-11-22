@@ -16,21 +16,21 @@ from pathlib import Path
 
 from mkdocs.structure.files import File
 
+# OUTSIDE: repository file -> (the page it becomes, its title there, or None to
+#   keep its own)
 REPOSITORY = 'https://github.com/ribeiro11075/bauta'
 ROOT = Path(__file__).resolve().parents[1]
-
-# Repository file -> (the page it becomes, its title there, or None to keep its own)
 OUTSIDE = {
     'example/README.md': ('get-started/examples.md', 'Examples'),
     'CHANGELOG.md': ('project/changelog.md', None),
     'CONTRIBUTING.md': ('project/contributing.md', None),
     }
-
 FENCE = re.compile(r'^\s*(```|~~~)')
 LINK = re.compile(r'\]\(([^)#\s]*)(#[^)\s]+)?\)')
 
 
 def _ref() -> str:
+    """The branch or tag the site's links into the repository point at."""
 
     return os.environ.get('BAUTA_DOCS_REF', 'master')
 
@@ -51,6 +51,10 @@ def rewrite(markdown: str, source: str, page: str) -> str:
 
 
 def _link(match: 're.Match[str]', source: str, page: str) -> str:
+    """A Markdown link rewritten for the site: into docs/ as a page, to a file
+    OUTSIDE publishes as its page, and to anything else in the repository as a
+    link to it on GitHub.
+    """
 
     target, anchor = match.group(1), match.group(2) or ''
     if not target or re.match(r'^[a-z]+:', target):
@@ -69,6 +73,7 @@ def _link(match: 're.Match[str]', source: str, page: str) -> str:
 
 
 def on_files(files, config):
+    """MkDocs hook: adds a page for each file OUTSIDE publishes from beyond docs/."""
 
     for source, (page, title) in OUTSIDE.items():
         text = (ROOT / source).read_text()
@@ -80,6 +85,7 @@ def on_files(files, config):
 
 
 def on_page_markdown(markdown, page, config, files):
+    """MkDocs hook: rewrites a page's links to repository files."""
 
     if page.file.generated_by:
         return markdown
@@ -88,8 +94,8 @@ def on_page_markdown(markdown, page, config, files):
 
 
 def on_page_context(context, page, config, nav):
+    """MkDocs hook: points a generated page's edit link at the file it came from."""
 
-    # A generated page's source is the file outside docs/ it came from
     for source, (generated, _) in OUTSIDE.items():
         if page.file.src_uri == generated:
             page.edit_url = '{}/edit/{}/{}'.format(REPOSITORY, _ref(), source)

@@ -14,10 +14,9 @@ import yaml
 from .environment import ConfigurationError, expandEnvironmentVariables
 from .models import isAnchorKey
 
+# INCLUDED_KEYS: what an included file may hold. Everything else -- workers,
+#   defaults, where run state goes -- is said once, in the jobs file itself.
 INCLUDE_KEY = 'include'
-
-# What an included file may hold. Everything else -- workers, defaults, where
-# run state goes -- is said once, in the jobs file itself.
 INCLUDED_KEYS = ('jobs', 'acknowledged')
 
 
@@ -42,6 +41,10 @@ class _UniqueKeyLoader(yaml.SafeLoader):
     """
 
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> Any:
+        """A mapping as PyYAML builds it, but refusing a key given twice, which
+        YAML would resolve by silently keeping the second. Merge keys (`<<`)
+        may repeat.
+        """
 
         seen: Dict[Any, Any] = {}
         for keyNode, _ in node.value:

@@ -25,20 +25,20 @@ use num_traits::{FromPrimitive, Zero};
 use crate::digits::{decimalDigits, pow10};
 use crate::{KeyedHash, MaskError};
 
-/// Python's `_PRECISION`, the context `NumberStrategy._mask` computes in.
+// PRECISION: Python's `_PRECISION`, the context `NumberStrategy._mask` computes
+//   in.
+// CANONICAL_PRECISION: the default context's precision, which `canonical` runs
+//   in: a decimal with more significant digits than this is rounded by
+//   `normalize()`.
+// MAXIMUM_DIGITS, MAXIMUM_EXPONENT: the longest coefficient, and the furthest
+//   exponent, a value may have to be masked here; anything beyond goes to
+//   Python.
+// UNIT_BITS: `KeyedHash::unit` has 53 bits of resolution: it is a whole number
+//   over 2**53, which is also exactly what `Decimal(float)` makes of it.
 const PRECISION: usize = 60;
-
-/// The default context's precision, which `canonical` runs in: a decimal
-/// with more significant digits than this is rounded by `normalize()`.
 const CANONICAL_PRECISION: usize = 28;
-
-/// The longest coefficient, and the furthest exponent, a value may have to be
-/// masked here; anything beyond goes to Python.
 const MAXIMUM_DIGITS: usize = 38;
 const MAXIMUM_EXPONENT: i64 = 400;
-
-/// `KeyedHash::unit` has 53 bits of resolution: it is a whole number over
-/// 2**53, which is also exactly what `Decimal(float)` makes of it.
 const UNIT_BITS: i32 = 53;
 
 /// A finite decimal: `(-1)**negative * coefficient * 10**exponent`.
@@ -49,6 +49,8 @@ pub struct Dec {
     pub exponent: i64,
 }
 
+/// How `quantize` rounds: Python's ROUND_HALF_EVEN, ROUND_CEILING and
+/// ROUND_FLOOR.
 #[derive(Clone, Copy)]
 enum Rounding {
     HalfEven,
@@ -79,18 +81,22 @@ fn roundsUp(quotient: &BigUint, remainder: &BigUint, divisor: &BigUint, rounding
 }
 
 impl Dec {
+    /// A decimal from its parts.
     fn new(negative: bool, coefficient: BigUint, exponent: i64) -> Self {
         Dec { negative, coefficient, exponent }
     }
 
+    /// A whole number.
     fn whole(value: u32) -> Self {
         Dec::new(false, BigUint::from(value), 0)
     }
 
+    /// Whether the decimal is zero, of either sign.
     pub fn isZero(&self) -> bool {
         self.coefficient.is_zero()
     }
 
+    /// An integer as a decimal.
     fn fromInt(value: &BigInt) -> Self {
         Dec::new(value.sign() == Sign::Minus, value.magnitude().clone(), 0)
     }
@@ -154,10 +160,12 @@ impl Dec {
         Dec::new(self.negative, quotient, exponent)
     }
 
+    /// The decimal with its sign flipped.
     fn negated(&self) -> Self {
         Dec::new(!self.negative, self.coefficient.clone(), self.exponent)
     }
 
+    /// The exact sum, as Decimal's addition gives it before rounding.
     fn add(&self, other: &Dec) -> Dec {
         let exponent = self.exponent.min(other.exponent);
         let left = scaled(&self.coefficient, self.exponent - exponent);
@@ -176,10 +184,12 @@ impl Dec {
         Dec::new(negative, coefficient, exponent).rounded(PRECISION)
     }
 
+    /// The exact difference.
     fn subtract(&self, other: &Dec) -> Dec {
         self.add(&other.negated())
     }
 
+    /// The product, rounded to PRECISION as Python's context rounds it.
     fn multiply(&self, other: &Dec) -> Dec {
         Dec::new(self.negative != other.negative, &self.coefficient * &other.coefficient, self.exponent + other.exponent).rounded(PRECISION)
     }
@@ -245,6 +255,7 @@ impl Dec {
         format!("{}{}E{}", if self.negative { "-" } else { "" }, self.coefficient, self.exponent)
     }
 
+    /// Whether the decimal is a whole number.
     fn integral(&self) -> bool {
         self.exponent >= 0 || (&self.coefficient % pow10((-self.exponent) as u64).as_ref()).is_zero()
     }
@@ -258,6 +269,7 @@ pub enum NumberInput<'a> {
     Decimal(&'a str),
 }
 
+/// A masked number, of the type it came in as.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NumberOutput {
     Int(BigInt),
@@ -364,10 +376,14 @@ impl NumberStrategy {
         if hash.unit(message, b"step") >= 0.5 { value.add(step) } else { value.subtract(step) }
     }
 
+    /// Whether a decimal is small enough to mask here: within MAXIMUM_DIGITS
+    /// and MAXIMUM_EXPONENT.
     fn fits(value: &Dec) -> bool {
         decimalDigits(&value.coefficient) <= MAXIMUM_DIGITS && value.exponent.abs() <= MAXIMUM_EXPONENT
     }
 
+    /// `number` on one value: moved within its range or by its variance, at its
+    /// own precision. Anything past what fits goes back to Python.
     pub fn mask(&self, hash: &KeyedHash, input: &NumberInput) -> Result<NumberOutput, MaskError> {
         // A Decimal is parsed once, for the bytes it is keyed on and the
         // arithmetic alike.
@@ -446,6 +462,7 @@ impl NumberStrategy {
 mod tests {
     use super::*;
 
+    /// A decimal from text, for the tests.
     fn dec(text: &str) -> Dec {
         Dec::parse(text).unwrap()
     }

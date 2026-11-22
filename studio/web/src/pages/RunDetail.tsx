@@ -1,3 +1,7 @@
+// A run's page: its jobs, their rows and stage times, its log, comparing it
+// with another run, cancelling it while it runs; and the page a run Studio
+// launched waits on until it names its run.
+
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -6,6 +10,7 @@ import { useUser } from '../App'
 import { Failure, JobStatus, jobStages, Loading, PageHead, RunStatus, StageBar, StageKey, StartRunButton } from '../components/ui'
 import { count, duration, plural, when, whenExactly } from '../format'
 
+/** One run, polled while it is live. */
 export function RunPage() {
   const { runId = '' } = useParams()
   const user = useUser()
@@ -94,8 +99,10 @@ export function RunPage() {
   )
 }
 
-// Picks another finished run to set this one against: the one before it to
-// begin with, which is what "why is tonight slower" wants.
+/**
+ * Picks another finished run to set this one against: the one before it to
+ * begin with, which is what "why is tonight slower" wants.
+ */
 function CompareWith({ runId, startedAt }: { runId: string; startedAt: string | null }) {
   const navigate = useNavigate()
   const runs = useQuery({ queryKey: ['runs'], queryFn: () => api<{ runs: Run[] }>('/runs') })
@@ -116,8 +123,10 @@ function CompareWith({ runId, startedAt }: { runId: string; startedAt: string | 
   )
 }
 
-// Cancelling stops what hasn't started and lets what is running finish, so
-// no target is left half loaded: what Ctrl-C does to `bauta run`.
+/**
+ * Cancelling stops what hasn't started and lets what is running finish, so no
+ * target is left half loaded: what Ctrl-C does to `bauta run`.
+ */
 function CancelButton({ path }: { path: string }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const client = useQueryClient()
@@ -143,6 +152,7 @@ function CancelButton({ path }: { path: string }) {
   )
 }
 
+/** What `bauta run` printed for a launched run, as scrubbed as any log. */
 function RunLog({ log }: { log: string | null | undefined }) {
   return (
     <section>
@@ -153,7 +163,7 @@ function RunLog({ log }: { log: string | null | undefined }) {
   )
 }
 
-// A run Studio started, until it names its run id; then its run's page.
+/** A run Studio started, until it names its run id; then its run's page. */
 export function LaunchedPage() {
   const { launchedId = '' } = useParams()
   const user = useUser()

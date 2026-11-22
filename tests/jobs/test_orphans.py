@@ -57,6 +57,9 @@ def _started():
 
 
 def _ended(process, parentEnd, logEnd):
+    """Closes a job process's pipes and waits for it to exit, killing it if it
+    outlives EXIT_SECONDS.
+    """
 
     parentEnd.close()
     logEnd.close()

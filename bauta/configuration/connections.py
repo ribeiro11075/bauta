@@ -14,28 +14,31 @@ from pydantic import BaseModel, BeforeValidator, ByteSize, ConfigDict, Field, Se
 
 from .environment import ConfigurationError, runPasswordCommand, splitPasswordCommand
 
-# A plain SQL identifier -- what currentSchema is written into a session
-# statement as, so nothing else may get through.
+# IDENTIFIER: a plain SQL identifier -- what currentSchema is written into a
+#   session statement as, so nothing else may get through.
+# DEFAULT_FILE_SIZE, DEFAULT_ROW_GROUP_SIZE, DEFAULT_KEEP_SNAPSHOTS: what a
+#   file target writes in, and how. Sizes are bytes, or text such as 256MB
+#   (decimal) or 256MiB (binary). 256MB is what Snowflake suggests a file to
+#   load be at most, and a size Athena and Spark split well.
+# S3_SCHEME, _ABFS: an S3 location's prefix, and an Azure location's URL,
+#   which names the account in its host.
+# S3_LARGEST_COPY: a part is published by copying it within the bucket, and S3
+#   copies an object of at most 5 GiB in one request.
+# DEFAULT_KEEP_ICEBERG_SNAPSHOTS: an Iceberg table's snapshots kept by default,
+#   the newest included: a query still reading one of them keeps its files.
+# _NAMESPACE: a namespace, written into a catalog's identifiers.
+# _SCHEME_PREFIX: a path that names something other than a file on this
+#   machine: a driver's own scheme, such as DuckDB's md: for MotherDuck. Two
+#   letters at least, so a drive letter would still read as a path.
 IDENTIFIER = re.compile(r'^[A-Za-z_][A-Za-z0-9_$#]*$')
-# What a file target writes in, and how. Sizes are bytes, or text such as
-# 256MB (decimal) or 256MiB (binary). 256MB is what Snowflake suggests a file
-# to load be at most, and a size Athena and Spark split well.
 DEFAULT_FILE_SIZE = 256 * 10 ** 6
 DEFAULT_ROW_GROUP_SIZE = 128 * 10 ** 6
 DEFAULT_KEEP_SNAPSHOTS = 2
 S3_SCHEME = 's3://'
 _ABFS = re.compile(r'^abfss?://([^@/]+)@([^./]+)\.dfs\.core\.windows\.net(/.*)?$')
-# A part is published by copying it within the bucket, and S3 copies an
-# object of at most 5 GiB in one request.
 S3_LARGEST_COPY = 5 * 2 ** 30
-# An Iceberg table's snapshots kept by default, the newest included: a query
-# still reading one of them keeps its files.
 DEFAULT_KEEP_ICEBERG_SNAPSHOTS = 5
-# A namespace, written into a catalog's identifiers.
 _NAMESPACE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-# A path that names something other than a file on this machine: a driver's
-# own scheme, such as DuckDB's md: for MotherDuck. Two letters at least, so a
-# drive letter would still read as a path.
 _SCHEME_PREFIX = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:')
 
 def _dropNoneListItems(value: Any) -> Any:
@@ -51,6 +54,11 @@ def _dropNoneListItems(value: Any) -> Any:
 
 
 def _dropNoneMappingEntries(value: Any) -> Any:
+    """A mapping with its None values dropped, and None itself as an empty one,
+    so `options:` left blank in YAML, or a key whose value is left blank, means
+    nothing was set.
+    """
+
     if value is None:
         return {}
     if isinstance(value, dict):
@@ -60,6 +68,10 @@ def _dropNoneMappingEntries(value: Any) -> Any:
 
 
 def _dropNoneMappingListItems(value: Any) -> Any:
+    """As _dropNoneMappingEntries, and with None dropped from any list among
+    the values too.
+    """
+
     cleaned = _dropNoneMappingEntries(value)
 
     if isinstance(cleaned, dict):
@@ -74,6 +86,8 @@ CleanedListMapping = Annotated[Dict[str, List[str]], BeforeValidator(_dropNoneMa
 
 
 class DatabaseType(str, Enum):
+    """The databases a connection's `type` may name."""
+
     ORACLE = 'oracle'
     MYSQL = 'mysql'
     POSTGRESQL = 'postgresql'
@@ -83,7 +97,8 @@ class DatabaseType(str, Enum):
     DUCKDB = 'duckdb'
 
 
-# The databases that run in this process, from a file, with no server or login.
+# EMBEDDED_TYPES: the databases that run in this process, from a file, with no
+#   server or login.
 EMBEDDED_TYPES = frozenset({DatabaseType.SQLITE, DatabaseType.DUCKDB})
 
 
@@ -94,7 +109,7 @@ class StoreType(str, Enum):
     ICEBERG = 'iceberg'
 
 
-# Every value a connection's `type` may take.
+# CONNECTION_TYPES: every value a connection's `type` may take.
 CONNECTION_TYPES = tuple(connectionType.value for connectionType in DatabaseType) + tuple(storeType.value for storeType in StoreType)
 
 
@@ -106,14 +121,13 @@ class _BaseConnection(BaseModel):
     ConnectionConfig.
     """
 
+    # requireMasking: no job may read from or write to this connection without
+    #   masking. The line a reviewer signs: "this copy can only ever hold
+    #   masked data." Unlike a job's own `unmasked`, nothing overrides it.
+    # maxConcurrentJobs: the most jobs that may use this connection at once,
+    #   whatever `workers` allows. None is no limit. See jobLimit.
     model_config = ConfigDict(extra='forbid')
-
-    # No job may read from or write to this connection without masking. The
-    # line a reviewer signs: "this copy can only ever hold masked data." Unlike
-    # a job's own `unmasked`, nothing overrides it.
     requireMasking: bool = False
-    # The most jobs that may use this connection at once, whatever `workers`
-    # allows. None is no limit. See jobLimit.
     maxConcurrentJobs: Optional[int] = Field(default=None, ge=1)
 
     @model_validator(mode='before')
@@ -165,17 +179,19 @@ class _Connection(_BaseConnection):
     left out of the repr, since they can hold secrets.
     """
 
+    # readOnly: nothing writes here: validation refuses a job loading into it
+    #   and run state, history or a manifest kept in it; every write bauta
+    #   would make through it -- clear, schema --apply, synthesize -- is
+    #   refused; and where the database can say so, each session is read-only
+    #   on the server too. For production, so an alias pointed the wrong way
+    #   can't write to it.
+    # maxRowsReadPerSecond: the most rows a second jobs may read from this
+    #   database, all of them together, partitions and all, so a copy can't
+    #   take more of production than it was given. None is no limit. See
+    #   jobs.throttle.ReadLimit.
     type: DatabaseType
     options: CleanedMapping = Field(default_factory=dict, repr=False)
-    # Nothing writes here: validation refuses a job loading into it and run
-    # state, history or a manifest kept in it; every write bauta would make
-    # through it -- clear, schema --apply, synthesize -- is refused; and where
-    # the database can say so, each session is read-only on the server too.
-    # For production, so an alias pointed the wrong way can't write to it.
     readOnly: bool = False
-    # The most rows a second jobs may read from this database, all of them
-    # together, partitions and all, so a copy can't take more of production
-    # than it was given. None is no limit. See jobs.throttle.ReadLimit.
     maxRowsReadPerSecond: Optional[float] = Field(default=None, gt=0)
 
 
@@ -190,6 +206,9 @@ class _CurrentSchema(BaseModel):
     @field_validator('currentSchema')
     @classmethod
     def _plainIdentifier(cls, currentSchema: Optional[str]) -> Optional[str]:
+        """Refuses a currentSchema that isn't a plain identifier, since it is
+        written into a session statement.
+        """
 
         if currentSchema is not None and not IDENTIFIER.match(currentSchema):
             raise ValueError('currentSchema must be a plain identifier, got {!r}'.format(currentSchema))
@@ -203,25 +222,29 @@ class _ServerConnection(_Connection):
     credentials such as IAM tokens. Exactly one of the two.
     """
 
+    # requireEncryption: every session is asked, as it connects, whether the
+    #   server encrypts it, and one the server says isn't, or can't say of, is
+    #   closed before a statement runs. TLS itself is set in `options`; this is
+    #   what makes forgetting it -- or a server that stopped offering it --
+    #   fail rather than copy production in the clear with a line in the log.
+    # statementTimeoutSeconds: the longest one statement may run on this
+    #   connection before the database stops it, so a query nobody expected to
+    #   be expensive -- a join gone wrong, on production -- can't run for
+    #   hours. How each database measures it differs; see
+    #   docs/reference/connections.md#statement-timeout.
     host: str
     port: Optional[int] = None
     user: str
     password: Optional[SecretStr] = None
     passwordCommand: Optional[Union[str, List[str]]] = None
-    # Every session is asked, as it connects, whether the server encrypts it,
-    # and one the server says isn't, or can't say of, is closed before a
-    # statement runs. TLS itself is set in `options`; this is what makes
-    # forgetting it -- or a server that stopped offering it -- fail rather
-    # than copy production in the clear with a line in the log.
     requireEncryption: bool = False
-    # The longest one statement may run on this connection before the
-    # database stops it, so a query nobody expected to be expensive -- a join
-    # gone wrong, on production -- can't run for hours. How each database
-    # measures it differs; see docs/reference/connections.md#statement-timeout.
     statementTimeoutSeconds: Optional[float] = Field(default=None, gt=0)
 
     @model_validator(mode='after')
     def _requireOnePassword(self) -> '_ServerConnection':
+        """Requires exactly one of password and passwordCommand, and a command
+        that splits into arguments.
+        """
 
         if self.password is not None and self.passwordCommand is not None:
             raise ValueError('set password or passwordCommand, not both')
@@ -243,10 +266,12 @@ class _ServerConnection(_Connection):
         return None if self.password is None else self.password.get_secret_value()
 
     def _name(self) -> str:
+        """The database's name, for describeTarget."""
 
         return getattr(self, 'database')
 
     def describeTarget(self) -> str:
+        """`<type> <database> on <host[:port]>`, for messages."""
 
         where = self.host if not self.port else '{}:{}'.format(self.host, self.port)
 
@@ -254,18 +279,21 @@ class _ServerConnection(_Connection):
 
 
 class PostgreSQLConnection(_ServerConnection, _CurrentSchema):
+    """A PostgreSQL database."""
 
     type: Literal[DatabaseType.POSTGRESQL] = DatabaseType.POSTGRESQL
     database: str
 
 
 class MySQLConnection(_ServerConnection):
+    """A MySQL database."""
 
     type: Literal[DatabaseType.MYSQL] = DatabaseType.MYSQL
     database: str
 
 
 class MariaDBConnection(_ServerConnection):
+    """A MariaDB database."""
 
     type: Literal[DatabaseType.MARIADB] = DatabaseType.MARIADB
     database: str
@@ -291,6 +319,7 @@ class OracleConnection(_ServerConnection, _CurrentSchema):
 
     @model_validator(mode='after')
     def _requireOneIdentifier(self) -> 'OracleConnection':
+        """Requires exactly one of serviceName and sid."""
 
         if not (bool(self.serviceName) ^ bool(self.sid)):
             raise ValueError('oracle connections require exactly one of serviceName or sid')
@@ -298,6 +327,7 @@ class OracleConnection(_ServerConnection, _CurrentSchema):
         return self
 
     def _name(self) -> str:
+        """The service name or SID the connection names."""
 
         return self.serviceName or self.sid or '?'
 
@@ -336,6 +366,9 @@ class DuckDBConnection(_FileConnection, _CurrentSchema):
 
     @model_validator(mode='after')
     def _refuseConcurrentJobs(self) -> 'DuckDBConnection':
+        """Refuses maxConcurrentJobs above 1: DuckDB lets one process at a time
+        open a file, and every job runs in a process of its own.
+        """
 
         if self.maxConcurrentJobs is not None and self.maxConcurrentJobs > 1:
             raise ValueError('maxConcurrentJobs cannot be above 1 for duckdb: DuckDB lets one process at a time open a file, and every job '
@@ -344,27 +377,34 @@ class DuckDBConnection(_FileConnection, _CurrentSchema):
         return self
 
     def jobLimit(self) -> Optional[int]:
+        """One job at a time, always, for the reason _refuseConcurrentJobs gives."""
 
         return 1
 
 
 class FileFormat(str, Enum):
+    """The formats a files connection writes and reads."""
+
+    # NDJSON: JSON Lines: one JSON object per line.
     PARQUET = 'parquet'
     CSV = 'csv'
-    # JSON Lines: one JSON object per line.
     NDJSON = 'ndjson'
 
 
 class FileCompression(str, Enum):
+    """What a data file may be compressed with; FORMAT_COMPRESSIONS says which
+    suit each format.
+    """
+
     ZSTD = 'zstd'
     SNAPPY = 'snappy'
     GZIP = 'gzip'
     NONE = 'none'
 
 
-# What each format may be compressed with, the default first. Parquet
-# compresses inside the file; text is compressed whole, and gzip is what
-# every engine reading text reads.
+# FORMAT_COMPRESSIONS: what each format may be compressed with, the default
+#   first. Parquet compresses inside the file; text is compressed whole, and
+#   gzip is what every engine reading text reads.
 FORMAT_COMPRESSIONS = {
     FileFormat.PARQUET: (FileCompression.ZSTD, FileCompression.SNAPPY, FileCompression.GZIP, FileCompression.NONE),
     FileFormat.CSV: (FileCompression.GZIP, FileCompression.NONE),
@@ -380,18 +420,16 @@ class FileStore(str, Enum):
     AZURE = 'azure'
 
 
-# Each URL a root may begin with. Azure's abfss:// is what Databricks and
-# Synapse write, and names the account in the host.
+# ROOT_SCHEMES: each URL a root may begin with. Azure's abfss:// is what
+#   Databricks and Synapse write, and names the account in the host.
+# STORE_SETTINGS: the settings only a root in each store takes; `endpoint` is
+#   every cloud's.
 ROOT_SCHEMES = {S3_SCHEME: FileStore.S3, 'gs://': FileStore.GCS, 'az://': FileStore.AZURE, 'abfss://': FileStore.AZURE, 'abfs://': FileStore.AZURE}
-
-
-# The settings only a root in each store takes; `endpoint` is every cloud's.
 STORE_SETTINGS = {
     FileStore.S3: ('region', 'endpoint', 'accessKeyId', 'secretAccessKey', 'sessionToken', 'roleArn'),
     FileStore.GCS: ('endpoint', 'anonymous', 'serviceAccount'),
     FileStore.AZURE: ('endpoint', 'accountName', 'accountKey', 'sasToken', 'clientId', 'clientSecret', 'tenantId'),
     }
-
 _STORE_NAMES = {FileStore.S3: 'S3', FileStore.GCS: 'Google Cloud Storage', FileStore.AZURE: 'Azure'}
 
 
@@ -405,21 +443,22 @@ class _Lake(_BaseConnection):
     points at another service speaking the same API, such as MinIO or R2.
     """
 
-    # None is the format's default: FORMAT_COMPRESSIONS.
+    # compression: None is the format's default: FORMAT_COMPRESSIONS.
+    # region, accessKeyId, secretAccessKey, sessionToken, roleArn: S3's.
+    # anonymous, serviceAccount: Google Cloud Storage's.
+    # accountName, accountKey, sasToken, clientId, clientSecret, tenantId:
+    #   Azure's.
     compression: Optional[FileCompression] = None
     fileSize: ByteSize = ByteSize(DEFAULT_FILE_SIZE)
     rowGroupSize: ByteSize = ByteSize(DEFAULT_ROW_GROUP_SIZE)
     endpoint: Optional[str] = None
-    # S3.
     region: Optional[str] = None
     accessKeyId: Optional[str] = None
     secretAccessKey: Optional[SecretStr] = None
     sessionToken: Optional[SecretStr] = None
     roleArn: Optional[str] = None
-    # Google Cloud Storage.
     anonymous: Optional[bool] = None
     serviceAccount: Optional[str] = None
-    # Azure.
     accountName: Optional[str] = None
     accountKey: Optional[SecretStr] = None
     sasToken: Optional[SecretStr] = None
@@ -446,6 +485,9 @@ class _Lake(_BaseConnection):
         raise NotImplementedError
 
     def store(self) -> Optional[FileStore]:
+        """Which store the location is in, from its scheme, or None where there
+        is no location.
+        """
 
         location = self._cloudLocation()
         if location is None:
@@ -454,10 +496,12 @@ class _Lake(_BaseConnection):
         return next((store for scheme, store in ROOT_SCHEMES.items() if location.startswith(scheme)), FileStore.LOCAL)
 
     def isObjectStore(self) -> bool:
+        """Whether the location is in a cloud store rather than on this machine."""
 
         return self.store() not in (FileStore.LOCAL, None)
 
     def azureAccount(self) -> Optional[str]:
+        """The Azure storage account: the one an abfss:// URL names, else accountName."""
 
         match = _ABFS.match(self._cloudLocation() or '')
 
@@ -465,6 +509,9 @@ class _Lake(_BaseConnection):
 
     @model_validator(mode='after')
     def _coherentCloudSettings(self) -> '_Lake':
+        """Refuses settings for one cloud on a location in another, credentials
+        given by halves, and combinations the clouds don't take.
+        """
 
         store = self.store()
         if store is not None:
@@ -498,6 +545,7 @@ class _Lake(_BaseConnection):
         return self
 
     def _locationName(self) -> str:
+        """The setting that holds that location, for messages."""
 
         raise NotImplementedError
 
@@ -562,18 +610,21 @@ class FilesConnection(_Lake):
     overwrite job's complete snapshots stay, the newest included.
     """
 
+    # delimiter: CSV's alone; a comma when not given.
+    # readOnly: jobs may read it and nothing may write to it, as on a database.
     type: Literal[StoreType.FILES] = StoreType.FILES
     root: str = Field(min_length=1)
     format: FileFormat = FileFormat.PARQUET
-    # CSV's alone; a comma when not given.
     delimiter: Optional[str] = None
     keepSnapshots: int = Field(default=DEFAULT_KEEP_SNAPSHOTS, ge=1)
-    # Jobs may read it and nothing may write to it, as on a database.
     readOnly: bool = False
 
     @field_validator('root')
     @classmethod
     def _supportedRoot(cls, root: str) -> str:
+        """Refuses a root written as a file:// URL, and one in a store this
+        version doesn't write to.
+        """
 
         if root.startswith('file://'):
             raise ValueError('root is a directory, written without file://')
@@ -582,6 +633,9 @@ class FilesConnection(_Lake):
 
     @model_validator(mode='after')
     def _coherentFileSettings(self) -> 'FilesConnection':
+        """Refuses a fileSize S3 can't publish in one copy, a compression the
+        format doesn't take, and a delimiter for anything but CSV.
+        """
 
         if self.store() == FileStore.S3 and self.fileSize > S3_LARGEST_COPY:
             raise ValueError('fileSize can be at most 5GiB on S3, which copies no larger an object in one request, and a part is '
@@ -601,14 +655,17 @@ class FilesConnection(_Lake):
         return self
 
     def _cloudLocation(self) -> Optional[str]:
+        """The root."""
 
         return self.root
 
     def _locationName(self) -> str:
+        """`root`."""
 
         return 'root'
 
     def store(self) -> FileStore:
+        """As _Lake.store, never None, since a files connection always has a root."""
 
         store = super().store()
         assert store is not None
@@ -627,6 +684,7 @@ class FilesConnection(_Lake):
         return self.root.split('://', 1)[1].rstrip('/')
 
     def effectiveCompression(self) -> FileCompression:
+        """The compression set, or the format's default."""
 
         return self.compression or FORMAT_COMPRESSIONS[self.format][0]
 
@@ -641,17 +699,21 @@ class FilesConnection(_Lake):
         return os.path.abspath(os.path.expanduser(self.root))
 
     def describeTarget(self) -> str:
+        """`files in <location>`, for messages."""
 
         return 'files in {}'.format(self.location())
 
 
 class IcebergCatalog(str, Enum):
-    # AWS's own.
+    """The kinds of catalog an Iceberg connection finds its tables through."""
+
+    # GLUE: AWS's own.
+    # REST: the Iceberg REST protocol: BigLake on GCP, Databricks Unity
+    #   Catalog, Snowflake Open Catalog (Polaris), S3 Tables, Lakekeeper,
+    #   Nessie.
+    # SQL: a catalog kept in a database of your own: SQLite or PostgreSQL.
     GLUE = 'glue'
-    # The Iceberg REST protocol: BigLake on GCP, Databricks Unity Catalog,
-    # Snowflake Open Catalog (Polaris), S3 Tables, Lakekeeper, Nessie.
     REST = 'rest'
-    # A catalog kept in a database of your own: SQLite or PostgreSQL.
     SQL = 'sql'
 
 
@@ -671,14 +733,15 @@ class IcebergConnection(_Lake):
     them. `evolveSchema` lets a run add a column the table lacks.
     """
 
+    # uri: left out of the repr: a SQL catalog's is a database URL, which
+    #   usually carries its password. describeTarget shows it without one.
+    # credential, token: a REST catalog's: `clientId:clientSecret` for its
+    #   OAuth2, or a token.
     type: Literal[StoreType.ICEBERG] = StoreType.ICEBERG
     catalog: IcebergCatalog
-    # Left out of the repr: a SQL catalog's is a database URL, which usually
-    # carries its password. describeTarget shows it without one.
     uri: Optional[str] = Field(default=None, repr=False)
     warehouse: Optional[str] = None
     namespace: Optional[str] = None
-    # A REST catalog's: `clientId:clientSecret` for its OAuth2, or a token.
     credential: Optional[SecretStr] = None
     token: Optional[SecretStr] = None
     properties: CleanedMapping = Field(default_factory=dict, repr=False)
@@ -688,12 +751,14 @@ class IcebergConnection(_Lake):
     @field_validator('warehouse')
     @classmethod
     def _supportedWarehouse(cls, warehouse: Optional[str]) -> Optional[str]:
+        """Refuses a warehouse in a store this version doesn't write to."""
 
         return None if warehouse is None else _checkLocation(warehouse, 'warehouse')
 
     @field_validator('namespace')
     @classmethod
     def _plainNamespace(cls, namespace: Optional[str]) -> Optional[str]:
+        """Refuses a namespace that isn't a plain identifier."""
 
         if namespace is not None and not _NAMESPACE.match(namespace):
             raise ValueError('namespace must be a plain identifier, got {!r}'.format(namespace))
@@ -702,6 +767,9 @@ class IcebergConnection(_Lake):
 
     @model_validator(mode='after')
     def _coherentCatalogSettings(self) -> 'IcebergConnection':
+        """Requires what the catalog needs (a uri and warehouse for SQL, a
+        warehouse for Glue, a uri for REST) and refuses what it doesn't take.
+        """
 
         required = {IcebergCatalog.SQL: ('uri', 'warehouse'), IcebergCatalog.GLUE: ('warehouse',), IcebergCatalog.REST: ('uri',)}[self.catalog]
         missing = [name for name in required if getattr(self, name) is None]
@@ -739,10 +807,12 @@ class IcebergConnection(_Lake):
         return self.warehouse
 
     def _locationName(self) -> str:
+        """`warehouse`."""
 
         return 'warehouse'
 
     def effectiveCompression(self) -> FileCompression:
+        """The compression set, or Parquet's default, the format Iceberg writes."""
 
         return self.compression or FORMAT_COMPRESSIONS[FileFormat.PARQUET][0]
 
@@ -775,6 +845,7 @@ class IcebergConnection(_Lake):
         return self.namespace, table
 
     def describeTarget(self) -> str:
+        """The catalog and where it is, without a password a SQL catalog's URL holds."""
 
         where = withoutPassword(self.uri) if self.catalog != IcebergCatalog.GLUE else 'region {}'.format(self.region or 'from the environment')
 
@@ -804,28 +875,28 @@ def withoutPassword(url: Optional[str]) -> Optional[str]:
     return urlunsplit(parts._replace(netloc='{}:***@{}'.format(name, host)))
 
 
-# The connections that are tables of files rather than databases.
+# LakeConfig: the connections that are tables of files rather than databases.
+# DatabaseConfig: one database in connections.yaml.
+# ConnectionConfig: one connection in connections.yaml: the model its `type`
+#   names.
+# _CONNECTION_ADAPTER: Cast, since pydantic's stubs before 2.7 take a class
+#   here and not a union.
 LakeConfig = Union[FilesConnection, IcebergConnection]
-
-
 _CONNECTION_MODELS: Dict[Union[DatabaseType, StoreType], Type[_BaseConnection]] = {
     DatabaseType.POSTGRESQL: PostgreSQLConnection, DatabaseType.MYSQL: MySQLConnection, DatabaseType.MARIADB: MariaDBConnection,
     DatabaseType.MSSQL: MSSQLConnection, DatabaseType.ORACLE: OracleConnection, DatabaseType.SQLITE: SQLiteConnection,
     DatabaseType.DUCKDB: DuckDBConnection, StoreType.FILES: FilesConnection, StoreType.ICEBERG: IcebergConnection,
     }
-
-# One database in connections.yaml.
 DatabaseConfig = Union[PostgreSQLConnection, MySQLConnection, MariaDBConnection, MSSQLConnection, OracleConnection, SQLiteConnection, DuckDBConnection]
-
-# One connection in connections.yaml: the model its `type` names.
 ConnectionConfig = Annotated[Union[PostgreSQLConnection, MySQLConnection, MariaDBConnection, MSSQLConnection, OracleConnection,
                                    SQLiteConnection, DuckDBConnection, FilesConnection, IcebergConnection], Field(discriminator='type')]
-
-# Cast, since pydantic's stubs before 2.7 take a class here and not a union.
 _CONNECTION_ADAPTER: 'TypeAdapter[ConnectionConfig]' = TypeAdapter(cast(Any, ConnectionConfig))
 
 
 def isSchemePath(path: str) -> bool:
+    """Whether `path` names something by a driver's own scheme, such as md:,
+    rather than a file on this machine.
+    """
 
     return bool(_SCHEME_PREFIX.match(path))
 
@@ -839,6 +910,10 @@ def anchorPaths(settings: ConnectionConfig, directory: str) -> ConnectionConfig:
     """
 
     def anchored(path: str) -> str:
+        """`path` with ~ expanded, and made absolute against the
+        configuration's directory.
+        """
+
         expanded = os.path.expanduser(path)
         return expanded if os.path.isabs(expanded) else os.path.normpath(os.path.join(directory, expanded))
 
@@ -856,5 +931,6 @@ def anchorPaths(settings: ConnectionConfig, directory: str) -> ConnectionConfig:
 
 
 def _listed(names: Sequence[str]) -> str:
+    """Names joined for a message: `a`, `a and b`, `a, b and c`."""
 
     return names[0] if len(names) == 1 else '{} and {}'.format(', '.join(names[:-1]), names[-1])

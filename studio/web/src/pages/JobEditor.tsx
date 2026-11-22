@@ -1,20 +1,24 @@
+// The job editor: a job as a form, for editing one or adding a new one. Only
+// what someone changes is sent, so a setting left alone stays as the file
+// writes it, or inherits from defaults: as before.
+
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, type FormColumn, type JobFormData, type Written } from '../api'
 import { DiffView, Failure, Loading, PageHead } from '../components/ui'
 
-// A job as a form. Only what someone changes is sent, so a setting left
-// alone stays as the file writes it, or inherits from defaults: as before.
-
 type Values = Record<string, unknown>
 
+// NEW_JOB: the form a new job starts from: masked, with nothing set yet, and in
+//   jobs.yaml where the server names no file to add it to.
 const NEW_JOB: JobFormData = {
   name: '', file: 'jobs.yaml', digest: '', fields: {}, inherited: {},
   masking: { enabled: true, columns: [], defaultStrategy: null, customDefault: false, key: { source: 'none' } },
   choices: { strategies: [], connections: [], jobs: [], insertStrategies: ['swap', 'upsert', 'append', 'overwrite'] }, others: [],
 }
 
+/** The editor for the job the route names, or for a new one at /jobs/new. */
 export function JobEditor() {
   const { name } = useParams()
   const creating = name === undefined
@@ -32,6 +36,11 @@ export function JobEditor() {
   return <EditorForm key={creating ? 'new' : data.name} data={data} creating={creating} files={creating ? choices.data!.files : [data.file]} crumb={crumb} />
 }
 
+/**
+ * The form itself. `digest` is the file's version as last read or written: a
+ * save answers with the new one, so a second save needn't wait for the form to
+ * be read again.
+ */
 function EditorForm({ data, creating, files, crumb }: { data: JobFormData; creating: boolean; files: string[]; crumb: ReactNode }) {
   const navigate = useNavigate()
   const client = useQueryClient()
@@ -42,14 +51,15 @@ function EditorForm({ data, creating, files, crumb }: { data: JobFormData; creat
   const [maskingChanged, setMaskingChanged] = useState(creating)
   const [keyVariable, setKeyVariable] = useState('MASKING_KEY')
   const [written, setWritten] = useState<Written | null>(null)
-  // The file's version as last read or written: a save answers with the
-  // new one, so a second save needn't wait for the form to be read again.
   const [digest, setDigest] = useState(data.digest)
   useEffect(() => { setMasking(data.masking) }, [data.masking])
   useEffect(() => { setDigest(data.digest) }, [data.digest])
 
+  /** A field as the form shows it: changed, else as the file has it. */
   const value = (field: string): unknown => (field in changes ? changes[field] : data.fields[field])
+  /** Changes one field. */
   const set = (field: string, next: unknown) => { setChanges({ ...changes, [field]: next }); setWritten(null) }
+  /** Changes the masking section, which is then sent whole. */
   const changeMasking = (next: typeof masking) => { setMasking(next); setMaskingChanged(true); setWritten(null) }
 
   const body = useMemo(() => ({
@@ -155,11 +165,13 @@ interface FieldProps {
   required?: boolean
 }
 
+/** What a field inherits from `defaults:`, as a placeholder, or nothing. */
 function inheritedText(inherited: Values, field: string): string {
   const found = inherited[field]
   return found === null || found === undefined || found === '' ? '' : `${String(found)} (inherited)`
 }
 
+/** A text or number field, showing what it inherits when left empty. */
 function Text({ label, field, value, set, inherited, required, type = 'text' }: FieldProps & { type?: string }) {
   const current = value(field)
   return (
@@ -170,9 +182,12 @@ function Text({ label, field, value, set, inherited, required, type = 'text' }: 
   )
 }
 
+/**
+ * A choice of `options`, required only where nothing would be inherited:
+ * `defaults:` may name it.
+ */
 function Select({ label, field, options, value, set, inherited, required }: FieldProps & { options: string[] }) {
   const current = value(field)
-  // Needed only where nothing would be inherited: `defaults:` may name it.
   const needed = required && !(field in inherited)
   return (
     <label className="field">{label}
@@ -184,17 +199,23 @@ function Select({ label, field, options, value, set, inherited, required }: Fiel
   )
 }
 
+/** A checkbox, ticked by what it inherits when the job doesn't say. */
 function Flag({ label, field, value, set, inherited }: FieldProps) {
   const current = value(field)
   const checked = current === undefined || current === null ? inherited[field] === true : current === true
   return <label className="check"><input type="checkbox" checked={checked} onChange={(event) => set(field, event.target.checked)} />{label}</label>
 }
 
+/**
+ * The job's masking: whether it masks, the key's source, each column's strategy
+ * and the default for the rest, or that it copies unmasked.
+ */
 function MaskingSection({ masking, change, strategies, keyVariable, setKeyVariable, unmasked, setUnmasked }: {
   masking: JobFormData['masking']; change: (next: JobFormData['masking']) => void; strategies: string[]
   keyVariable: string; setKeyVariable: (next: string) => void; unmasked: boolean; setUnmasked: (next: boolean) => void
 }) {
   const columns = masking.columns
+  /** Replaces the column policies. */
   const setColumns = (next: FormColumn[]) => change({ ...masking, columns: next })
   const keyText = { defaults: 'from defaults: in the jobs file', variable: `from $${masking.key.variable ?? ''}`, file: 'written in the file (not shown)', none: '' }[masking.key.source]
 

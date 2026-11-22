@@ -51,6 +51,9 @@ def bautaAsset(job: str, predecessors: List[str]) -> AssetsDefinition:
     @asset(name=assetName(job), deps=[AssetKey(assetName(predecessor)) for predecessor in predecessors], group_name=GROUP,
            op_tags={'dagster/concurrency_key': 'bauta'}, description='bauta job {}'.format(job))
     def materialize(context: AssetExecutionContext, config: BautaRun) -> None:
+        """Runs the job, logging the command and its output, and fails the
+        asset when the command does.
+        """
 
         argv = command('run', job=job, fullRefresh=config.fullRefresh)
         context.log.info(shellCommand(argv))

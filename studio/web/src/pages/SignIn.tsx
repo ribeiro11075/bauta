@@ -1,10 +1,14 @@
+// The sign-in page: a password, then a code or setting up an app where the
+// account needs one, or single sign-on; and the first admin's setup command
+// where Studio has no account yet.
+
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, signingIn, type SignInOptions, type User } from '../api'
 import { CodeInput, RecoveryCodes, TwoFactorSetup } from '../components/TwoFactor'
 
-// What a refused single sign-on came back saying, by the code the server
-// gives; anything else in the address is not shown.
+// SSO_ERRORS: what a refused single sign-on came back saying, by the code the
+//   server gives; anything else in the address is not shown.
 const SSO_ERRORS: Record<string, string> = {
   state: 'That sign-in took too long, or was started in another tab or browser. Try again.',
   provider: 'The identity provider didn\u2019t sign you in.',
@@ -22,10 +26,13 @@ const SSO_ERRORS: Record<string, string> = {
   unexpected: 'Something went wrong signing you in. Studio\u2019s log says what.',
 }
 
+/**
+ * What a refused single sign-on came back saying, shown once: the address loses
+ * its error, so a reload or a shared link doesn't show it again.
+ */
 function ssoError(): string | null {
   const code = new URLSearchParams(window.location.search).get('sso_error')
   if (code === null) return null
-  // Shown once: a reload or a shared link doesn't show it again.
   window.history.replaceState(null, '', window.location.pathname)
   return SSO_ERRORS[code] ?? SSO_ERRORS.unexpected
 }
@@ -34,6 +41,7 @@ function ssoError(): string | null {
 // up first, for someone whose role needs two-factor sign-in.
 type NextStep = 'code' | 'enrol'
 
+/** The card the sign-in steps sit in. */
 function Card({ children }: { children: ReactNode }) {
   return (
     <div className="center">
@@ -45,12 +53,17 @@ function Card({ children }: { children: ReactNode }) {
   )
 }
 
+/**
+ * The sign-in page, stepping on to a code or to setup when the password answers
+ * that one is needed next.
+ */
 export function SignIn({ options }: { options: SignInOptions }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [next, setNext] = useState<NextStep | null>(null)
   const [refused] = useState(ssoError)
   const client = useQueryClient()
+  /** Asks again who is signed in, which leaves the sign-in page. */
   const signedIn = () => client.invalidateQueries({ queryKey: ['me'] })
   const signIn = useMutation({
     ...signingIn,
@@ -97,6 +110,7 @@ export function SignIn({ options }: { options: SignInOptions }) {
   )
 }
 
+/** The code step: a code from the app, or a recovery code instead. */
 function SecondFactor({ onSignedIn, onExpired }: { onSignedIn: () => void; onExpired: () => void }) {
   const [code, setCode] = useState('')
   const [recovery, setRecovery] = useState(false)
@@ -123,6 +137,10 @@ function SecondFactor({ onSignedIn, onExpired }: { onSignedIn: () => void; onExp
   )
 }
 
+/**
+ * Setting up an app before signing in, for someone whose role needs one, then
+ * their recovery codes.
+ */
 function Enrol({ onSignedIn }: { onSignedIn: () => void }) {
   const [codes, setCodes] = useState<string[] | null>(null)
 

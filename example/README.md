@@ -39,7 +39,7 @@ Builds a small shop's "production" database -- customers with national ids and p
 7. **`synthesize`** fills staging's payment cards with generated rows.
 8. **`history`** shows what ran.
 
-Its `configuration/` holds only `connections.yaml`, since `subset` generates the jobs. Every command runs from `transaction/` and is pointed at that file with `--connections`, so the generated jobs, run state and manifest land in `transaction/` beside the databases. It ends by showing customers and a support ticket before and after, including what `redact` leaves behind, and writes the session to `transaction/walkthrough.md`.
+Its `configuration/` holds only `connections.yaml`, since `subset` generates the jobs into `transaction/`. It ends by showing customers and a support ticket before and after, including what `redact` leaves behind, and writes the session to `transaction/walkthrough.md`.
 
 Tested by `tests/examples/test_walkthrough.py`, which also checks that no production email, phone number or card number reaches staging.
 
@@ -52,7 +52,7 @@ python example/incremental/demo.py
 
 Loads its job the way the CLI does -- YAML, then `${NAME}` expansion, then validation -- and runs it three times against one SQLite database.
 
-The second run is the one to watch. Between runs, an already-loaded row is edited *without* its `updatedAt` changing, and a new row is added. A full re-extract would pick up both; an incremental one sees only the new row. Row counts alone wouldn't show the difference, since `upsert` is idempotent -- the edited row is the tell.
+Watch the second run: between runs, a loaded row is edited *without* its `updatedAt` changing, and a new row added. An incremental run sees only the new row, and the unchanged edit is the tell.
 
 Tested by `tests/examples/test_incremental_demo.py`.
 
@@ -81,18 +81,9 @@ Tested by `tests/examples/test_masking_demo.py`.
 python example/orchestrators/demo.py
 ```
 
-Working files for running bauta under an orchestrator, and a demo of what they do:
+Working Airflow and Dagster files, described in [run from Airflow or Dagster](../docs/guides/run-from-an-orchestrator.md), and a demo that runs a `bauta run --job` process per job, each once its predecessors finish, as both orchestrators do. It deletes an order in production, which an incremental run leaves in the copy, and the weekly checks and full refresh take out.
 
-| File | What it is |
-| --- | --- |
-| `bautaTasks.py` | the job graph, read without secrets, and the command each task runs; both orchestrators' files import it |
-| `airflowDag.py` | one task a run, every 15 minutes, and a weekly full refresh after `audit --strict` and `discover --update` |
-| `airflowDagPerJob.py` | a task per bauta job, downstream of its predecessors, in a pool standing in for `workers` |
-| `dagsterDefinitions.py` | an asset per bauta job, and an incremental and a full-refresh job over them |
-
-The demo builds throwaway SQLite databases, then runs a `bauta run --job` process per job, each as soon as its predecessors finish, the way both orchestrators do: the two jobs that wait for nothing run side by side. It deletes an order in production, which an incremental run leaves in the copy, and the weekly checks and full refresh take it out. See [run from Airflow or Dagster](../docs/guides/run-from-an-orchestrator.md).
-
-Tested by `tests/examples/test_orchestrators.py`, which runs the demo and loads each orchestrator's file against stand-ins that record its DAGs, tasks, assets and schedules, since Airflow and Dagster are too heavy to install for the suite.
+Tested by `tests/examples/test_orchestrators.py`, which also loads each orchestrator's file against stand-ins, since Airflow and Dagster are too heavy to install for the suite.
 
 
 ## native-masking
@@ -126,9 +117,9 @@ Rust, in turn, auto threads         15.5          64,612         2.5x
 Rust, overlapped, auto threads       9.4         106,080         4.2x
 ```
 
-Ten cores, an M1 Pro, where `auto` masks on five. Overlapping gains little for Python, whose masking leaves no wait worth hiding, and more for Rust. The narrow table runs on one core only: its time goes to writing the database, which more cores don't speed up. Against a remote database, where each round trip is a real wait, overlapping gains more still.
+On a ten-core M1 Pro, where `auto` masks on five. Overlapping gains little for Python, whose masking leaves no wait to hide, and more for Rust; against a remote database it gains more still. The narrow table runs on one core only, since its time goes to writing.
 
-The Rust extension is optional. Without it, the demo runs the two Python runs and says how to install it: with Rust 1.83 or newer, `pip install ./mask-rs/py` from the repository root. One run at a time: each empties `transaction/` first, so a second refuses to start while one is running.
+Without the extension, the demo runs the Python runs and says how to install it (`pip install ./mask-rs/py`, with Rust 1.83 or newer).
 
 Tested by `tests/examples/test_native_masking_demo.py`.
 
@@ -149,4 +140,4 @@ cp example/starter/configuration/*.yaml configuration/
 
 Set the variables it reads -- `SOURCE_DB_PASSWORD`, `TARGET_DB_PASSWORD` and `MASKING_KEY` -- then edit it for your databases. The CLI reads `./configuration` by default; `--config DIR` points it anywhere else.
 
-Validated, with every demo's configuration, by `tests/examples/test_shipped_example_configuration.py`. See [docs/configuration.md](../docs/reference/configuration.md) for every field.
+Validated, with every demo's configuration, by `tests/examples/test_shipped_example_configuration.py`. See [docs/reference/configuration.md](../docs/reference/configuration.md) for every field.

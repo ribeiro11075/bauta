@@ -26,6 +26,8 @@ DriverError.__module__ = 'psycopg.errors'
 
 
 def _raises(*arguments, **keywords):
+    """Raises a driver error whose message quotes a value."""
+
     raise DriverError(QUOTING)
 
 
@@ -126,10 +128,16 @@ def test_a_job_is_measured_once_at_a_time_and_only_so_many_at_all(app, signIn):
 
 
 class Clock:
+    """A clock that only moves when a test moves it."""
+
     def __init__(self):
+        """The clock at 1000 seconds."""
+
         self.now = 1000.0
 
     def __call__(self):
+        """The time on the clock."""
+
         return self.now
 
 
@@ -238,6 +246,10 @@ def test_a_read_only_files_connection_is_tested_for_reading(settings, tmp_path, 
 
 
 def _edit(client, path, change):
+    """Edits a configuration file through the API, as a browser would: read it,
+    change its text with `change`, write it back with its digest.
+    """
+
     opened = client.get('/api/configuration/file', params={'path': path}).json()
     return client.put('/api/configuration/file', params={'path': path}, json={'text': change(opened['text']), 'digest': opened['digest']})
 
@@ -282,6 +294,8 @@ TRANSFORM = '    sourceQuery: SELECT id, total FROM orders\n    sourceQueryColum
 
 
 def _withTransform(reference):
+    """A change adding a transform `reference` to the orders job."""
+
     return lambda text: text.replace('    sourceQuery: SELECT id, total FROM orders\n', TRANSFORM.format(reference))
 
 

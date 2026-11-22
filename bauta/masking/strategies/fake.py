@@ -11,17 +11,24 @@ from ..fakeData import (COMPANY_WORDS, DEFAULT_LOCALE, FEMALE_NAMES, LARGE_DEFAU
 from ..core import Strategy, canonical
 from .common import _booleanOption, _choiceOption, _integerOption
 
-# The domain the name strategies mask in under `lists: 2` when the policy names
-# none, so a first name masks alike in a first_name column, a full_name column
-# and any table, as a key masks alike in every column of its domain.
+# FAKE_NAME_DOMAIN: the domain the name strategies mask in under `lists: 2`
+#   when the policy names none, so a first name masks alike in a first_name
+#   column, a full_name column and any table, as a key masks alike in every
+#   column of its domain.
+# _SURNAME_PARTICLES: lower-case words that begin a surname: `de Jong`,
+#   `van der Berg`, `da Silva`.
+# _FIRST_NAMES: each large locale's first names of both genders, joined once,
+#   by the locale's id.
 FAKE_NAME_DOMAIN = 'fake name'
-# Lower-case words that begin a surname: `de Jong`, `van der Berg`, `da Silva`.
 _SURNAME_PARTICLES = frozenset({'da', 'das', 'de', 'del', 'della', 'der', 'di', 'do', 'dos', 'du', 'la', 'le', 'ten', 'ter', 'van', 'von',
                                 'den', 'het', "'t", 'y'})
 _FIRST_NAMES: Dict[int, Tuple[str, ...]] = {}
 
 
 def _listsOption(value: Any) -> int:
+    """The `lists` option: 1, the original lists, or 2, the longer ones. Raises
+    ValueError.
+    """
 
     if isinstance(value, bool) or value not in (1, 2):
         raise ValueError('must be 1 or 2')
@@ -52,6 +59,7 @@ class _FakeStrategy(Strategy):
 
     @property
     def locale(self) -> Locale:
+        """The `lists: 1` lists for the policy's locale, or the international default."""
 
         return LOCALES[self.options['locale']] if 'locale' in self.options else DEFAULT_LOCALE
 
@@ -84,16 +92,19 @@ class _FakeStrategy(Strategy):
                 'address': locale.address, 'companySuffixes': list(locale.companySuffixes), 'companyWords': list(COMPANY_WORDS)}
 
     def _pick(self, choices: Sequence[str], message: bytes, purpose: bytes) -> str:
+        """One of `choices`, chosen by the keyed hash of `message` under `purpose`."""
 
         return choices[self.keyedHash.below(message, len(choices), purpose)]
 
 
     def generate(self, message: bytes) -> str:
+        """The `lists: 1` replacement for a value's canonical bytes."""
 
         raise NotImplementedError
 
 
     def mask(self, value: Any) -> Any:
+        """The replacement from the lists `lists` names, cut to maxLength."""
 
         generated = self.generateLarge(value) if self.large is not None else self.generate(canonical(value))
         maxLength = self.options.get('maxLength')
@@ -121,6 +132,7 @@ class _FakePersonNameStrategy(_FakeStrategy):
 
     @classmethod
     def checkOptions(cls, options: Dict[str, Any]) -> None:
+        """Refuses matchGender without `lists: 2`, the only lists that know genders."""
 
         if options.get('matchGender') and options.get('lists', 1) != 2:
             raise ValueError('strategy "{}" takes matchGender with lists: 2 only'.format(cls.NAME))
@@ -128,18 +140,25 @@ class _FakePersonNameStrategy(_FakeStrategy):
 
     @classmethod
     def defaultDomain(cls, column: str, options: Mapping[str, Any]) -> str:
+        """FAKE_NAME_DOMAIN under `lists: 2`, so every name column shares one
+        domain; the column's name otherwise, as for any strategy.
+        """
 
         return FAKE_NAME_DOMAIN if options.get('lists', 1) == 2 else column.lower()
 
 
     @staticmethod
     def _key(name: str) -> bytes:
+        """What a name is keyed on: its words single-spaced and case-folded, so
+        `ANN` and ` ann ` mask alike.
+        """
 
         return ' '.join(name.split()).casefold().encode('utf-8')
 
 
     @staticmethod
     def _inCaseOf(original: str, replacement: str) -> str:
+        """`replacement` in the case of `original`, where that is all upper or lower."""
 
         if original.isupper():
             return replacement.upper()
@@ -150,6 +169,9 @@ class _FakePersonNameStrategy(_FakeStrategy):
 
 
     def _firstName(self, name: str) -> str:
+        """A given name replaced from the large lists, one of the same gender
+        under matchGender where the lists say which it is.
+        """
 
         large = self.large
         assert large is not None
@@ -165,6 +187,7 @@ class _FakePersonNameStrategy(_FakeStrategy):
 
 
     def _lastName(self, name: str) -> str:
+        """A surname replaced from the large lists."""
 
         large = self.large
         assert large is not None
@@ -173,41 +196,51 @@ class _FakePersonNameStrategy(_FakeStrategy):
 
 
 class FakeFirstNameStrategy(_FakePersonNameStrategy):
+    """A first name from the locale's lists."""
 
     NAME = 'fakeFirstName'
     NATIVE = 'fakeFirstName'
 
     def generate(self, message: bytes) -> str:
+        """A first name from the `lists: 1` lists."""
 
         return self._pick(self.locale.firstNames, message, b'first')
 
 
     def generateLarge(self, value: Any) -> str:
+        """A first name from the `lists: 2` lists, keyed on the name as written."""
 
         return self._firstName(value if isinstance(value, str) else canonical(value).decode('utf-8', 'replace'))
 
 
 class FakeLastNameStrategy(_FakePersonNameStrategy):
+    """A last name from the locale's lists."""
 
     NAME = 'fakeLastName'
     NATIVE = 'fakeLastName'
 
     def generate(self, message: bytes) -> str:
+        """A last name from the `lists: 1` lists."""
 
         return self._pick(self.locale.lastNames, message, b'last')
 
 
     def generateLarge(self, value: Any) -> str:
+        """A last name from the `lists: 2` lists, keyed on the name as written."""
 
         return self._lastName(value if isinstance(value, str) else canonical(value).decode('utf-8', 'replace'))
 
 
 class FakeNameStrategy(_FakePersonNameStrategy):
+    """A full name, first and last, from the locale's lists."""
 
     NAME = 'fakeName'
     NATIVE = 'fakeName'
 
     def generate(self, message: bytes) -> str:
+        """A first name and a last name from the `lists: 1` lists, keyed on the
+        whole value.
+        """
 
         return '{} {}'.format(self._pick(self.locale.firstNames, message, b'first'), self._pick(self.locale.lastNames, message, b'last'))
 
@@ -240,31 +273,39 @@ class FakeNameStrategy(_FakePersonNameStrategy):
 
 
 class FakeCityStrategy(_FakeStrategy):
+    """A city from the locale's lists."""
 
     NAME = 'fakeCity'
     NATIVE = 'fakeCity'
 
     def generate(self, message: bytes) -> str:
+        """A city, from the longer lists under `lists: 2`."""
 
         return self._pick(self.large.cities if self.large is not None else self.locale.cities, message, b'city')
 
 
 class FakeCompanyStrategy(_FakeStrategy):
+    """A company name: a word and a suffix in the locale's form, such as `GmbH`."""
 
     NAME = 'fakeCompany'
     NATIVE = 'fakeCompany'
 
     def generate(self, message: bytes) -> str:
+        """A company word and one of the locale's suffixes."""
 
         return '{} {}'.format(self._pick(COMPANY_WORDS, message, b'company'), self._pick(self.locale.companySuffixes, message, b'suffix'))
 
 
 class FakeStreetAddressStrategy(_FakeStrategy):
+    """A street address written in the locale's form, number included."""
 
     NAME = 'fakeStreetAddress'
     NATIVE = 'fakeStreetAddress'
 
     def generate(self, message: bytes) -> str:
+        """A number from 1 to 9999, a street and a kind of street, in the
+        locale's order.
+        """
 
         number = self.keyedHash.below(message, 9999, b'number') + 1
         locale = self.locale

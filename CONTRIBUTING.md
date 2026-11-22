@@ -24,15 +24,20 @@ pytest -m integration
 
 | Path | What it holds |
 | --- | --- |
-| `bauta/configuration/` | reading and validating the YAML |
-| `bauta/database/` | streaming and loading rows; everything that differs between databases in `dialects/`, one module each |
-| `bauta/lake/` | files and Iceberg tables: column types in `columns.py` and `columnar.py`, each format's writer in `formats.py`, each cloud in `stores.py`, the two targets in `target.py` and `iceberg.py`, and reading files in `source.py` |
-| `bauta/jobs/` | running jobs: the cycle in `runner.py`, one job's chunk pipeline in `pipeline.py`, its process in `workers.py`, the key-change checks in `keys.py`; run state, history and manifests |
-| `bauta/masking/` | the keyed hash and `Strategy` in `core.py`, the built-in strategies in `strategies/`, one module a kind |
-| `bauta/transform/` | per-column transforms, and the built-in ones |
-| `bauta/generate/`, `bauta/review/` | what `discover`, `subset`, `schema` and `synthesize` build; what `audit`, `coverage` and `verify-references` report |
-| `bauta/log/` | logging, and scrubbing values out of messages |
-| `bauta/cli/` | the command, one module per group of subcommands |
+| `bauta/configuration/` | reading and validating the YAML: the models in `models.py` and `connections.py`, `${NAME}` and `passwordCommand` in `environment.py` |
+| `bauta/database/` | one connection's streaming and loading in `connection.py`, what a swap does beyond loading in `maintenance.py`; what differs between databases in `dialects/`, one module each |
+| `bauta/lake/` | files and Iceberg tables: column types in `columns.py` and `columnar.py`, each format in `formats.py`, each cloud in `stores.py`, the targets in `target.py` and `iceberg.py`, reading files in `source.py` |
+| `bauta/jobs/` | the cycle in `runner.py`, each job's process in `workers.py`, its chunk pipeline in `pipeline.py`, the key-change checks in `keys.py`; run state in `memory.py`, history and manifests in `reporting.py` |
+| `bauta/masking/` | the keyed hash, `Strategy` and masking plans in `core.py`, the built-in strategies in `strategies/`, one module a kind |
+| `bauta/transform/` | per-column transforms, applied before masking, and the built-in ones |
+| `bauta/generate/` | `discover`, `subset`, `schema` and `synthesize`: what is built from a live schema |
+| `bauta/review/` | `audit`, `coverage` and `verify-references`: reports that move no data |
+| `bauta/log/` | logging, and scrubbing values out of every message |
+| `bauta/cli/` | the `bauta` command, one module per group of subcommands |
+| `bauta/project.py` | a configuration directory and its checks, as the commands and Studio share them |
+| `bauta/studio/`, `studio/` | Studio: its server and API, and its React web app (`studio/web/`), built into `bauta/studio/static` |
+| `mask-rs/` | the optional native masker, in Rust; see [its README](mask-rs/README.md) |
+| `example/` | runnable demos and a starter configuration; see [its README](example/README.md) |
 
 Their tests are in the same place under `tests/`: `tests/jobs/` for `bauta/jobs/`, and so on. Tests against real databases are in `tests/integration/`; see [where the tests are](docs/project/development.md#where-the-tests-are).
 
@@ -45,7 +50,14 @@ Their tests are in the same place under `tests/`: `tests/jobs/` for `bauta/jobs/
 
 ## Style
 
-Follow the code around you: camelCase names, `str.format`, and docstrings and comments that say *why*, including what went wrong before. `ruff check` covers errors, not style; there is no formatter to run.
+Follow the code around you: camelCase names and `str.format`. `ruff check` covers errors, not style; there is no formatter to run.
+
+Documentation in the code follows one pattern, so a reader always knows where to look:
+
+- **Every file opens with what it is for**: a docstring in Python, `//!` in Rust, a `//` block in TypeScript.
+- **Every function and class says what it does**, in a docstring under its definition (`///` or `/** */` above it in Rust and TypeScript). Write it as prose -- what it returns or does, what it raises -- and add the *why* where the code can't show it, including what went wrong before. Tests are the exception: a test's name says what it checks, so only its module and helpers need one.
+- **Constants sit together at the top of a file**, after the imports, with one comment block above them naming each that needs explaining: `# NAME: what it is for.` Not a comment above each constant.
+- **Inline comments are for logic that would surprise a careful reader.** What a comment would only restate, the code already says.
 
 ## Security
 

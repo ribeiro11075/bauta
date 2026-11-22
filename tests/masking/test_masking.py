@@ -26,6 +26,8 @@ OTHER_KEY = 'a-different-key-also-long-enough'
 
 
 def strategy(name, key=KEY, domain='test', **options):
+    """A built-in strategy under the test key and `domain`, with `options`."""
+
     return STRATEGIES[name](KeyedHash(key, domain), STRATEGIES[name].validateOptions(options))
 
 
@@ -42,6 +44,8 @@ def pythonStrategy(name, **options):
 
 
 def maskOne(name, value, **options):
+    """One value masked by a built-in strategy."""
+
     return strategy(name, **options).maskColumn([value], 0)[0]
 
 
@@ -641,6 +645,8 @@ def test_an_all_keep_policy_returns_rows_unchanged():
 # --- configuration -----------------------------------------------------------
 
 def _jobsFile(masking):
+    """A jobs file of one job with `masking`."""
+
     return {'workers': 1, 'jobs': {'job': dataJobFields(masking=masking)}}
 
 
@@ -687,6 +693,8 @@ def test_the_manifest_records_completed_failed_and_skipped_masked_jobs():
 
 
 def _manifest():
+    """A minimal manifest of one masked job."""
+
     return {'generatedAt': '2026-09-16T00:00:00+00:00', 'jobs': [{'job': 'maskCustomers', 'status': 'completed', 'rowCount': 3,
                                                                  'columns': [{'column': 'email', 'strategy': 'email'}]}]}
 
@@ -789,6 +797,10 @@ def test_an_unknown_locale_is_refused():
 
 
 def _fpe(policy, values):
+    """Values masked by an fpe policy under the golden key; skipped without
+    cryptography.
+    """
+
     pytest.importorskip('cryptography')
     return [row[0] for row in MaskingPlan(GOLDEN_KEY, {'c': policy}).bind(['c']).apply([(value,) for value in values])]
 
@@ -891,6 +903,8 @@ SAMPLE_TEXT = ('Called Ann at +1 (555) 010-9999, email Ann.Lee@corp.example.com;
 
 
 def _redact(policy, values):
+    """Values masked by a redact policy under the golden key."""
+
     return [row[0] for row in MaskingPlan(GOLDEN_KEY, {'notes': policy}).bind(['notes']).apply([(value,) for value in values])]
 
 
@@ -1502,6 +1516,8 @@ def test_a_json_field_cannot_mask_by_a_column_of_the_row():
 
 
 def _metres(before, after, latitude):
+    """How far a coordinate moved, north and east, in metres at `latitude`."""
+
     import math
     (lat, lng), (maskedLat, maskedLng) = before, after
     return (float(maskedLat) - float(lat)) * 111320, (float(maskedLng) - float(lng)) * 111320 * math.cos(math.radians(float(latitude)))
@@ -1657,6 +1673,8 @@ def test_the_larger_lists_are_opt_in_and_python_only():
 # --- normalize -----------------------------------------------------------------
 
 def _maskedTogether(policies, rows):
+    """Rows masked by a plan of `policies`, its columns in their order."""
+
     names = list(policies)
     return MaskingPlan(KEY, policies).bind(names).apply(rows)
 
@@ -1707,6 +1725,8 @@ def test_normalize_leaves_values_that_are_not_text_alone():
 # --- json ----------------------------------------------------------------------
 
 def _json(policy, values, key=GOLDEN_KEY, extra=None):
+    """Values masked by a json policy under `key`, with `extra` columns beside it."""
+
     columns = {'doc': dict(policy, strategy='json'), **(extra or {})}
     names = list(columns)
     return MaskingPlan(key, columns).bind(names).apply([tuple(value) if isinstance(value, tuple) else (value,) for value in values])

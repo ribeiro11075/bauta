@@ -24,12 +24,17 @@ class Connections:
     """
 
     def __init__(self, connectionConfiguration: Mapping[str, ConnectionConfig]) -> None:
+        """No connection is opened until use() asks for its alias."""
+
         self._settings = connectionConfiguration
         self._open: Dict[str, Database] = {}
 
 
     @contextlib.contextmanager
     def use(self, alias: str) -> Generator[Database, None, None]:
+        """The alias's open Database, opening it on first use. Closed and
+        forgotten if the block raises.
+        """
 
         database = self._open.get(alias)
         if database is None:
@@ -50,6 +55,7 @@ class Connections:
 
 
     def __exit__(self, *exception: Any) -> None:
+        """Closes every connection opened, ignoring errors closing them."""
 
         for database in self._open.values():
             with contextlib.suppress(Exception):

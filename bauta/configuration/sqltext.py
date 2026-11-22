@@ -14,9 +14,9 @@ from __future__ import annotations
 import re
 from typing import List, Tuple
 
-# A comment (line or block), a string literal ('' escaping a quote, or
-# PostgreSQL's dollar quotes, tag and all), or a name quoted with double
-# quotes or backticks. Not [brackets], which PostgreSQL uses for arrays.
+# _SPANS: a comment (line or block), a string literal ('' escaping a quote, or
+#   PostgreSQL's dollar quotes, tag and all), or a name quoted with double
+#   quotes or backticks. Not [brackets], which PostgreSQL uses for arrays.
 _SPANS = re.compile(r"(?P<comment>--[^\n]*|/\*.*?\*/)|(?P<literal>'(?:[^']|'')*'|\$(?P<tag>[A-Za-z_]*)\$.*?\$(?P=tag)\$)|"
                     r'(?P<identifier>"(?:[^"]|"")*"|`(?:[^`]|``)*`)', re.DOTALL)
 

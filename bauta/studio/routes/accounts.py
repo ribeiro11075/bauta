@@ -15,40 +15,52 @@ from ..db import ADMIN, ROLES, VIEWER, Activity, User
 from ..settings import PasswordLogin, RoleSource, Settings
 from .context import Context
 
+# BUSY_RETRY_SECONDS: how long a browser is asked to wait when too many
+#   sign-ins are being checked.
 ACTIVITY_PAGE = 200
-# How long a browser is asked to wait when too many sign-ins are being checked.
 BUSY_RETRY_SECONDS = '5'
 
 
 class Login(BaseModel):
+    """A sign-in with a password."""
+
     email: str
     password: str
 
 
 class PasswordChange(BaseModel):
+    """Changing your own password: the one you have, and the new one."""
+
     current: str
     new: str
 
 
 class NewUser(BaseModel):
+    """An account an admin adds."""
+
+    # password: None for someone who will sign in only through the identity
+    #   provider.
     email: str
     name: str = ''
     role: str = VIEWER
-    # None for someone who will sign in only through the identity provider.
     password: Optional[str] = None
 
 
 class UserChange(BaseModel):
+    """What an admin changes of an account; a field left out is left as it is."""
+
+    # removePassword: takes the password away, from someone who signs in
+    #   through the identity provider: disabling them there is then enough to
+    #   keep them out.
     name: Optional[str] = None
     role: Optional[str] = None
     active: Optional[bool] = None
     password: Optional[str] = None
-    # Takes the password away, from someone who signs in through the identity
-    # provider: disabling them there is then enough to keep them out.
     removePassword: bool = False
 
 
 def _requireRole(role: str) -> None:
+    """Raises 400 for a role Studio doesn't have."""
 
     if role not in ROLES:
         raise HTTPException(status_code=400, detail='role must be one of {}'.format(', '.join(ROLES)))
@@ -67,12 +79,19 @@ def _rolesFromProvider(settings: Settings, user: User) -> bool:
 
 
 def build(context: Context) -> APIRouter:
+    """The routes for signing in and out, and for accounts and the activity log."""
 
     router = APIRouter()
     sessions, viewer, admin, settings, throttle = context.sessions, context.viewer, context.admin, context.settings, context.throttle
 
     @router.post('/auth/login')
     def login(body: Login, request: Request, response: Response, session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /auth/login: signs in with a password, throttled by email and
+        address. An account that needs a code next, or must set up its app
+        first, gets the pending cookie and the step to take, and isn't signed
+        in yet.
+        """
+
         if request.headers.get(CSRF_HEADER) != '1':
             raise HTTPException(status_code=403, detail='missing the {} header'.format(CSRF_HEADER))
         if settings.passwordLogin == PasswordLogin.OFF:
@@ -141,11 +160,17 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/auth/logout')
     def logout(request: Request, response: Response, session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /auth/logout: ends the session."""
+
         endSession(session, request, response)
         return {}
 
     @router.get('/auth/me')
     def me(request: Request, session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """GET /auth/me: the signed-in account; else 401, saying whether Studio
+        has accounts yet and how the sign-in page should offer to sign in.
+        """
+
         user = userFromRequest(session, request)
         if user is None:
             hasUsers = bool(session.scalar(select(func.count()).select_from(User)))
@@ -154,6 +179,8 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/users')
     def listUsers(user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """GET /users: every account, and how accounts sign in. Admins only."""
+
         sso = settings.sso
         return {'users': [found.asDict() for found in session.scalars(select(User).order_by(User.email))], 'roles': ROLES,
                 'sso': {'roles': sso.roles} if sso is not None else None, 'passwordLogin': settings.passwordLogin,
@@ -161,6 +188,10 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/users')
     def addUser(body: NewUser, user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /users: adds an account, with a password or, where single
+        sign-on is on, without one. Admins only.
+        """
+
         email = body.email.strip().lower()
         _requireRole(body.role)
         if session.scalar(select(User).where(User.email == email)) is not None:
@@ -179,6 +210,10 @@ def build(context: Context) -> APIRouter:
 
     @router.patch('/users/{userId}')
     def changeUser(userId: int, body: UserChange, user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """PATCH /users/{userId}: changes an account, one change at a time.
+        Admins only.
+        """
+
         with changingAccounts:
             return _changeUser(userId, body, user, session)
 
@@ -202,6 +237,12 @@ def build(context: Context) -> APIRouter:
             return found.asDict()
 
     def _changeUser(userId: int, body: UserChange, user: User, session: Session) -> Dict[str, Any]:
+        """Applies an admin's change to an account: its role (unless the
+        provider sets roles), name, active state or password. Refuses a change
+        that would leave no active admin, or an account with no way to sign in,
+        and ends the account's sessions where its password or access changed.
+        """
+
         found = session.get(User, userId)
         if found is None:
             raise HTTPException(status_code=404, detail='no such user')
@@ -242,6 +283,10 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/activity')
     def activity(user: User = Depends(admin), session: Session = Depends(sessions), before: Optional[int] = None) -> Dict[str, Any]:
+        """GET /activity: the activity log, newest first, a page at a time.
+        Admins only.
+        """
+
         query = select(Activity).order_by(Activity.id.desc()).limit(ACTIVITY_PAGE)
         if before is not None:
             query = query.where(Activity.id < before)

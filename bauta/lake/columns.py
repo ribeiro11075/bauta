@@ -23,27 +23,26 @@ from ..configuration import ColumnType, ConfigurationError
 from ..configuration.columnTypes import MAXIMUM_DECIMAL_PRECISION, isInteger
 from ..database.values import durationText, jsonText
 
-# The scale a decimal is given when the source doesn't report one: Oracle's
-# NUMBER without a precision, SQLite, MySQL's driver. Values in one column
-# differ in scale there, and the first chunk's widest needn't be the widest.
+# DEFAULT_DECIMAL_SCALE: the scale a decimal is given when the source doesn't
+#   report one: Oracle's NUMBER without a precision, SQLite, MySQL's driver.
+#   Values in one column differ in scale there, and the first chunk's widest
+#   needn't be the widest.
+# _KINDS: the Python types a column's values are told apart by, the narrower
+#   first: a bool is an int, and a datetime a date. A driver's own subclass of
+#   one -- a str subclass for an enum -- counts as the type it extends.
+# PLAIN_KINDS: the exact types a value can have for normalized() to leave it as
+#   it is and _kind() to name it as itself. A column holding nothing else --
+#   nearly every column -- needs neither called on each value, which is most of
+#   the time a chunk takes to become Arrow; the column's exact types, gathered
+#   in C, say so.
 DEFAULT_DECIMAL_SCALE = 10
-
 _INTEGER_RANGES = {
     'int8': (-2 ** 7, 2 ** 7), 'int16': (-2 ** 15, 2 ** 15), 'int32': (-2 ** 31, 2 ** 31), 'int64': (-2 ** 63, 2 ** 63),
     'uint8': (0, 2 ** 8), 'uint16': (0, 2 ** 16), 'uint32': (0, 2 ** 32), 'uint64': (0, 2 ** 64),
     }
-
 _REPORTED_DECIMAL = re.compile(r'DECIMAL\((\d+),\s*(\d+)\)', re.IGNORECASE)
-
 UNKNOWN_KINDS_ADVICE = 'declare it in targetColumnTypes'
-# The Python types a column's values are told apart by, the narrower first:
-# a bool is an int, and a datetime a date. A driver's own subclass of one --
-# a str subclass for an enum -- counts as the type it extends.
 _KINDS = (bool, int, float, decimal.Decimal, str, bytes, datetime.datetime, datetime.date, datetime.time)
-# The exact types a value can have for normalized() to leave it as it is and
-# _kind() to name it as itself. A column holding nothing else -- nearly every
-# column -- needs neither called on each value, which is most of the time a
-# chunk takes to become Arrow; the column's exact types, gathered in C, say so.
 PLAIN_KINDS = frozenset(_KINDS) | {type(None)}
 
 
@@ -97,12 +96,16 @@ def reportedDecimal(description: Optional[Sequence[Any]]) -> Optional[Tuple[int,
 
 
 def _scale(value: decimal.Decimal) -> int:
+    """The digits after a Decimal's point, 0 for an integral or special one."""
 
     exponent = value.as_tuple().exponent
     return max(0, -exponent) if isinstance(exponent, int) else 0
 
 
 def _kind(value: Any) -> type:
+    """The type a value is told apart by: the first of _KINDS it is an instance
+    of, else its own.
+    """
 
     for kind in _KINDS:
         if isinstance(value, kind):
@@ -112,6 +115,7 @@ def _kind(value: Any) -> type:
 
 
 def _digits(value: int) -> int:
+    """The digits of an integer, its sign aside."""
 
     return len(str(abs(value)))
 
@@ -127,6 +131,8 @@ def inferType(column: str, values: Sequence[Any], reported: Optional[Tuple[int, 
         return None
 
     def refuse(why: str) -> FileTypeError:
+        """The error for a column whose type its values can't tell, saying why."""
+
         return FileTypeError('column {} {}, so its type can\'t be told from its values; {}'.format(column, why, UNKNOWN_KINDS_ADVICE))
 
     if kinds == {bool}:
@@ -175,6 +181,7 @@ def inferType(column: str, values: Sequence[Any], reported: Optional[Tuple[int, 
 
 
 def arrowType(columnType: ColumnType) -> Any:
+    """The Arrow type a column type is written as."""
 
     import pyarrow
 
@@ -200,6 +207,7 @@ def arrowType(columnType: ColumnType) -> Any:
 
 
 def _asText(value: Any) -> Any:
+    """A value as text, a date or time as ISO 8601."""
 
     if isinstance(value, (datetime.date, datetime.time)):
         return value.isoformat()
@@ -208,17 +216,19 @@ def _asText(value: Any) -> Any:
 
 
 def _floatAsDecimal(value: float) -> decimal.Decimal:
+    """A float as the Decimal its repr spells, not its exact binary value."""
 
     return decimal.Decimal(repr(value))
 
 
 def _asUtc(value: datetime.datetime) -> datetime.datetime:
+    """An aware datetime as the naive UTC one a timestamptz column holds."""
 
     return value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
 
 
-# What each kind takes, beyond its own Python type, and how. None where it
-# takes the value as it is.
+# _Accepts: what each kind takes, beyond its own Python type, and how. None
+#   where it takes the value as it is.
 _Accepts = Dict[type, Optional[Callable[[Any], Any]]]
 
 

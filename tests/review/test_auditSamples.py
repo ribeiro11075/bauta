@@ -16,14 +16,20 @@ _job = functools.partial(dataJob, sourceConnection='prod', targetConnection='sta
 
 
 def _masked(columns, **overrides: Any) -> DataJobConfig:
+    """A job masking `columns` under the test key, with `overrides`."""
+
     return _job(masking={'key': KEY, 'columns': columns}, **overrides)
 
 
 def _messages(report, severity=None):
+    """The (job, message) of each finding, of one severity where given."""
+
     return [(finding['job'], finding['message']) for finding in report['findings'] if severity in (None, finding['severity'])]
 
 
 def _assertNoValueIn(report, *values):
+    """Asserts that no sampled value appears in the report, as JSON or as text."""
+
     text = json.dumps(report, default=str) + renderAudit(report)
     for value in values:
         assert str(value) not in text
@@ -92,6 +98,10 @@ def test_without_samples_nothing_changes():
 # --- columns sharing a domain ---------------------------------------------------
 
 def _shared(orders, tickets, ticketPolicy=None, orderPolicy=None):
+    """The audit of two jobs masking one customer id in two tables, with the
+    values sampled from each.
+    """
+
     jobs = {'maskOrders': _masked({'customer_id': orderPolicy or {'strategy': 'key', 'domain': 'customers'}}),
             'maskTickets': _masked({'customer_ref': ticketPolicy or {'strategy': 'key', 'domain': 'customers'}})}
     return auditJobs(jobs, ConnectedFacts(returnedColumns={'maskOrders': ['customer_id'], 'maskTickets': ['customer_ref']}, samples={'maskOrders': [(value,) for value in orders], 'maskTickets': [(value,) for value in tickets]}))

@@ -1,3 +1,6 @@
+// The connections page: each alias in connections.yaml, its rules, the jobs
+// using it, and a test that it can be reached.
+
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
@@ -5,6 +8,7 @@ import { api, can, type Connection } from '../api'
 import { useUser } from '../App'
 import { Failure, Loading, PageHead, Pill } from '../components/ui'
 
+/** Every connection as a table row. */
 export function Connections() {
   const user = useUser()
   const connections = useQuery({ queryKey: ['connections'], queryFn: () => api<{ connections: Connection[] }>('/connections') })
@@ -26,6 +30,10 @@ export function Connections() {
   )
 }
 
+/**
+ * One connection: where it is, its rules, the jobs reading and loading it, and
+ * for an operator a button that tests it.
+ */
 function ConnectionRow({ connection, canTest }: { connection: Connection; canTest: boolean }) {
   const [shown, setShown] = useState(false)
   const test = useMutation({

@@ -46,15 +46,12 @@ sys.path.append(str(demoDirectory.parents[1]))
 
 from bauta.cli import main as cli  # noqa: E402
 
+# DEMO_MASKING_KEY: throwaway keys for throwaway databases. Real ones are
+#   random, come from a secret store, and are never written into a script.
 DEFAULT_WORKING_DIRECTORY = demoDirectory / 'transaction'
-
 DATABASE_CONFIGURATION = demoDirectory / 'configuration' / 'connections.yaml'
-
-# Throwaway keys for throwaway databases. Real ones are random, come from a
-# secret store, and are never written into a script.
 DEMO_MASKING_KEY = 'walkthrough-masking-key-not-for-real-use'
 DEMO_SIGNING_KEY = 'walkthrough-signing-key-not-for-real-use'
-
 SCHEMA = '''
 CREATE TABLE customers (id INTEGER PRIMARY KEY, email VARCHAR(80) NOT NULL, full_name VARCHAR(60), national_id VARCHAR(11),
                         phone VARCHAR(20), birth_date DATE, country CHAR(2), signed_up DATE);
@@ -65,7 +62,6 @@ CREATE TABLE order_items (order_id INT NOT NULL REFERENCES orders(id), line INT 
 CREATE TABLE support_tickets (id INTEGER PRIMARY KEY, customer_id INT NOT NULL REFERENCES customers(id), opened_at TIMESTAMP, body TEXT);
 CREATE TABLE payment_cards (id INTEGER PRIMARY KEY, customer_id INT NOT NULL REFERENCES customers(id), card_number VARCHAR(19), expiry CHAR(5));
 '''
-
 FIRST = ['Ana', 'Bruno', 'Carla', 'Diogo', 'Elena', 'Fabio', 'Gloria', 'Hugo', 'Ines', 'Jorge', 'Lucia', 'Marco', 'Nuria', 'Pablo']
 LAST = ['Silva', 'Garcia', 'Santos', 'Lopez', 'Costa', 'Martin', 'Pereira', 'Ruiz', 'Almeida', 'Moreno']
 COUNTRIES = ['PT', 'ES', 'FR', 'DE', 'US']
@@ -177,11 +173,17 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY) -> Dict[str, Any]:
 
 
 def _walkthrough(workingDirectory: Path, production: Path, staging: Path) -> Dict[str, Any]:
+    """Runs every step of the walkthrough in `workingDirectory`, printing each
+    command and what it said, and returns what a test checks: the transcript,
+    the exit codes and what the copy holds.
+    """
 
     transcript: List[str] = []
     observed: Dict[str, Any] = {'exitCodes': {}}
 
     def say(text: str) -> None:
+        """Prints a line, and keeps it in the transcript."""
+
         print(text)
         transcript.append(text)
 
@@ -246,11 +248,13 @@ def _walkthrough(workingDirectory: Path, production: Path, staging: Path) -> Dic
 
 
 def _quoted(argument: str) -> str:
+    """An argument in double quotes where the shell would need it."""
 
     return '"{}"'.format(argument) if any(character in argument for character in " '()") else argument
 
 
 def _count(path: Path, table: str, where: str = '1 = 1') -> int:
+    """The rows of `table` matching `where` in a SQLite file."""
 
     connection = sqlite3.connect(path)
     try:
@@ -260,6 +264,9 @@ def _count(path: Path, table: str, where: str = '1 = 1') -> int:
 
 
 def _compare(production: Path, staging: Path, say: Any) -> Dict[str, Any]:
+    """Shows production's customers beside their masked copies in staging, and
+    returns what a test checks of the two.
+    """
 
     prod, stage = sqlite3.connect(production), sqlite3.connect(staging)
     try:

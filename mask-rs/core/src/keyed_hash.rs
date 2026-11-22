@@ -10,14 +10,14 @@
 use num_bigint::BigUint;
 use ring::{digest, hmac};
 
-/// SHA-256's compression block, which is what HMAC pads its key out to.
+// BLOCK_SIZE: SHA-256's compression block, which is what HMAC pads its key out
+//   to.
+// FEISTEL_ROUNDS: the rounds of `permute`'s Feistel network. FF1 and FF3-1 use 10 and 8;
+//   Python picks the conservative end, and this has to agree with it.
 const BLOCK_SIZE: usize = 64;
-
-
-/// Feistel rounds for `permute`. FF1 and FF3-1 use 10 and 8; Python picks the
-/// conservative end, and this has to agree with it.
 const FEISTEL_ROUNDS: u8 = 10;
 
+/// HMAC-SHA256 under a per-domain subkey, as Python's `KeyedHash`.
 pub struct KeyedHash {
     /// The two pad states, fed their padded key and then cloned per value --
     /// the same shortcut the Python takes, and the reason neither pays to
@@ -38,6 +38,7 @@ pub struct KeyedHash {
 }
 
 impl KeyedHash {
+    /// The domain's subkey, derived from the key, and its two pad states.
     pub fn new(key: &str, domain: &str) -> Self {
         let mut message = Vec::with_capacity(b"domain\x00".len() + domain.len());
         message.extend_from_slice(b"domain\x00");
@@ -247,6 +248,8 @@ struct Network {
 }
 
 impl Network {
+    /// The network for a domain of `size`: its half width and the purpose
+    /// prefix every round's function shares.
     fn new(size: &BigUint, purpose: &[u8]) -> Self {
         let mut bits = std::cmp::max(2, (size - 1u8).bits() as usize);
         bits += bits % 2;
@@ -292,6 +295,8 @@ fn writeLeftPadded(value: &BigUint, into: &mut [u8]) {
     into[split..].copy_from_slice(trimmed);
 }
 
+/// `bytes` as a big-endian number in exactly `width` bytes, as Python's
+/// `int.to_bytes` writes it.
 fn leftPad(bytes: &[u8], width: usize) -> Vec<u8> {
     let mut padded = vec![0u8; width];
     let trimmed: &[u8] = if bytes == [0u8] { &[] } else { bytes };

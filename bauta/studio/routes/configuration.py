@@ -14,11 +14,17 @@ from .context import Context, reachingDatabases
 
 
 class FileEdit(BaseModel):
+    """A new text for a configuration file, with the digest of the text it was
+    edited from.
+    """
+
     text: str
     digest: str
 
 
 class SubsetRequest(BaseModel):
+    """What the subset builder drafts jobs from: as `bauta subset` takes it."""
+
     connection: str
     target: str
     root: str
@@ -31,16 +37,23 @@ class SubsetRequest(BaseModel):
 
 
 def build(context: Context) -> APIRouter:
+    """The routes for connections, the configuration files and the subset builder."""
 
     router = APIRouter()
     sessions, viewer, operator, admin, settings, project = context.sessions, context.viewer, context.operator, context.admin, context.settings, context.project
 
     @router.get('/connections')
     def listConnections(user: User = Depends(viewer)) -> Dict[str, Any]:
+        """GET /connections: every connection, without its secrets."""
+
         return {'connections': workspace.connections(project())}
 
     @router.post('/connections/{alias}/test')
     def test(alias: str, user: User = Depends(operator), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /connections/{alias}/test: opens the connection, and says
+        whether it could.
+        """
+
         current = project()
         if alias not in current.connections:
             raise HTTPException(status_code=404, detail='no connection {}'.format(alias))
@@ -51,6 +64,10 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/configuration')
     def configuration(user: User = Depends(viewer)) -> Dict[str, Any]:
+        """GET /configuration: whether the configuration is valid, its
+        problems, and the files that can be edited.
+        """
+
         try:
             current = workspace.loadProject(settings)
         except workspace.ConfigurationProblem as error:
@@ -60,6 +77,8 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/configuration/file')
     def readConfigurationFile(path: str, user: User = Depends(admin)) -> Dict[str, Any]:
+        """GET /configuration/file: one editable file and its digest. Admins only."""
+
         try:
             return configfiles.readFile(settings, project(), path)
         except configfiles.EditRefused as error:
@@ -67,6 +86,10 @@ def build(context: Context) -> APIRouter:
 
     @router.put('/configuration/file')
     def writeConfigurationFile(path: str, body: FileEdit, user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """PUT /configuration/file: replaces one file, refused unless it is as
+        it was read. Admins only.
+        """
+
         written = configfiles.writeFile(settings, project(), path, body.text, body.digest)
         record(session, user, 'edited a jobs file', path, diff=written['diff'], backup=written['backup'])
         session.commit()
@@ -74,11 +97,19 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/subset/tables')
     def subsetTables(connection: str, user: User = Depends(admin)) -> Dict[str, Any]:
+        """GET /subset/tables: a connection's tables, for choosing the root.
+        Admins only.
+        """
+
         with reachingDatabases('could not list its tables'):
             return {'tables': subsetbuilder.sourceTables(project(), connection)}
 
     @router.post('/subset/preview')
     def subsetPreview(body: SubsetRequest, user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /subset/preview: the jobs a subset would add, with row counts
+        where asked. Admins only.
+        """
+
         with reachingDatabases('could not draft the subset'):
             previewed = subsetbuilder.preview(project(), body.model_dump())
         record(session, user, 'previewed a subset', body.root, connection=body.connection, where=body.where, counted=body.count)
@@ -87,6 +118,8 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/subset/apply')
     def subsetApply(body: SubsetRequest, user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /subset/apply: writes a subset's jobs into a jobs file. Admins only."""
+
         current = project()
         relative = body.file or configfiles.editableFiles(settings, current)[0]['path']
         with reachingDatabases('could not draft the subset'):

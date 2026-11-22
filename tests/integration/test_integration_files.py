@@ -34,6 +34,10 @@ AT = datetime.datetime(2026, 1, 2, 3, 4, 5, 123456)
 
 
 def _copy(tmp_path, source, query, **job):
+    """Copies what `query` returns into a files connection, and returns the
+    snapshot as a table.
+    """
+
     settings = {'source': source, 'lake': connectionConfig(type='files', root=str(tmp_path / 'lake'))}
     _executeDataJob('j', dataJob(sourceConnection='source', targetConnection='lake', sourceQuery=query, targetTableFinal='t',
                                  insertStrategy='overwrite', unmasked=True, **job), settings)

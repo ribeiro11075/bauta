@@ -25,17 +25,23 @@ SAMPLE_SECRETS = {'SOURCE_DB_PASSWORD': 'sourceSecret', 'TARGET_DB_PASSWORD': 't
 
 @pytest.fixture(autouse=True)
 def sampleSecrets(monkeypatch):
+    """Sets the variables the example configuration reads."""
+
     for name, value in SAMPLE_SECRETS.items():
         monkeypatch.setenv(name, value)
 
 
 def _load(name: str):
+    """One of the example's configuration files, its ${...} expanded."""
+
     with open(CONFIGURATION_DIRECTORY / name) as file:
         return expandEnvironmentVariables(yaml.load(file, Loader=yaml.FullLoader))
 
 
 @pytest.fixture
 def connectionAliases():
+    """The aliases the example's connections.yaml defines."""
+
     return set(Configuration.validateConnectionConfiguration(_load('connections.yaml')))
 
 

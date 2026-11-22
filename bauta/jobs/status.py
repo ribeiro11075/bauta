@@ -18,14 +18,16 @@ from typing import Any, Dict, List, Optional
 
 from .runner import RunProgress
 
+# STATUS_SUFFIX: the suffix of a live cycle's file, and of the file being
+#   written in its place.
 RUNNING = 'running'
 WAITING = 'waiting'
-# The suffix of a live cycle's file, and of the file being written in its place.
 STATUS_SUFFIX = '.json'
 PARTIAL_SUFFIX = '.partial'
 
 
 def _timestamp(seconds: Optional[float]) -> Optional[str]:
+    """A Unix time as ISO 8601 in UTC, or None for none."""
 
     if not seconds:
         return None
@@ -66,10 +68,16 @@ class RunStatus:
     """
 
     def __init__(self, directory: Path) -> None:
+        """Status files kept in `directory`, one per live cycle."""
+
         self.directory = Path(directory)
 
 
     def __call__(self, progress: RunProgress) -> None:
+        """Writes the cycle's status file, or removes it once the cycle has
+        finished. Written beside it and moved into place, so a reader never
+        sees half of one.
+        """
 
         path = self.directory / (progress.runId + STATUS_SUFFIX)
         if progress.finished:
@@ -77,7 +85,6 @@ class RunStatus:
             return
 
         self.directory.mkdir(parents=True, exist_ok=True)
-        # Written beside it and moved into place, so a reader never sees half.
         partial = path.with_name(path.name + PARTIAL_SUFFIX)
         partial.write_text(json.dumps(statusRecord(progress), indent=2) + '\n')
         os.replace(partial, path)

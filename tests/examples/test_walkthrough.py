@@ -15,6 +15,10 @@ ENVIRONMENT = ('MASKING_KEY', 'BAUTA_MANIFEST_KEY')
 
 @pytest.fixture(scope='module')
 def session(tmp_path_factory):
+    """The walkthrough script loaded and run once for the module, in a working
+    directory of its own, with its environment restored after.
+    """
+
     specification = importlib.util.spec_from_file_location('walkthrough', WALKTHROUGH_PATH)
     assert specification is not None and specification.loader is not None
     module = importlib.util.module_from_spec(specification)

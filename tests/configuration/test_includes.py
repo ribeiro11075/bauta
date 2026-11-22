@@ -10,6 +10,8 @@ JOB = {'sourceQuery': 'SELECT id FROM t', 'targetTableFinal': 't', 'unmasked': T
 
 
 def write(path, text):
+    """Writes `text` to `path`, making its directory, and returns the path."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
     return path
@@ -17,6 +19,8 @@ def write(path, text):
 
 @pytest.fixture
 def jobsFile(tmp_path):
+    """A jobs file with defaults and an `include` of files written beside it."""
+
     return write(tmp_path / 'jobs.yaml', '''workers: 1
 defaults:
   sourceConnection: prod

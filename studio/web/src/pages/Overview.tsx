@@ -1,3 +1,6 @@
+// The overview, Studio's home page: what needs attention now, the latest
+// runs, and how the copies stand.
+
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, can, type AuditReport, type CoverageReport, type Finding, type JobRecord, type ManifestState, type News, type Run, type ScheduleEntry } from '../api'
@@ -19,6 +22,7 @@ interface OverviewData {
   news: News[]
 }
 
+/** The overview, with a button to start a run. */
 export function Overview() {
   const user = useUser()
   const overview = useQuery({ queryKey: ['overview'], queryFn: () => api<OverviewData>('/overview'), refetchInterval: 5000 })
@@ -34,6 +38,10 @@ export function Overview() {
   )
 }
 
+/**
+ * The latest or running run, failing jobs, the audit, the last manifest, what
+ * needs attention, and recent runs.
+ */
 function OverviewBody({ data }: { data: OverviewData }) {
   const live = data.runs.filter((run) => run.live)
   const finished = data.runs.filter((run) => !run.live)
@@ -117,6 +125,11 @@ function OverviewBody({ data }: { data: OverviewData }) {
   )
 }
 
+/**
+ * Everything that needs someone: what the last checks found new, failed and
+ * stale jobs, and the audit's findings. Coverage is said once: by what the last
+ * check found new, where it found anything, else as a count.
+ */
 function Attention({ data, uncovered }: { data: OverviewData; uncovered: number | null }) {
   const items = [
     ...data.news.map((entry, index) => (
@@ -150,7 +163,6 @@ function Attention({ data, uncovered }: { data: OverviewData; uncovered: number 
       </div>
     )),
   ]
-  // Said once: by what the last check found new, when it found anything.
   if (uncovered && !data.news.some((entry) => entry.kind === 'coverage')) {
     items.push(
       <div className="item" key="coverage">
@@ -171,6 +183,7 @@ function Attention({ data, uncovered }: { data: OverviewData; uncovered: number 
   return items.length ? <>{items.slice(0, 8)}</> : <p className="muted">Nothing. Every job's last run completed and the audit found no errors or warnings.</p>
 }
 
+/** Runs as a table: when, status, jobs, rows and duration. */
 export function RunTable({ runs }: { runs: Run[] }) {
   if (!runs.length) return <div className="tablebox"><div className="empty">No runs recorded yet.</div></div>
   return (

@@ -3,12 +3,12 @@
 
 With `manifest` set in `jobs.yaml`, each run writes a sealed record of what was masked, how, and under which key fingerprint: a file, replaced by each run, or a table, which keeps every run's. It's what an auditor asks for.
 
-**With `run --job`**, as an orchestrator's [task per job](run-from-an-orchestrator.md) runs, a file isn't replaced: each run adds its jobs to it, replacing only their own earlier entries, under a lock, so runs side by side don't drop each other's jobs. Each job's entry then carries its own `generatedAt` and `maskedBy`. The file is re-sealed each time, so what it held must verify first, its signature too when it has one. A file that doesn't is never overwritten, being what an auditor would want to examine, and the run logs an error saying what it did:
+**With `run --job`**, as an orchestrator's [task per job](run-from-an-orchestrator.md) runs, a file isn't replaced: each run merges its jobs in under a lock, replacing only their own entries, and re-seals it. What the file held must verify first; one that doesn't is never overwritten, and the run logs what it did:
 
-- **Altered, or unreadable:** it is moved aside as `manifest.json.rejected-<time>`, and the file started afresh with that run's jobs.
-- **Signed with a key the run can't check** -- another key, or `BAUTA_MANIFEST_KEY` unset: that is a task set up wrong, not a file tampered with, so the file is left as it is, keeping every other job's entry, and the run's manifest is written beside it as `manifest.json.unmerged-<time>`.
+- **Altered, or unreadable:** it is moved aside as `manifest.json.rejected-<time>`, and started afresh.
+- **Signed with a key the run can't check** (another key, or none set): a task set up wrong, so the file is kept and the run's manifest written beside it as `manifest.json.unmerged-<time>`.
 
-A file is always replaced in one step, so it is never read half-written.
+A file is always replaced in one step, never read half-written.
 
 ```yaml
 manifest: ../transaction/manifest.json   # a file, relative to jobs.yaml
@@ -25,12 +25,6 @@ bauta verify-manifest --run RUN_ID       # an earlier one, from a table
 
 
 ## What it records
-
-```yaml
-manifest: ../audit/manifest.json      # in jobs.yaml; or --manifest FILE on the command line
-```
-
-Every run then writes a record of what was masked, how, and under which key fingerprint. It's the artifact an auditor asks for:
 
 ```json
 {
@@ -67,15 +61,15 @@ Every run then writes a record of what was masked, how, and under which key fing
 - `columns` lists the columns the query actually returned, and the policy applied to each. `source` says whether a column was listed in `columns` or fell to `defaultStrategy`.
 - A masked job that failed or was skipped is still listed, with its status and no columns. "This copy was not refreshed" belongs in the record too.
 - The manifest is written even when the run fails. It never contains a value or the key.
-- `configuration` names the jobs file and its SHA-256, so a reviewer can tell which policy produced the run. When the jobs file [includes others](../reference/configuration.md#splitting-the-jobs-across-files), `includes` lists each of them with its own SHA-256, since the jobs file's digest alone no longer covers every policy.
+- `configuration` names the jobs file and its SHA-256, so a reviewer can tell which policy produced the run, and `includes` each [included file](../reference/configuration.md#splitting-the-jobs-across-files) with its own.
 - `maskedBy` is `python`, or the native masker and its version.
-- `runId` is the run's, as [history](watch-what-ran.md#run-history) records it, so the manifest and the history of one run can be matched. After a `run --job`, each job's entry carries its own `runId`, `generatedAt` and `maskedBy`, since the file then holds entries from several runs.
+- `runId` matches the run's [history](watch-what-ran.md#run-history). After `run --job`, each job's entry carries its own `runId`, `generatedAt` and `maskedBy`.
 
 From Python, `RunResult.maskingManifest(jobsFile.jobs)` returns the manifest before sealing, without `tool`, `configuration` or `integrity`; `sealManifest` adds the last.
 
 ### In a table
 
-A file is replaced by each run. To keep every run's manifest, or to keep them with the data they describe, store them in a table instead:
+To keep every run's manifest, or keep them with the data they describe, store them in a table:
 
 ```yaml
 manifest:
@@ -83,7 +77,7 @@ manifest:
   table: audit.bauta_manifest   # optional; bauta_manifest by default
 ```
 
-or `--manifest-connection ALIAS` for one run. Each manifest is stored exactly as it would be written to a file, in 2000-character pieces so one table definition fits every database, under a new run id that the log line names. The table must exist first: [operations.md](../reference/tables.md) has its definition.
+or `--manifest-connection ALIAS` for one run. Each is stored as the file would be, in 2000-character pieces so one table definition fits every database, under its run id. The table must exist first ([tables](../reference/tables.md)).
 
 `bauta verify-manifest` with no file reads the latest manifest from there, and `--run RUN_ID` picks an earlier one.
 
@@ -91,7 +85,7 @@ or `--manifest-connection ALIAS` for one run. Each manifest is stored exactly as
 
 ### Sealing and verifying
 
-Every manifest carries a SHA-256 digest of its own content, which shows it hasn't been edited since it was written. Anyone can recompute a digest, though, so it doesn't show who wrote it. For that, set a signing key and the manifest is also signed with HMAC-SHA256:
+Every manifest carries a SHA-256 digest of its content, showing it hasn't been edited; but anyone can recompute a digest. To show who wrote it, set a signing key, and it is also signed with HMAC-SHA256:
 
 ```
 export BAUTA_MANIFEST_KEY=...      # at least 16 characters; not the masking key
@@ -100,4 +94,4 @@ bauta run
 bauta verify-manifest       # the manifest jobs.yaml names; or a FILE, or --manifest-connection ALIAS
 ```
 
-`verify-manifest` exits 0 for an intact manifest (saying whether it was signed), and 1 if it was altered or its signature doesn't match. With `BAUTA_MANIFEST_KEY` set, an unsigned manifest exits 1 too: otherwise an edited manifest could pass by dropping its signature and recomputing its digest. A signed manifest records its key's fingerprint; verifying it without that key exits 2 rather than half-answering. `--manifest-key-variable` reads the key from another variable, on both commands.
+`verify-manifest` exits 0 for an intact manifest (saying whether it was signed), and 1 if it was altered or its signature doesn't match. With `BAUTA_MANIFEST_KEY` set, an unsigned manifest exits 1 too, or an edit could pass by dropping the signature. Verifying a signed manifest without its key exits 2. `--manifest-key-variable` reads the key from another variable.

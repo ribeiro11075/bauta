@@ -45,6 +45,10 @@ def _requirements():
 
 
 def _pins(name):
+    """Each package a constraints file pins, and its version; every line must
+    pin exactly.
+    """
+
     pins = {}
     for line in (ROOT / 'constraints' / name).read_text().splitlines():
         line = line.split('#')[0].strip()

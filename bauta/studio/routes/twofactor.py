@@ -17,28 +17,43 @@ from .context import Context
 
 
 class Code(BaseModel):
+    """A code from an authenticator app, or a recovery code."""
+
     code: str
 
 
 class TurnOff(BaseModel):
+    """What turning two-factor sign-in off takes: the password, and a code."""
+
     password: str
     code: str
 
 
 def build(context: Context) -> APIRouter:
+    """The routes of two-factor sign-in: the code after a password, setting an
+    app up, recovery codes, turning it off, and an admin's reset.
+    """
 
     router = APIRouter()
     sessions, settings, viewer, admin = context.sessions, context.settings, context.viewer, context.admin
     box, throttle = context.secretBox, context.codeThrottle
 
     def requireHeader(request: Request) -> None:
+        """Raises 403 for a change without the CSRF header, which a page on
+        another site can't send.
+        """
+
         if request.headers.get(CSRF_HEADER) != '1':
             raise HTTPException(status_code=403, detail='missing the {} header'.format(CSRF_HEADER))
 
     def pending(request: Request, session: Session) -> Optional[Tuple[User, str]]:
+        """The account and next step a pending sign-in's cookie names, or None."""
+
         return twofactor.openPending(box, session, request.cookies.get(twofactor.PENDING_COOKIE))
 
     def forgetPending(response: Response) -> None:
+        """Clears the pending sign-in's cookie."""
+
         response.delete_cookie(twofactor.PENDING_COOKIE, path=twofactor.PENDING_PATH, secure=settings.secureCookies, httponly=True, samesite='strict')
 
     def settingUp(request: Request, session: Session) -> Tuple[User, bool]:
@@ -81,6 +96,10 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/auth/2fa/verify')
     def verify(body: Code, request: Request, response: Response, session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /auth/2fa/verify: the code after a password; signs in once it
+        is taken.
+        """
+
         requireHeader(request)
         found = pending(request, session)
         if found is None or found[1] != twofactor.CODE:
@@ -94,6 +113,11 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/auth/2fa/setup')
     def setup(request: Request, session: Session = Depends(sessions)) -> Dict[str, str]:
+        """POST /auth/2fa/setup: a new secret to scan, kept pending until a
+        code confirms it. Refused for an account that signs in through the
+        identity provider, or that has an app already.
+        """
+
         user, _ = settingUp(request, session)
         if user.passwordHash is None:
             raise HTTPException(status_code=409, detail='you sign in through the identity provider, which asks for its own second factor')
@@ -131,6 +155,10 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/auth/2fa/recovery-codes')
     def recoveryCodes(body: Code, request: Request, user: User = Depends(viewer), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /auth/2fa/recovery-codes: new recovery codes, given a code, the
+        old ones no longer taken.
+        """
+
         if user.totpSecret is None:
             raise HTTPException(status_code=409, detail='two-factor sign-in is off')
         checked(request, session, user, body.code)
@@ -141,6 +169,10 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/auth/2fa/off')
     def off(body: TurnOff, request: Request, user: User = Depends(viewer), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /auth/2fa/off: turns two-factor sign-in off, given the password
+        and a code, unless the account's role requires it.
+        """
+
         if user.totpSecret is None:
             raise HTTPException(status_code=409, detail='two-factor sign-in is off')
         if twofactor.required(settings, user):

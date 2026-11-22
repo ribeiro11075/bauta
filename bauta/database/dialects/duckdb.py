@@ -14,27 +14,28 @@ from .base import ColumnCategory, ForeignKey, settingsOf, _OnConflictDialect, _r
 from .names import catalogTableName
 
 
-# How long a connection waits for another process to let go of the file.
-# DuckDB lets one process at a time open a database file. The runner starts
-# one job at a time per DuckDB connection, so what holds it is something
-# else: another run, or a program with the file open. Past this, it fails
-# saying why.
+# LOCK_WAIT_SECONDS: how long a connection waits for another process to let go
+#   of the file. DuckDB lets one process at a time open a database file. The
+#   runner starts one job at a time per DuckDB connection, so what holds it is
+#   something else: another run, or a program with the file open. Past this, it
+#   fails saying why.
+# _LOCK_MESSAGE: what DuckDB says when another process holds the file.
+# EXTERNAL_ACCESS: DuckDB's setting for reaching files, URLs and other
+#   databases from SQL.
+# _CHUNK_VIEW: the chunk is registered under this name for the statement that
+#   loads it.
+# _AS_TEXT: what a column Arrow can't type may hold and still be sent as text:
+#   DuckDB casts the text to the column's type, as it casts each value row by
+#   row.
+# _COUNTING_STATEMENT: statements whose result is the number of rows they
+#   changed, which DuckDB returns as a row rather than as the cursor's
+#   rowcount.
 LOCK_WAIT_SECONDS = 60.0
-
 LOCK_POLL_SECONDS = 0.5
-
-# What DuckDB says when another process holds the file.
 _LOCK_MESSAGE = 'Could not set lock on file'
-# DuckDB's setting for reaching files, URLs and other databases from SQL.
 EXTERNAL_ACCESS = 'enable_external_access'
-
-# The chunk is registered under this name for the statement that loads it.
 _CHUNK_VIEW = 'bauta_chunk'
-# What a column Arrow can't type may hold and still be sent as text: DuckDB
-# casts the text to the column's type, as it casts each value row by row.
 _AS_TEXT = (int, float, decimal.Decimal, str, uuid.UUID)
-# Statements whose result is the number of rows they changed, which DuckDB
-# returns as a row rather than as the cursor's rowcount.
 _COUNTING_STATEMENT = re.compile(r'^\s*(INSERT|UPDATE|DELETE)\b', re.IGNORECASE)
 
 
@@ -93,12 +94,20 @@ class _Session:
     """
 
     def __init__(self, connection: Any) -> None:
-        self._connection = connection  # duckdb.DuckDBPyConnection, which is what this makes a Connection of
+        """Wraps a duckdb.DuckDBPyConnection, which is both connection and
+        cursor, as a DB-API connection that opens a transaction before its
+        first statement.
+        """
+
+        self._connection = connection
         self._inTransaction = False
         self.rowcount = -1
 
 
     def execute(self, query: str, parameters: Optional[Sequence[Any]] = None) -> '_Session':
+        """Runs one statement inside the session's transaction, setting
+        rowcount for INSERT, UPDATE and DELETE.
+        """
 
         self._begin()
         self._connection.execute(query, parameters)
@@ -108,6 +117,9 @@ class _Session:
 
 
     def executemany(self, query: str, parameters: Sequence[Sequence[Any]]) -> '_Session':
+        """Runs one statement per row of parameters inside the transaction;
+        DuckDB reports no row count for these.
+        """
 
         self._begin()
         self._connection.executemany(query, parameters)
@@ -117,6 +129,9 @@ class _Session:
 
 
     def _begin(self) -> None:
+        """Opens a transaction unless one is open: DuckDB autocommits
+        otherwise, where every other driver waits for commit().
+        """
 
         if not self._inTransaction:
             self._connection.execute('BEGIN TRANSACTION')
@@ -124,6 +139,7 @@ class _Session:
 
 
     def _countRows(self, query: str) -> None:
+        """Sets rowcount from the row DuckDB returns for a counting statement, or -1."""
 
         self.rowcount = -1
         if _COUNTING_STATEMENT.match(query):
@@ -132,6 +148,7 @@ class _Session:
 
 
     def commit(self) -> None:
+        """Commits the open transaction, if there is one."""
 
         if self._inTransaction:
             self._inTransaction = False
@@ -139,6 +156,7 @@ class _Session:
 
 
     def rollback(self) -> None:
+        """Rolls back the open transaction, if there is one."""
 
         if self._inTransaction:
             self._inTransaction = False
@@ -154,36 +172,43 @@ class _Session:
 
     @property
     def description(self) -> Any:
+        """The last result's column descriptions, as a DB-API cursor has them."""
 
         return self._connection.description
 
 
     def fetchone(self) -> Any:
+        """The next row of the last result, or None."""
 
         return self._connection.fetchone()
 
 
     def fetchmany(self, size: int) -> List[Any]:
+        """Up to `size` more rows of the last result."""
 
         return self._connection.fetchmany(size)
 
 
     def fetchall(self) -> List[Any]:
+        """The rest of the last result's rows."""
 
         return self._connection.fetchall()
 
 
     def cursor(self) -> Any:
+        """A new cursor on the same database, for a second result read alongside."""
 
         return self._connection.cursor()
 
 
     def register(self, name: str, value: Any) -> None:
+        """Makes `value`, an Arrow table, readable from SQL as `name`."""
 
         self._connection.register(name, value)
 
 
     def unregister(self, name: str) -> None:
+        """Drops what register made readable as `name`."""
 
         self._connection.unregister(name)
 
@@ -205,6 +230,10 @@ class DuckDBDialect(_OnConflictDialect):
     _TEXT_TYPES = {'VARCHAR'}
 
     def openConnection(self, settings: DatabaseConfig) -> Any:
+        """DuckDB's: the file opened in this process, waiting up to
+        LOCK_WAIT_SECONDS while another process holds it, then failing with a
+        message that says so.
+        """
 
         import duckdb
 
@@ -252,6 +281,7 @@ class DuckDBDialect(_OnConflictDialect):
 
 
     def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
+        """The database file's path; DuckDB has no login."""
 
         return {'database': settingsOf(settings, DuckDBConnection).path}
 
@@ -278,6 +308,9 @@ class DuckDBDialect(_OnConflictDialect):
 
 
     def checkConstraints(self, cursor: Cursor, table: str) -> List[str]:
+        """DuckDB's, read from duckdb_constraints(), which a catalog query
+        can't bind the way the base class expects.
+        """
 
         schema, name = catalogTableName(self.databaseType, table)
         cursor.execute("SELECT expression FROM duckdb_constraints() WHERE constraint_type = 'CHECK' AND schema_name = COALESCE(?, current_schema()) "
@@ -287,16 +320,21 @@ class DuckDBDialect(_OnConflictDialect):
 
 
     def placeholders(self, count: int) -> List[str]:
+        """DuckDB's qmark style: `?`."""
 
         return count * ['?']
 
 
     def supportsMaterializedSelections(self) -> bool:
+        """DuckDB's: it takes `AS MATERIALIZED`."""
 
         return True
 
 
     def checksForeignKeysWithinTransaction(self) -> bool:
+        """DuckDB's: it checks a foreign key against what is committed, so
+        parents can't be deleted after their children within one transaction.
+        """
 
         return False
 
@@ -313,12 +351,20 @@ class DuckDBDialect(_OnConflictDialect):
 
     def bulkUpsert(self, cursor: Cursor, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str],
                    rows: Sequence[Sequence[Any]]) -> bool:
+        """DuckDB's: the chunk as an Arrow table, upserted in one statement
+        with ON CONFLICT. False, sending nothing, where Arrow can't type a
+        column.
+        """
 
         return self._loadThroughArrow(cursor, rows, lambda view: 'INSERT INTO {} ({}) SELECT * FROM {} WHERE true {}'.format(
             table, ', '.join(allColumns), view, self._onConflict(primaryKeyColumns, nonPrimaryKeyColumns)))
 
 
     def _loadThroughArrow(self, cursor: Cursor, rows: Sequence[Sequence[Any]], statement: Callable[[str], str]) -> bool:
+        """Runs the statement `statement` builds over the chunk, registered as
+        an Arrow table for its length. False, sending nothing, where Arrow
+        can't type a column of it.
+        """
 
         chunk = _asArrowTable(rows)
         if chunk is None:
@@ -362,6 +408,7 @@ class DuckDBDialect(_OnConflictDialect):
 
 
     def primaryKeyQuery(self) -> str:
+        """DuckDB's, from duckdb_constraints(), in the current database only."""
 
         return ("SELECT unnest(constraint_column_names) FROM duckdb_constraints() "
                 "WHERE constraint_type = 'PRIMARY KEY' AND lower(schema_name) = lower(COALESCE({}, current_schema())) "
@@ -409,6 +456,7 @@ class DuckDBDialect(_OnConflictDialect):
 
 
     def tableExistsQuery(self) -> str:
+        """DuckDB's, from information_schema, in the current database only."""
 
         return ("SELECT count(*) FROM information_schema.tables "
                 "WHERE lower(table_schema) = lower(COALESCE({}, current_schema())) AND lower(table_name) = lower({}) "
@@ -416,6 +464,7 @@ class DuckDBDialect(_OnConflictDialect):
 
 
     def listTablesQuery(self) -> str:
+        """DuckDB's, from information_schema, in the current database only."""
 
         return ("SELECT table_name FROM information_schema.tables "
                 "WHERE lower(table_schema) = lower(COALESCE({}, current_schema())) AND table_type = 'BASE TABLE' "
@@ -446,6 +495,7 @@ class DuckDBDialect(_OnConflictDialect):
 
 
     def foreignKeyCountsQuery(self) -> str:
+        """DuckDB's, from duckdb_constraints(), in the current database only."""
 
         return ("SELECT schema_name, count(*), current_schema() FROM duckdb_constraints() "
                 "WHERE constraint_type = 'FOREIGN KEY' AND database_name = current_database() GROUP BY schema_name")
@@ -505,5 +555,6 @@ def _session(connectionOrCursor: Any) -> _Session:
 
 
 def _quotedString(value: str) -> str:
+    """`value` as a SQL string literal, its quotes doubled."""
 
     return "'{}'".format(value.replace("'", "''"))

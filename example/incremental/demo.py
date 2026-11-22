@@ -49,6 +49,10 @@ def showCommand(arguments: List[Any], environment: Optional[Dict[str, Any]] = No
     """
 
     def shown(value: Any) -> str:
+        """One argument as a reader would type it: a path relative to here,
+        quoted for the shell, in double quotes where that is all it needs.
+        """
+
         text = os.path.relpath(value) if isinstance(value, Path) else str(value)
         if "'" in text and not any(character in text for character in '"$`\\'):
             return '"{}"'.format(text)

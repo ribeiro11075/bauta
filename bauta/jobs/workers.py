@@ -23,21 +23,21 @@ from .pipeline import _runDataJob, setCoreBudget
 from .progress import setProgressSink
 from .throttle import setSharedReadLimits
 
+# TERMINATE_GRACE_SECONDS: how long a timed-out job gets to exit after SIGTERM
+#   before it is killed.
+# EXIT_ORPHANED: the exit code a job uses when it finds its parent gone.
+#   Nothing reads it -- by then there is no parent to report to -- but it tells
+#   the two apart in a process listing or a core dump.
+# EXIT_GRACE_SECONDS: how long a job may take to exit once it has sent its
+#   outcome, before it is stopped. It has nothing left to do by then but close
+#   its connections.
+# MESSAGES_PER_POLL: messages read from one job's pipe before looking at the
+#   others, so a job logging without pause can't starve the rest.
 logger = logging.getLogger(LOGGER_NAME)
-
-
 START_METHOD_VARIABLE = 'BAUTA_START_METHOD'
-# How long a timed-out job gets to exit after SIGTERM before it is killed.
 TERMINATE_GRACE_SECONDS = 5.0
-# The exit code a job uses when it finds its parent gone. Nothing reads it --
-# by then there is no parent to report to -- but it tells the two apart in a
-# process listing or a core dump.
 EXIT_ORPHANED = 3
-# How long a job may take to exit once it has sent its outcome, before it is
-# stopped. It has nothing left to do by then but close its connections.
 EXIT_GRACE_SECONDS = 10.0
-# Messages read from one job's pipe before looking at the others, so a job
-# logging without pause can't starve the rest.
 MESSAGES_PER_POLL = 500
 
 
@@ -158,12 +158,16 @@ class _JobProcess:
     def __init__(self, job: str, jobConfig: DataJobConfig, connectionConfiguration: Dict[str, ConnectionConfig],
                  memory: MemoryBackend, logLevel: int, maskingThreads: int = 1, budget: Optional[CoreBudget] = None,
                  readLimits: Optional[Dict[str, Any]] = None) -> None:
+        """Starts the job in a process of its own, with a pipe it reports on:
+        log records, rows written so far (`rows`; see jobs.progress), then its
+        outcome.
+        """
+
         self.job = job
         self.startedAt = time.time()
         self.deadline = self.startedAt + jobConfig.timeoutSeconds if jobConfig.timeoutSeconds else None
         self._outcome: Optional[JobOutcome] = None
         self._closed = False
-        # Rows written so far, as the job last said; see jobs.progress.
         self.rows = 0
 
         self._connection, sendingEnd = PROCESS_CONTEXT.Pipe(duplex=False)
@@ -182,6 +186,9 @@ class _JobProcess:
 
     @property
     def waitables(self) -> List[Any]:
+        """What the run loop waits on for this job: its pipe until it has
+        closed, and its process.
+        """
 
         return [self.process.sentinel] if self._closed else [self._connection, self.process.sentinel]
 
@@ -284,6 +291,7 @@ class _JobProcess:
 
 
     def _died(self) -> JobOutcome:
+        """The outcome for a process that exited without reporting one."""
 
         self.process.join()
         logger.error('{}: its process exited with code {} before reporting an outcome'.format(self.job, self.process.exitcode),
@@ -294,5 +302,6 @@ class _JobProcess:
 
 
     def _failed(self, error: str) -> JobOutcome:
+        """A failed outcome, ending now, with `error`."""
 
         return JobOutcome(job=self.job, status=JobStatus.FAILED, error=error, startedAt=self.startedAt, finishedAt=time.time())

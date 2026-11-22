@@ -119,6 +119,8 @@ def test_a_file_reference_can_be_escaped(tmp_path):
 
 
 def _connection(**overrides):
+    """A PostgreSQL connection's settings, with `overrides`."""
+
     from bauta.configuration import connectionConfig
 
     fields = dict(type='postgresql', user='u', database='d', host='h')

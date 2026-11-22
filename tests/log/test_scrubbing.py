@@ -201,10 +201,14 @@ def test_describe_error_names_the_type_and_scrubs_the_message():
 
 
 def _record(message, args=(), exc_info=None):
+    """An ERROR record from the package's logger."""
+
     return logging.LogRecord(LOGGER_NAME, logging.ERROR, __file__, 1, message, args, exc_info)
 
 
 def _raised(message):
+    """The exc_info of a RuntimeError raised with `message`."""
+
     try:
         raise RuntimeError(message)
     except RuntimeError as error:

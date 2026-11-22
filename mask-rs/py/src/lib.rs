@@ -33,27 +33,26 @@ use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods, PyFloat, PyInt, PyList, P
 use bauta_core::cheap;
 use bauta_core::{Charset, FakeKind, FakeLists, FakeStrategy, FpeStrategy, KeyStrategy, KeyedHash, MaskError, NumberInput, NumberOutput, NumberStrategy, RedactStrategy, Replacement};
 
+// ALLOCATOR: the extension allocates through mimalloc rather than the system
+//   allocator; it came in with the masker's thread pool, in 0.1.3.
+// CACHE_ENTRIES, CACHE_MAXIMUM_TEXT: the values a `key`, `fpe` or `fake*`
+//   column remembers across chunks, and the longest text it remembers. Foreign
+//   keys and statuses are mostly repeats, but seldom within one chunk; the
+//   cache keeps the first values it sees rather than churning, so a column of
+//   distinct values costs a lookup, not an eviction.
+// PARALLEL_MINIMUM: the distinct values in a call below which splitting it
+//   across threads costs more than it saves.
+// POOL: the pool masking runs on in this process, or None for the calling
+//   thread alone. Set by `setThreads`; one per process, shared by its columns.
+// FALLBACK, REFUSED: why a position came back unmasked. The Python layer turns
+//   REFUSED into MaskingError with the message alongside it, and FALLBACK into
+//   a call to its own implementation.
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-/// Values a `key`, `fpe` or `fake*` column remembers across chunks, and the
-/// longest text it remembers. Foreign keys and statuses are mostly repeats, but seldom
-/// within one chunk; the cache keeps the first values it sees rather than
-/// churning, so a column of distinct values costs a lookup, not an eviction.
 const CACHE_ENTRIES: usize = 65_536;
 const CACHE_MAXIMUM_TEXT: usize = 64;
-
-/// Distinct values in a call below which splitting it across threads costs
-/// more than it saves.
 const PARALLEL_MINIMUM: usize = 256;
-
-/// The pool masking runs on in this process, or None for the calling thread
-/// alone. Set by `setThreads`; one per process, shared by its columns.
 static POOL: RwLock<Option<Arc<rayon::ThreadPool>>> = RwLock::new(None);
-
-/// Why a position came back unmasked. The Python layer turns REFUSED into
-/// MaskingError with the message alongside it, and FALLBACK into a call to its
-/// own implementation.
 const FALLBACK: &str = "fallback";
 const REFUSED: &str = "refused";
 
@@ -85,6 +84,8 @@ impl Input {
     }
 }
 
+/// One value masked, ready to become a Python object: or Fallback, for one
+/// Python masks itself, or Refused, with its message.
 #[derive(Clone)]
 enum Output {
     Null,
@@ -97,6 +98,7 @@ enum Output {
     Refused(String),
 }
 
+/// A strategy the masker can run, with the options it was built from.
 enum Strategy {
     Key(KeyStrategy),
     Fpe(Box<FpeStrategy>),
@@ -123,6 +125,8 @@ impl Strategy {
         }
     }
 
+    /// One value through the strategy: NULL as it is, a type the port doesn't
+    /// cover back to Python.
     fn maskOne(&self, hash: &KeyedHash, input: &Input) -> Output {
         let result: Result<Output, MaskError> = match (self, input) {
             (_, Input::Null) => return Output::Null,
@@ -191,6 +195,7 @@ impl Strategy {
 }
 
 impl From<NumberOutput> for Output {
+    /// A masked number as an output of the same type.
     fn from(output: NumberOutput) -> Self {
         match output {
             NumberOutput::Int(number) => Output::Int(number),
@@ -211,6 +216,7 @@ enum CacheKey {
 }
 
 impl CacheKey {
+    /// What a value is remembered by in the cache, or None for one that isn't.
     fn of(input: &Input) -> Option<Self> {
         match input {
             Input::Text(text) => Some(CacheKey::Text(text.clone())),
@@ -221,6 +227,8 @@ impl CacheKey {
         }
     }
 
+    /// Whether the value is short enough to remember: text past
+    /// CACHE_MAXIMUM_TEXT isn't.
     fn remembered(&self) -> bool {
         match self {
             CacheKey::Text(text) => text.len() <= CACHE_MAXIMUM_TEXT,
@@ -556,6 +564,11 @@ fn maskChunk<'py>(py: Python<'py>, maskers: Vec<Option<Py<Masker>>>, rows: &Boun
 }
 
 impl Masker {
+    /// Every input of a column masked: each distinct value once, a remembered
+    /// one from the cache, and the rest in parallel on the masker's pool where
+    /// there are PARALLEL_MINIMUM of them. Only answers are remembered; a
+    /// refusal or a fallback is decided again by whichever implementation meets
+    /// it first.
     fn maskInputs(&self, inputs: &[Input]) -> Vec<Output> {
         let mut sources: Vec<Source> = Vec::with_capacity(inputs.len());
         let mut work: Vec<usize> = Vec::new();
@@ -697,6 +710,8 @@ fn threads() -> usize {
     POOL.read().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref().map_or(1, |pool| pool.current_num_threads())
 }
 
+/// The `bauta_rs` Python module: the masker, its threads and the constants
+/// Python reads.
 #[pymodule]
 fn bauta_rs(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;

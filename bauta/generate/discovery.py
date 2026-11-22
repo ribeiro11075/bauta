@@ -25,21 +25,20 @@ from ..database.dialects import ColumnCategory, ForeignKey, quoteFoldedTable
 from ..masking import changesValues
 from ..masking.strategies import structuredText
 
+# VALUE_MATCH_THRESHOLD: a share of sampled values that must match a rule
+#   before it's trusted.
+# _ADDRESS_VALUES: what PostgreSQL's inet and cidr arrive as.
+# _COORDINATE_SCALES: the scales a column of coordinates is tried at, smallest
+#   first: the ones in use, microdegrees (10**6) and the E7 of GPS formats
+#   (10**7) above all. Size alone can't always tell them apart -- an E7
+#   longitude sampled below 18 degrees fits 10**6 too -- so the proposal says
+#   to check it.
 DEFAULT_SAMPLE_SIZE = 1000
-
-# A share of sampled values that must match a rule before it's trusted.
 VALUE_MATCH_THRESHOLD = 0.8
-
 FREE_TEXT_AVERAGE_LENGTH = 60
-
 DISCOVERY_FILE = 'discovery.yaml'
 TEXT_STRATEGIES = {'email', 'hash', 'fakeFirstName', 'fakeLastName', 'fakeName', 'fakeCity', 'fakeCompany', 'fakeStreetAddress'}
-# What PostgreSQL's inet and cidr arrive as.
 _ADDRESS_VALUES = (ipaddress.IPv4Address, ipaddress.IPv6Address, ipaddress.IPv4Network, ipaddress.IPv6Network)
-# The scales a column of coordinates is tried at, smallest first: the ones
-# in use, microdegrees (10**6) and the E7 of GPS formats (10**7) above all.
-# Size alone can't always tell them apart -- an E7 longitude sampled below 18
-# degrees fits 10**6 too -- so the proposal says to check it.
 _COORDINATE_SCALES = (10 ** 5, 10 ** 6, 10 ** 7)
 
 
@@ -73,6 +72,7 @@ class DiscoveryRules(NamedTuple):
     personalTables: FrozenSet[str]
 
     def matchName(self, column: str) -> Optional[NameRule]:
+        """The first name rule one of whose words is among the column name's, or None."""
 
         words = nameWords(column)
 
@@ -106,6 +106,7 @@ BUILTIN_RULES = DiscoveryRules(
 
 
 def _fullMatch(pattern: str) -> Callable[[str], bool]:
+    """A test that a whole text matches `pattern`."""
 
     compiled = re.compile(pattern)
 
@@ -137,6 +138,7 @@ def discoveryRules(rulesFile: Optional[DiscoveryRulesFile] = None) -> DiscoveryR
 
 
 class Suggestion(NamedTuple):
+    """A policy proposed for one column, and why."""
 
     column: str
     policy: Dict[str, Any]
@@ -144,6 +146,7 @@ class Suggestion(NamedTuple):
 
 
 class TableProposal(NamedTuple):
+    """The policies proposed for one table's columns."""
 
     table: str
     columns: List[Suggestion]
@@ -180,6 +183,7 @@ def _inferCategory(values: Sequence[Any]) -> Optional[ColumnCategory]:
 
 
 def _share(values: Sequence[str], test: Callable[[str], bool]) -> float:
+    """The share of `values` passing `test`, 0 for none."""
 
     return sum(1 for value in values if test(value)) / len(values) if values else 0.0
 
@@ -309,6 +313,9 @@ def _jsonStrings(values: Sequence[Any]) -> Sequence[Any]:
 
 
 def _leaves(document: Any, path: Tuple[str, ...], into: Dict[Tuple[str, ...], List[Any]]) -> None:
+    """Collects each scalar of a JSON document by its path, `[]` standing for
+    any element of an array, into `into`.
+    """
 
     if isinstance(document, dict):
         for key, value in document.items():
@@ -368,6 +375,9 @@ def keyDomain(table: str, column: str, primaryKey: Sequence[str]) -> str:
 
 
 def _isNumeric(values: Sequence[Any], category: Optional[ColumnCategory]) -> bool:
+    """Whether a column holds numbers, by its type where the driver says, else
+    by its values.
+    """
 
     return (category or _inferCategory(values)) == ColumnCategory.NUMBER
 
@@ -589,11 +599,13 @@ def jobName(table: str, taken: Optional[Set[str]] = None) -> str:
 
 
 def _scalar(value: Any) -> str:
+    """A value as YAML writes it inline."""
 
     return yaml.safe_dump(value, default_flow_style=True, width=10 ** 6).strip().removesuffix('...').strip()
 
 
 def _flow(policy: Mapping[str, Any]) -> str:
+    """A policy as one line of YAML flow style, its keys in order."""
 
     return yaml.safe_dump(dict(policy), default_flow_style=True, sort_keys=False, width=10 ** 6).strip()
 
@@ -629,6 +641,10 @@ def renderJobs(drafts: Sequence[JobDraft], sourceConnection: str, targetConnecti
     """
 
     def target(table: str) -> str:
+        """The target table's name, quoted as the target database folds it
+        where one is known.
+        """
+
         return table if targetType is None else quoteFoldedTable(targetType, table)
 
     inPlace = sourceConnection == targetConnection

@@ -1,5 +1,5 @@
 //! The `fpe` strategy: NIST FF1, for policies that must name a published
-//! algorithm. `builtinMasking.FPEStrategy`.
+//! algorithm. `strategies.FPEStrategy`.
 //!
 //! FF1 is only defined for at least a million possible values, so shorter
 //! values fall back to `key`'s permutation -- or fail, under `strict`. The two
@@ -13,7 +13,7 @@ use crate::digits::decimalDigits;
 use crate::key::{Charset, KeyStrategy};
 use crate::KeyedHash;
 
-/// `builtinMasking._FPE_ALPHABETS`. Unlike `key`, which masks within a character's own
+/// `strategies.keys._FPE_ALPHABETS`. Unlike `key`, which masks within a character's own
 /// class, `fpe` has one alphabet per charset -- so under `alphanumeric` a
 /// letter may become a digit.
 fn alphabetFor(charset: Charset) -> &'static [u8] {
@@ -24,6 +24,8 @@ fn alphabetFor(charset: Charset) -> &'static [u8] {
     }
 }
 
+/// The `fpe` strategy: FF1 over a charset's alphabet, falling back to `key` for
+/// a value too short, unless strict.
 pub struct FpeStrategy {
     pub charset: Charset,
     pub strict: bool,
@@ -36,6 +38,8 @@ pub struct FpeStrategy {
 }
 
 impl FpeStrategy {
+    /// The strategy's two ciphers, under a key derived from the column's subkey
+    /// as Python derives it.
     pub fn new(hash: &KeyedHash, charset: Charset, strict: bool) -> Self {
         let key = hash.digest(b"", b"ff1 key");
 
@@ -48,6 +52,8 @@ impl FpeStrategy {
         }
     }
 
+    /// An integer encrypted with FF1 over its digits, keeping its sign and
+    /// digit count.
     pub fn maskInteger(&self, hash: &KeyedHash, value: &BigInt) -> Masked<BigInt> {
         let negative = value.sign() == Sign::Minus;
         let magnitude = value.magnitude();
@@ -79,6 +85,8 @@ impl FpeStrategy {
         Ok(BigInt::from_biguint(if negative { Sign::Minus } else { Sign::Plus }, number))
     }
 
+    /// Text with the characters of the charset encrypted together and the rest
+    /// kept.
     pub fn maskText(&self, hash: &KeyedHash, text: &str) -> Masked<String> {
         // As in `key`: Python decides the non-ASCII refusal with `str.isalnum`,
         // whose categories Rust does not reproduce exactly, so those values go

@@ -18,6 +18,8 @@ from tests.studio.test_studioApi import _waitForRun
 
 
 def _run(client):
+    """Launches a run of every due job, waits for it, and returns its run id."""
+
     launched = client.post('/api/runs', json={'jobs': []}).json()
     finished = _waitForRun(client, launched['id'])
     assert finished['exitCode'] == 0, finished.get('log')
@@ -44,6 +46,8 @@ def test_a_full_refresh_is_offered_only_where_every_incremental_job_can_take_one
 
 
 def _makeIncremental(settings):
+    """Makes the orders job incremental on `id`."""
+
     jobs = settings.configDirectory / 'jobs.yaml'
     jobs.write_text(jobs.read_text().replace('    targetTableFinal: orders_copy\n',
                                              '    targetTableFinal: orders_copy\n    watermarkColumn: id\n    watermarkInitial: -1\n')
@@ -70,6 +74,8 @@ def test_an_admin_fixes_it_with_a_stage_table_and_a_full_refresh_then_runs(signI
 # Cancelling -------------------------------------------------------------------
 
 def _plantLive(settings, runId, pid, host=None):
+    """Writes a live cycle's file, as a run on `host` with `pid` would."""
+
     directory = settings.configDirectory / 'memory.yaml.running'
     directory.mkdir(exist_ok=True)
     (directory / (runId + '.json')).write_text(json.dumps({'runId': runId, 'pid': pid, 'host': host or socket.gethostname(),

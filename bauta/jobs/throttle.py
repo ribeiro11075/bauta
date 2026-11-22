@@ -15,11 +15,10 @@ from typing import Any, Dict, Generator, Iterable, List, Mapping, Optional, Tupl
 
 from ..configuration import ConnectionConfig
 
-# How much reading may run ahead of the limit after a pause, in seconds of it:
-# enough that a limit doesn't slow a job that reads below it on average, too
-# little to let a burst past it.
+# BURST_SECONDS: how much reading may run ahead of the limit after a pause, in
+#   seconds of it: enough that a limit doesn't slow a job that reads below it
+#   on average, too little to let a burst past it.
 BURST_SECONDS = 1.0
-
 STAGES = ('read', 'mask', 'write', 'throttled')
 
 
@@ -36,17 +35,21 @@ class StageTimes:
     """
 
     def __init__(self) -> None:
+        """Every stage at zero, behind a lock: a partitioned job's slices add to one."""
+
         self._seconds = dict.fromkeys(STAGES, 0.0)
         self._lock = threading.Lock()
 
 
     def add(self, stage: str, seconds: float) -> None:
+        """Adds `seconds` to a stage."""
 
         with self._lock:
             self._seconds[stage] += seconds
 
 
     def asDict(self) -> Dict[str, float]:
+        """Each stage's seconds, to the millisecond."""
 
         with self._lock:
             return {stage: round(seconds, 3) for stage, seconds in self._seconds.items()}
@@ -66,6 +69,10 @@ class ReadLimit:
     """
 
     def __init__(self, rowsPerSecond: float, shared: Any = None) -> None:
+        """A limit of `rowsPerSecond`, its schedule held in `shared` where it
+        spans processes, else in this process.
+        """
+
         self.rowsPerSecond = rowsPerSecond
         self._shared = shared
         self._next = float('-inf')

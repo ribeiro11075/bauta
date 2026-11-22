@@ -26,6 +26,8 @@ ROWS = 1000
 
 @pytest.fixture
 def source(tmp_path):
+    """A SQLite file of ROWS customers."""
+
     path = tmp_path / 'prod.db'
     connection = sqlite3.connect(path)
     try:
@@ -39,6 +41,10 @@ def source(tmp_path):
 
 
 def _run(tmp_path, source, job='j', lake=None, **overrides):
+    """Runs one job copying customers into a files connection, with `overrides`
+    and the lake's settings.
+    """
+
     settings = {
         'prod': connectionConfig(type='sqlite', path=str(source)),
         'lake': connectionConfig(type='files', root=str(tmp_path / 'lake'), **(lake or {})),
@@ -50,10 +56,14 @@ def _run(tmp_path, source, job='j', lake=None, **overrides):
 
 
 def _snapshots(tmp_path):
+    """The table's snapshot directories, in order."""
+
     return sorted((tmp_path / 'lake' / 'crm' / 'customers').glob('snapshot=*'))
 
 
 def _read(directory):
+    """A directory of Parquet files read as one table."""
+
     return pyarrow.dataset.dataset(str(directory), format='parquet').to_table()
 
 

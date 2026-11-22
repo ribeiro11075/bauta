@@ -1,3 +1,7 @@
+// The web app's root: who is signed in, the sign-in page for no one, and for
+// everyone else the navigation and each page's route, an admin's pages only for
+// admins.
+
 import { createContext, useContext, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
@@ -22,12 +26,14 @@ import { Compare } from './pages/Compare'
 
 const UserContext = createContext<User | null>(null)
 
+/** The signed-in user, for any page inside the app. */
 export function useUser(): User {
   const user = useContext(UserContext)
   if (!user) throw new Error('useUser outside a signed-in page')
   return user
 }
 
+/** Asks who is signed in, and shows the sign-in page or the app accordingly. */
 export function App() {
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<User>('/auth/me'), retry: false })
 
@@ -63,6 +69,10 @@ export function App() {
   )
 }
 
+/**
+ * The navigation beside the page, with the signed-in user and sign-out. Signing
+ * out keeps nothing of the session: a fresh page, on the sign-in form.
+ */
 function Shell({ children }: { children: ReactNode }) {
   const user = useUser()
   const client = useQueryClient()

@@ -20,6 +20,8 @@ ORCHESTRATORS = EXAMPLES / 'orchestrators'
 
 @pytest.fixture
 def demoRun(tmp_path, monkeypatch):
+    """The orchestrator demo's result, run in `tmp_path`."""
+
     monkeypatch.syspath_prepend(str(ORCHESTRATORS))
     with loadedDemo('orchestrators', 'orchestratorsDemo') as demo:
         yield demo.main(tmp_path / 'transaction')
@@ -41,6 +43,8 @@ def test_the_demo_runs_a_process_per_job_side_by_side_and_a_full_refresh_removes
 
 
 def loadTasks(monkeypatch):
+    """The example's bautaTasks module, imported fresh."""
+
     monkeypatch.syspath_prepend(str(ORCHESTRATORS))
     sys.modules.pop('bautaTasks', None)
     import bautaTasks
@@ -81,6 +85,10 @@ def loadFile(name, monkeypatch, stubs):
 
 
 def module(name, **contents):
+    """A module named `name` holding `contents`, for faking an orchestrator's
+    package.
+    """
+
     created = types.ModuleType(name)
     created.__dict__.update(contents)
     return created

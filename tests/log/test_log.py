@@ -27,6 +27,9 @@ def _fileHandlers(logger):
 
 @pytest.fixture(autouse=True)
 def restoreLogger():
+    """Gives each test the package's logger with no handlers, and puts back its
+    handlers, level and propagation after.
+    """
 
     logger = logging.getLogger(LOGGER_NAME)
     originalHandlers = list(logger.handlers)

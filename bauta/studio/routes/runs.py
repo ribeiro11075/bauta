@@ -20,16 +20,23 @@ from .context import Context
 
 
 class NewRun(BaseModel):
+    """The jobs a run is started for, every due job when none, and whether it
+    is a full refresh.
+    """
+
     jobs: List[str] = Field(default_factory=list)
     fullRefresh: bool = False
 
 
 def build(context: Context) -> APIRouter:
+    """The routes for runs: history, live runs, launching, cancelling and evidence."""
 
     router = APIRouter()
     sessions, viewer, operator, launcher, project = context.sessions, context.viewer, context.operator, context.launcher, context.project
 
     def _launched(session: Session, liveByPid: Dict[int, str], limit: int = 100) -> List[LaunchedRun]:
+        """The latest runs Studio launched, each brought up to date with its process."""
+
         launchedRuns = list(session.scalars(select(LaunchedRun).order_by(LaunchedRun.id.desc()).limit(limit)))
         for launched in launchedRuns:
             launcher.refresh(session, launched, liveByPid)
@@ -37,6 +44,10 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/runs')
     def listRuns(user: User = Depends(viewer), session: Session = Depends(sessions), limit: int = Query(HISTORY_RUNS, ge=1, le=500)) -> Dict[str, Any]:
+        """GET /runs: recent runs from history and those running now, with who
+        started each from Studio.
+        """
+
         current = project()
         kept, history, complete = workspace.readHistory(current, runs=limit)
         allRuns = workspace.runs(current, history, complete)[:limit + 10]
@@ -53,6 +64,8 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/runs/compare')
     def compare(earlier: str, later: str, user: User = Depends(viewer), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """GET /runs/compare: two runs side by side, manifests included."""
+
         current = project()
         _, history, _ = workspace.readHistory(current)
         runs = {runId: workspace.runDetail(current, history, runId) for runId in (earlier, later)}
@@ -63,6 +76,8 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/runs/{runId}')
     def getRun(runId: str, user: User = Depends(viewer), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """GET /runs/{runId}: one run, its jobs, and who started or cancelled it."""
+
         current = project()
         _, history, _ = workspace.readHistory(current)
         detail = workspace.runDetail(current, history, runId)
@@ -80,6 +95,11 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/launched/{launchedId}')
     def getLaunched(launchedId: int, user: User = Depends(viewer), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """GET /launched/{launchedId}: one run Studio launched, its log
+        included. A run that has just finished has its manifest archived before
+        another replaces it.
+        """
+
         launched = session.get(LaunchedRun, launchedId)
         if launched is None:
             raise HTTPException(status_code=404, detail='no such launched run')
@@ -87,12 +107,13 @@ def build(context: Context) -> APIRouter:
         finishedBefore = launched.finishedAt is not None
         launcher.refresh(session, launched, {record['pid']: record['runId'] for record in current.running()})
         if launched.finishedAt is not None and not finishedBefore:
-            # The run just wrote its manifest; keep it before another replaces it.
             evidence.archiveManifest(session, current)
         return dict(launched.asDict(), log=launcher.log(launched))
 
     @router.post('/runs/{runId}/cancel')
     def cancel(runId: str, user: User = Depends(operator), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /runs/{runId}/cancel: stops a run that is running."""
+
         live = next((found for found in project().running() if found['runId'] == runId), None)
         if live is None:
             raise HTTPException(status_code=409, detail='the run is not running')
@@ -106,6 +127,8 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/launched/{launchedId}/cancel')
     def cancelLaunched(launchedId: int, user: User = Depends(operator), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /launched/{launchedId}/cancel: stops a run Studio launched."""
+
         launched = session.get(LaunchedRun, launchedId)
         if launched is None or launched.finishedAt is not None or not launcher.cancel(launched):
             raise HTTPException(status_code=409, detail='the run is not running')
@@ -115,6 +138,8 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/runs/{runId}/evidence')
     def runEvidence(runId: str, user: User = Depends(viewer), session: Session = Depends(sessions)) -> Response:
+        """GET /runs/{runId}/evidence: a zip of what proves what the run did."""
+
         current = project()
         evidence.archiveManifest(session, current)
         _, history, _ = workspace.readHistory(current)
@@ -128,6 +153,8 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/runs')
     def startRun(body: NewRun, user: User = Depends(operator), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /runs: starts `bauta run` for the jobs given."""
+
         current = project()
         unknown = [job for job in body.jobs if job not in current.jobsFile.jobs]
         if unknown:

@@ -21,6 +21,10 @@ DATABASE = 'postgresql'
 
 @pytest.fixture
 def typesTable(liveDatabase):
+    """A PostgreSQL table of a column for each type COPY is trusted with, and
+    an array, dropped after.
+    """
+
     tableName = 'copy_types_{}'.format(uuid.uuid4().hex[:8])
     liveDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, t TEXT, n NUMERIC(20,5), f FLOAT8, b BOOLEAN, d DATE, ts TIMESTAMPTZ, '
                        'tm TIME, u UUID, by BYTEA, big BIGINT, arr INT[])'.format(tableName))

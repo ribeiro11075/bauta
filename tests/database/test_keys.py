@@ -36,6 +36,8 @@ def test_an_index_in_an_attached_database_is_put_back_in_it():
 
 @pytest.fixture(params=['sqlite', 'duckdb'])
 def database(request, tmp_path):
+    """An empty SQLite or DuckDB database, once for each."""
+
     if request.param == 'duckdb':
         pytest.importorskip('duckdb')
     settings = connectionConfig(type=DatabaseType(request.param), path=str(tmp_path / 'keys.db'))
@@ -45,6 +47,8 @@ def database(request, tmp_path):
 
 
 def _keys(database, table):
+    """The table's primary key and unique keys, as the dialect reads them."""
+
     return database.dialect.primaryKey(database.cursor, table), database.dialect.uniqueKeys(database.cursor, table)
 
 
@@ -93,6 +97,8 @@ def test_a_stage_holding_rows_is_not_created_again(database):
 
 
 def _swapJob():
+    """A swap job copying `source` into `orders` through `orders_stage`."""
+
     from bauta.configuration import DataJobConfig
 
     return DataJobConfig(active=True, sourceConnection='db', sourceQuery='SELECT id, ref FROM source', targetConnection='db',
@@ -101,6 +107,10 @@ def _swapJob():
 
 @pytest.fixture
 def swapTables(tmp_path):
+    """A SQLite database with a two-row source, a keyed orders table, and an
+    unkeyed stage.
+    """
+
     settings = connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'swap.db'))
 
     with Database(connectionSettings=settings, create=True) as database:

@@ -1,3 +1,7 @@
+// Discovery review: the columns each masked job's source returns now that its
+// policy doesn't name, with the policy discover proposes, for an admin to
+// accept into the job's file.
+
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
@@ -6,12 +10,17 @@ import { useUser } from '../App'
 import { DiffView, Failure, Loading, PageHead, Pill } from '../components/ui'
 import { ago } from '../format'
 
+/** A policy in one line: its strategy, then its options. */
 function policyText(policy: Record<string, unknown>): string {
   const { strategy, ...options } = policy
   const rest = Object.entries(options).map(([name, value]) => `${name}: ${JSON.stringify(value)}`).join(', ')
   return rest ? `${strategy} (${rest})` : String(strategy)
 }
 
+/**
+ * The latest check, a button to check again, and each job's new and removed
+ * columns, chosen for accepting.
+ */
 export function Discovery() {
   const user = useUser()
   const client = useQueryClient()

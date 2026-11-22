@@ -13,11 +13,10 @@ from ..core import MaskingError, Strategy, canonical
 from .common import _choiceOption, _integerOption, _textOption, _typeName
 
 
-# Metres in a degree of latitude, and of longitude at the equator; a degree of
-# longitude spans this times the cosine of its latitude.
+# _METRES_PER_DEGREE: metres in a degree of latitude, and of longitude at the
+#   equator; a degree of longitude spans this times the cosine of its latitude.
+# _AXIS_LIMITS: how far from zero each axis reaches, in degrees.
 _METRES_PER_DEGREE = 111320.0
-
-# How far from zero each axis reaches, in degrees.
 _AXIS_LIMITS = {'latitude': 90, 'longitude': 180}
 
 
@@ -53,6 +52,7 @@ class CoordinateStrategy(Strategy):
 
     @classmethod
     def checkOptions(cls, options: Dict[str, Any]) -> None:
+        """Refuses latitudeColumn on a latitude, which is the column it names."""
 
         if 'latitudeColumn' in options and options['axis'] != 'longitude':
             raise ValueError('strategy "coordinate" takes latitudeColumn for a longitude only')
@@ -73,6 +73,10 @@ class CoordinateStrategy(Strategy):
 
 
     def _moved(self, value: float, degrees: float) -> float:
+        """`value` moved by `degrees` along its axis: a latitude that would
+        pass a pole moves the other way instead, and a longitude wraps round to
+        stay within [-180, 180).
+        """
 
         moved = value + degrees
         if self.options['axis'] == 'latitude':
@@ -132,11 +136,15 @@ class CoordinateStrategy(Strategy):
 
 
     def mask(self, value: Any) -> Any:
+        """The coordinate moved, with no latitude to scale a longitude by."""
 
         return self._move(value, None)
 
 
     def maskColumnWith(self, values: Sequence[Any], context: Sequence[Any], chunkIndex: int) -> List[Any]:
+        """The longitudes moved, each scaled by its row's latitude, so the
+        distance on the ground is the one configured.
+        """
 
         return [None if value is None else self._move(value, latitude) for value, latitude in zip(values, context)]
 
@@ -178,6 +186,11 @@ class IpStrategy(Strategy):
 
 
     def mask(self, value: Any) -> Any:
+        """An address, interface or network as another of the same kind, given
+        as text, an address type, 4 or 16 bytes, or an integer below 2**32; a
+        network keeps its prefix length and an interface its network's. Raises
+        MaskingError for anything else.
+        """
 
         # An interface first: it is a subclass of its address type.
         if isinstance(value, (ipaddress.IPv4Interface, ipaddress.IPv6Interface)):
@@ -203,6 +216,7 @@ class IpStrategy(Strategy):
 
 
     def _typed(self, address: Any) -> Any:
+        """An address permuted within its version's address space."""
 
         number = self._permuted(int(address), address.max_prefixlen)
 

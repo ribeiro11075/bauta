@@ -26,24 +26,32 @@ from .checks import latest
 from .db import Check, LaunchedRun, User, utcnow
 from .settings import PRIVATE_DIRECTORY_MODE, Settings
 
-# Read back for the run page: the end of a long log is what matters.
+# LOG_TAIL_BYTES: read back for the run page: the end of a long log is what
+#   matters.
+# CYCLE_STARTED: how `bauta run` names each cycle it starts, in its own log.
+# BENCH_TIMEOUT_SECONDS: the longest a benchmark may run before it is stopped.
+# BENCHES_AT_ONCE: benchmarks read real sources, up to millions of rows each,
+#   so only so many run at once, and one at a time for any job.
+# BENCHES_LOOKED_AT: how many of the latest benchmarks are looked through for
+#   one still running.
 LOG_TAIL_BYTES = 256 * 1024
-# How `bauta run` names each cycle it starts, in its own log.
 CYCLE_STARTED = re.compile(r'Starting cycle ([0-9a-f-]{36}) with')
-# The longest a benchmark may run before it is stopped.
 BENCH_TIMEOUT_SECONDS = 1800
-# Benchmarks read real sources, up to millions of rows each, so only so many
-# run at once, and one at a time for any job.
 BENCHES_AT_ONCE = 2
-# How many of the latest benchmarks are looked through for one still running.
 BENCHES_LOOKED_AT = 200
-
 _benchStarting = threading.Lock()
 
 
 class Launcher:
+    """Starts `bauta run` processes for Studio, records each as a LaunchedRun,
+    and follows them until they exit.
+    """
 
     def __init__(self, settings: Settings) -> None:
+        """A launcher with no process started. `_processes` holds the processes
+        this Studio started, by LaunchedRun id.
+        """
+
         self.settings = settings
         self._processes: Dict[int, subprocess.Popen] = {}
         self._lock = threading.Lock()
@@ -64,6 +72,9 @@ class Launcher:
 
 
     def start(self, session: Session, user: User, jobs: List[str], fullRefresh: bool = False) -> LaunchedRun:
+        """Starts `bauta run` for `jobs`, its output to a log file of its own,
+        and records the launch.
+        """
 
         self.settings.runLogDirectory.mkdir(mode=PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
         launched = LaunchedRun(userId=user.id, email=user.email, jobs=jobs, options={'fullRefresh': fullRefresh})
@@ -156,6 +167,9 @@ class Launcher:
 
 
     def log(self, launched: LaunchedRun) -> Optional[str]:
+        """The end of a launched run's log, up to LOG_TAIL_BYTES, or None where
+        there is none.
+        """
 
         path = Path(launched.logPath) if launched.logPath else None
         if path is None or not path.exists():
@@ -170,6 +184,7 @@ class BenchRefused(Exception):
 
 
 def _running(session: Session) -> List[Check]:
+    """The benchmarks still running, among the latest."""
 
     return [check for check in latest(session, 'bench', BENCHES_LOOKED_AT) if check.result.get('status') == 'running']
 
@@ -211,11 +226,15 @@ def startBench(settings: Settings, database: Any, email: str, job: str, rows: in
                                              '--format', 'json', '--quiet']
 
     def measure() -> None:
+        """Runs the benchmark to its end or BENCH_TIMEOUT_SECONDS, and stores
+        its report, or why it failed, scrubbed as anything a process wrote is
+        before Studio keeps it.
+        """
+
         try:
             finished = subprocess.run(command, capture_output=True, text=True, timeout=BENCH_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL,
                                       cwd=str(settings.configDirectory.parent))
             report = json.loads(finished.stdout) if finished.stdout.strip() else None
-            # Scrubbed, as anything a process wrote is before Studio keeps it.
             problem = scrubForeignText(finished.stderr.strip() or 'bench exited {}'.format(finished.returncode))[-2000:]
             result = {'status': 'done', 'report': report} if report is not None else {'status': 'failed', 'problem': problem}
         except subprocess.TimeoutExpired:

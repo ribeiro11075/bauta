@@ -13,6 +13,10 @@ _job = functools.partial(dataJobFields, sourceConnection='prod', targetConnectio
 
 
 def _connections(**lake):
+    """Two SQLite connections and a files connection, `lake`, with `lake`'s
+    settings given.
+    """
+
     return Configuration.validateConnectionConfiguration({
         'prod': {'type': 'sqlite', 'path': 'prod.db'},
         'staging': {'type': 'sqlite', 'path': 'staging.db'},
@@ -21,6 +25,8 @@ def _connections(**lake):
 
 
 def _validate(connections=None, **job):
+    """One job, with `job`'s settings, validated alone and against connections."""
+
     jobsFile = Configuration.validateJobConfiguration({'jobs': {'j': _job(**job)}}, DataJobsFile)
     Configuration.validateJobGraph(jobsFile.jobs, connections=connections if connections is not None else _connections())
     return jobsFile.jobs['j']

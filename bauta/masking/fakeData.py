@@ -67,6 +67,7 @@ class Locale(NamedTuple):
 
 
 def _words(text: str) -> Tuple[str, ...]:
+    """The comma-separated words of `text`, stripped, as a tuple."""
 
     return tuple(word.strip() for word in text.split(',') if word.strip())
 
@@ -157,9 +158,9 @@ LOCALES: Dict[str, Locale] = {
         '{street}{kind} {number}', _words('B.V., N.V., V.O.F.')),
     }
 
-# The lists used without a `locale` option: a deliberately international mix.
-# Kept exactly as they were, since changing them would change every mask
-# already written with them.
+# DEFAULT_LOCALE: the lists used without a `locale` option: a deliberately
+#   international mix. Kept exactly as they were, since changing them would
+#   change every mask already written with them.
 DEFAULT_LOCALE = Locale(FIRST_NAMES, LAST_NAMES, CITIES, STREET_NAMES, STREET_SUFFIXES, '{number} {street} {kind}', COMPANY_SUFFIXES)
 
 
@@ -555,6 +556,8 @@ def _international() -> LargeLocale:
     """
 
     def joined(field: str) -> Tuple[str, ...]:
+        """Every locale's `field` list run together, each name once, in order."""
+
         return tuple(dict.fromkeys(name for locale in LARGE_LOCALES.values() for name in getattr(locale, field)))
 
     return LargeLocale(joined('femaleNames'), joined('maleNames'), joined('lastNames'), joined('cities'))

@@ -1,3 +1,6 @@
+// The page comparing two runs: their totals and each job's rows, duration,
+// slowest stage and masking, the changes for the worse marked.
+
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
@@ -16,7 +19,7 @@ interface Comparison {
 
 const STAGE_NAMES: Record<string, string> = { read: 'reading', mask: 'masking', write: 'writing', wait: 'waiting' }
 
-// A change, with its sign and a word: never colour alone.
+/** A change, with its sign and a word: never colour alone. */
 function Change({ before, after, format, worseWhenUp }: { before: number | null; after: number | null; format: (value: number) => string; worseWhenUp: boolean }) {
   if (before === null || after === null) return <span className="muted">{after === null ? '—' : format(after)}</span>
   const delta = after - before
@@ -31,12 +34,17 @@ function Change({ before, after, format, worseWhenUp }: { before: number | null;
   )
 }
 
+/**
+ * The stage that grew most between the runs, and by how much, where it grew by
+ * more than half a second.
+ */
 function slowestStage(stages: Record<string, Pair<number>>): string | null {
   const moved = Object.entries(stages).filter(([, pair]) => pair.before !== null && pair.after !== null).map(([stage, pair]) => [stage, (pair.after ?? 0) - (pair.before ?? 0)] as const)
   const worst = moved.sort((one, two) => two[1] - one[1])[0]
   return worst && worst[1] > 0.5 ? `${STAGE_NAMES[worst[0]]} +${duration(worst[1])}` : null
 }
 
+/** Two runs, named by the `earlier` and `later` query parameters, side by side. */
 export function Compare() {
   const [params] = useSearchParams()
   const earlier = params.get('earlier') ?? ''

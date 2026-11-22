@@ -124,6 +124,7 @@ def _configureLogging(arguments: argparse.Namespace) -> Log:
 
 
 def _loadConnections(arguments: argparse.Namespace) -> Dict[str, ConnectionConfig]:
+    """connections.yaml, from where the arguments and the environment say it is."""
 
     _, connectionsPath = _resolveConfigurationPaths(arguments)
 
@@ -139,6 +140,9 @@ def _loadProject(arguments: argparse.Namespace) -> Project:
 
 
 def _loadDataJobs(arguments: argparse.Namespace) -> Tuple[DataJobsFile, Dict[str, ConnectionConfig]]:
+    """jobs.yaml and connections.yaml, from where the arguments and the
+    environment say they are.
+    """
 
     project = _loadProject(arguments)
 

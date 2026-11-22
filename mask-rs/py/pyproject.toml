@@ -25,7 +25,7 @@ dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://github.com/ribeiro11075/bauta"
-Documentation = "https://github.com/ribeiro11075/bauta/blob/master/docs/masking.md#the-native-masker"
+Documentation = "https://github.com/ribeiro11075/bauta/blob/master/docs/guides/make-it-faster.md#the-native-masker"
 Issues = "https://github.com/ribeiro11075/bauta/issues"
 
 [tool.maturin]

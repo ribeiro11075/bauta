@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 
 
 def _waitForRun(client, launchedId, seconds=60):
+    """Polls a launched run until it finishes, failing the test after `seconds`."""
+
     deadline = time.time() + seconds
     while time.time() < deadline:
         launched = client.get('/api/launched/{}'.format(launchedId)).json()
@@ -220,6 +222,8 @@ NEW_PASSWORD = 'a brand new passphrase'
 
 
 def _login(app, password, email='viewer@example.com'):
+    """The status of a password sign-in as `email`."""
+
     return TestClient(app, headers={'X-Bauta-Studio': '1'}).post('/api/auth/login', json={'email': email, 'password': password}).status_code
 
 

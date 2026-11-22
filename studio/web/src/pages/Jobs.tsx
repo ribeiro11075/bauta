@@ -1,3 +1,5 @@
+// The jobs list, and each job's own page.
+
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
@@ -8,6 +10,10 @@ import { JobTrends } from '../components/TrendChart'
 import { BenchCard } from '../components/Bench'
 import { count, duration, when } from '../format'
 
+/**
+ * Every job, filtered by a search and by target connection, with its masking,
+ * last run and stage times.
+ */
 export function Jobs() {
   const user = useUser()
   const [search, setSearch] = useState('')
@@ -64,6 +70,7 @@ export function Jobs() {
   )
 }
 
+/** How a job masks, in a few words: how many columns, and its default. */
 function MaskingSummary({ job }: { job: Job }) {
   if (job.masking) {
     const masked = Object.values(job.masking.columns).filter((strategy) => strategy !== 'keep').length
@@ -72,6 +79,10 @@ function MaskingSummary({ job }: { job: Job }) {
   return job.unmasked ? <span className="muted">none, declared</span> : <Pill kind="bad">Not masked</Pill>
 }
 
+/**
+ * One job: what it reads and writes, how it masks, its recent runs and their
+ * trend, and its latest benchmark, polled while one runs.
+ */
 export function JobPage() {
   const { name = '' } = useParams()
   const user = useUser()
@@ -155,6 +166,7 @@ export function JobPage() {
   )
 }
 
+/** One labelled fact in a job's description list. */
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="row" style={{ alignItems: 'baseline', flexWrap: 'nowrap' }}>

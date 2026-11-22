@@ -116,6 +116,10 @@ CITIES = ['Lisbon', 'Porto', 'Boston', 'Austin', 'Lyon', 'Kraków']
 
 
 def _production(path):
+    """Writes a seeded production SQLite file of customers, orders, tickets,
+    countries, payments and an audit log.
+    """
+
     random.seed(7)
     connection = sqlite3.connect(str(path))
     connection.executescript("""
@@ -147,6 +151,8 @@ def _production(path):
 
 
 def _staging(path, withPayments):
+    """Creates the staging file's tables, payments among them where asked."""
+
     connection = sqlite3.connect(str(path))
     connection.executescript("""
         CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT, email TEXT, phone TEXT, city TEXT, country TEXT);
@@ -187,6 +193,12 @@ def _runs(workspace):
 
 
 def main():
+    """Builds the demo workspace in the directory given, or demo-workspace: its
+    configuration and production, runs that succeed and fail on purpose, and a
+    column production has gained since, so every Studio page has something to
+    show; then prints how to serve it.
+    """
+
     workspace = Path(sys.argv[1] if len(sys.argv) > 1 else 'demo-workspace').resolve()
     if workspace.exists():
         shutil.rmtree(workspace)

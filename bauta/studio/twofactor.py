@@ -36,22 +36,25 @@ from .db import ADMIN, RecoveryCode, User
 from .sealing import seal, unseal
 from .settings import Settings, TwoFactorPolicy
 
+# DRIFT_STEPS: a code from the step before or after the current one is taken
+#   too: phones' clocks drift, and a code typed as it changes arrives in the
+#   next step.
+# RECOVERY_CODE_LENGTH: ten characters of base32: 50 bits, grouped in fives to
+#   be read aloud.
+# PENDING_COOKIE, PENDING_PATH, PENDING_SECONDS: the cookie a password that
+#   needs a code next is given, and how long it lasts.
+# CODE: what a pending sign-in must do next: type a code, or set the app up
+#   first, for someone whose role needs two-factor sign-in and who hasn't yet.
 ISSUER_NAME = 'bauta Studio'
 STEP_SECONDS = 30
-# A code from the step before or after the current one is taken too: phones'
-# clocks drift, and a code typed as it changes arrives in the next step.
 DRIFT_STEPS = 1
 CODE_DIGITS = 6
 RECOVERY_CODE_COUNT = 10
-# Ten characters of base32: 50 bits, grouped in fives to be read aloud.
 RECOVERY_CODE_LENGTH = 10
 RECOVERY_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
-# The cookie a password that needs a code next is given, and how long it lasts.
 PENDING_COOKIE = 'bauta_studio_2fa'
 PENDING_PATH = '/api/auth/2fa'
 PENDING_SECONDS = 300
-# What a pending sign-in must do next: type a code, or set the app up first,
-# for someone whose role needs two-factor sign-in and who hasn't yet.
 CODE = 'code'
 ENROL = 'enrol'
 KEY_FILE_MODE = 0o600
@@ -70,12 +73,20 @@ class SecretBox:
     """
 
     def __init__(self, key: bytes) -> None:
+        """Encrypts with `key` under Fernet, and derives from it the key
+        pending sign-ins are signed with.
+        """
+
         self._fernet = Fernet(key)
         self.signingKey = hmac.new(key, b'bauta-studio pending two-factor sign-in', hashlib.sha256).digest()
 
 
     @classmethod
     def load(cls, path: Path) -> 'SecretBox':
+        """The box for the key file at `path`, making the file, readable by its
+        owner alone, if it isn't there. Raises SecretKeyProblem for a key that
+        can't be used.
+        """
 
         if not path.exists():
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -94,11 +105,15 @@ class SecretBox:
 
 
     def encrypt(self, text: str) -> str:
+        """`text` encrypted."""
 
         return self._fernet.encrypt(text.encode()).decode('ascii')
 
 
     def decrypt(self, token: str) -> str:
+        """A token decrypted. Raises SecretKeyProblem where it doesn't decrypt
+        with this key, as when the key file was replaced.
+        """
 
         try:
             return self._fernet.decrypt(token.encode('ascii')).decode()
@@ -114,6 +129,7 @@ def required(settings: Settings, user: User) -> bool:
 
 
 def newSecret() -> str:
+    """A new authenticator secret, in base32."""
 
     return pyotp.random_base32()
 
@@ -129,6 +145,7 @@ def setupDetails(secret: str, email: str) -> Dict[str, str]:
 
 
 def _digits(code: str) -> str:
+    """A typed code without the spaces people put in it."""
 
     return ''.join(character for character in code if not character.isspace())
 
@@ -152,11 +169,15 @@ def acceptCode(user: User, secret: str, code: str, now: Optional[float] = None) 
 
 
 def _recoveryHash(code: str) -> str:
+    """What a recovery code is kept as: its SHA-256."""
 
     return hashlib.sha256(code.encode('ascii')).hexdigest()
 
 
 def _normalRecovery(code: str) -> str:
+    """A typed recovery code in the form it was made in: upper case, separators
+    and anything outside its alphabet dropped.
+    """
 
     return ''.join(character for character in code.upper() if character in RECOVERY_ALPHABET)
 
@@ -203,6 +224,7 @@ def checkSecondFactor(session: Session, box: SecretBox, user: User, code: str) -
 
 
 def turnOff(user: User) -> None:
+    """Removes the account's authenticator, pending setup and recovery codes."""
 
     user.totpSecret = user.totpPendingSecret = user.totpLastStep = None
     user.recoveryCodes = []
@@ -217,6 +239,9 @@ def _passwordTag(user: User) -> str:
 
 
 def sealPending(box: SecretBox, user: User, next: str) -> str:
+    """The pending sign-in's cookie for `user`, whose next step is `next`, tied
+    to the password it was given with, so changing the password voids it.
+    """
 
     return seal(box.signingKey, {'u': user.id, 'n': next, 'p': _passwordTag(user)}, time.time() + PENDING_SECONDS)
 

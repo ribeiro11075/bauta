@@ -19,12 +19,12 @@ customers: 1000 row(s)
   sample: {'id': 1, 'email': 'u5e9bbb2e91df@example.test', 'first_name': 'Hugo', ...}
 ```
 
-- **Keys are unique.** Integer keys continue after the table's current maximum; text keys run `S1`, `S2`, ... after the current row count (`S0001`, `S0002`, ... in a fixed-width column, so each stays distinct at full width); UUID keys are generated.
-- **Values continue between runs.** Every generator is indexed by the row's number, counted from the rows already in the table, so a second run neither repeats the first's values nor collides with them. Generated text ends in that number, so a `UNIQUE` column of any reasonable width keeps taking rows.
-- **Foreign keys resolve.** Values are drawn from the parent's existing rows, so parents are filled first; `--table` order doesn't matter. A table whose key is made only of foreign keys gets as many rows as its parents allow, which may be fewer than asked. Only such a table's keys are remembered, to skip a combination drawn twice; any other key has a generated part that can't repeat, so filling it holds a chunk in memory however many rows are asked for.
-- **Names drive realism.** Columns whose names suggest personal data (email, names, phone, postal code, birth date, city, company, address...) get realistic values, from the same rules `discover` uses, [your own](propose-a-policy.md#your-own-rules-discoveryyaml) included. Everything else is random within its type: numbers within their precision, text within its length, dates from 2015 to the end of the current year. The span grows each January, so a seed gives the same rows all year and other dates in the next. Nullable columns are NULL about one time in ten.
-- **Reproducible.** The same `--seed` on the same starting tables makes the same rows.
-- **CHECK constraints are kept.** A check listing a column's values (`status IN ('open', 'closed')`) has the column take only those, and one bounding a number (`amount > 0 AND amount < 1000`, `pct BETWEEN 1 AND 100`) keeps it within the bounds, at the column's own type and scale -- read from each database's catalog, however it spells them. Any other check, such as one comparing two columns (`start_date <= end_date`), is named as `synthesize` starts, since rows breaking it will be refused; such a refusal says which kind of check it was.
+- **Keys are unique.** Integer keys continue after the table's maximum, text keys run `S1`, `S2`, ... (zero-padded in a fixed-width column), and UUID keys are generated.
+- **Values continue between runs.** Generators are indexed by row number, counted from the rows already there, so a second run doesn't repeat or collide with the first.
+- **Foreign keys resolve.** Values are drawn from the parent's rows, and parents are filled first, whatever the `--table` order. A table keyed only by foreign keys gets as many rows as its parents allow.
+- **Names drive realism.** Columns named like personal data get realistic values, by the rules `discover` uses ([your own](propose-a-policy.md#your-own-rules-discoveryyaml) included). Everything else is random within its type, dates from 2015 to the end of this year. Nullable columns are NULL about one time in ten.
+- **Reproducible.** The same `--seed` on the same starting tables makes the same rows (within a calendar year, as the date span grows each January).
+- **CHECK constraints are kept** where they list values (`status IN (...)`) or bound a number (`amount > 0 AND amount < 1000`). Any other check, such as `start_date <= end_date`, is named as `synthesize` starts, since rows breaking it will be refused.
 
 ### Shaped like production: `--profile`
 
@@ -32,13 +32,13 @@ customers: 1000 row(s)
 bauta synthesize --connection staging --table orders:50000 --profile production --dry-run
 ```
 
-`--profile ALIAS` reads the same table in another connection and shapes the rows like it: each column NULL as often as there, a number or a date within the range it spans there, and a column of few values -- `status`, `plan`, `region` -- taking each of its labels as often as there. **Only aggregates are read**, so no row of production reaches the generated ones:
+`--profile ALIAS` shapes the rows like the same table in another connection: each column NULL as often, numbers and dates within the same range, and a column of few values (`status`, `region`) taking each label as often. **Only aggregates are read**, never a row:
 
-- a column named like personal data (the rules `discover` uses) is never read, nor is a key;
-- labels are read only from a column of at most 20 values, and only those at least 5 rows share, so a value rare enough to point at someone -- a one-off status naming a customer -- is never copied;
-- the smallest and largest value of a number or date are, so leave a column whose extremes are themselves sensitive out of the tables you profile, or out of `--profile` by giving it a name the rules recognise in [your own rules](propose-a-policy.md#your-own-rules-discoveryyaml).
+- columns named like personal data, and keys, are never read;
+- labels come only from columns of at most 20 values, and only those at least 5 rows share, so a value rare enough to point at someone is never copied;
+- a number's or date's extremes are read, so leave out a column whose extremes are sensitive, or name it in [your own rules](propose-a-policy.md#your-own-rules-discoveryyaml).
 
 A CHECK takes precedence over the profile, and the profile over names. `--dry-run` shows which each column follows.
 - `--rows` sets the count for any `--table` given without one. Nothing is written without `--yes`.
 
-**Limits:** a table that references itself through a NOT NULL column can't be filled, since its first row would have nothing to point at; a nullable self-reference is left NULL. A `UNIQUE` constraint on a column that isn't the primary key is satisfied only where the column's type has room for one value per row: generated text ends in the row's number, but a name, a short code or a number can repeat. Where the database refuses such a row, `synthesize` says which table refused it and how many rows were inserted before it, since each chunk is already committed. Without `--profile`, values are plausible, not statistically like production; with it, each column is spread as production's is, but each on its own: there are no correlations between columns. Tables must exist first; `schema` creates them from a source's definitions.
+**Limits:** a table referencing itself through a NOT NULL column can't be filled (a nullable self-reference is left NULL). A non-key `UNIQUE` column is satisfied only where its type has room: a name or short code can repeat, and the database's refusal says how many rows were already committed. Even with `--profile`, columns are shaped one by one, with no correlations between them. Tables must exist first; `schema` creates them.

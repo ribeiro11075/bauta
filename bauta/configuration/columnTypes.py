@@ -9,12 +9,11 @@ import re
 from typing import NamedTuple, Optional
 
 
-# Arrow's decimal128 holds 38 digits; every engine reading Parquet takes it.
+# MAXIMUM_DECIMAL_PRECISION: Arrow's decimal128 holds 38 digits; every engine
+#   reading Parquet takes it.
+# KINDS: each kind, and the other names it may be declared by.
 MAXIMUM_DECIMAL_PRECISION = 38
-
 _INTEGERS = ('int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64')
-
-# Each kind, and the other names it may be declared by.
 KINDS = {
     'string': ('text', 'varchar'),
     'binary': ('bytes',),
@@ -29,9 +28,7 @@ KINDS = {
     'timestamptz': (),
     **{integer: () for integer in _INTEGERS},
     }
-
 _ALIASES = {alias: kind for kind, aliases in KINDS.items() for alias in aliases}
-
 _DECIMAL = re.compile(r'^decimal\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)$')
 
 
@@ -76,5 +73,6 @@ def parseColumnType(text: str) -> ColumnType:
 
 
 def isInteger(columnType: ColumnType) -> bool:
+    """Whether the type is one of the integer kinds."""
 
     return columnType.kind in _INTEGERS

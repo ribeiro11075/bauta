@@ -14,6 +14,8 @@ ORDERS_KEY = ForeignKey('ORDERS', ('CUSTOMER_ID',), 'CUSTOMERS', ('ID',), 'FK_OR
 
 @pytest.fixture
 def copy(tmp_path):
+    """An empty SQLite database to copy into."""
+
     with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'copy.db')), create=True) as database:
         yield database
 
@@ -27,6 +29,8 @@ def _load(database, *statements):
 
 
 def _counts(results):
+    """Each result's table, declared key, orphan count and problem."""
+
     return [(result.table, result.declared, result.orphans, result.problem) for result in results]
 
 
@@ -136,6 +140,10 @@ jobs:
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
+    """A configuration directory with a prod and a copy SQLite database, orders
+    referencing customers in prod only, and jobs copying both.
+    """
+
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'configuration').mkdir()
     (tmp_path / 'configuration' / 'connections.yaml').write_text(
@@ -153,6 +161,8 @@ def workspace(tmp_path, monkeypatch):
 
 
 def _copyStatement(workspace, statement):
+    """Runs one statement on the workspace's copy."""
+
     with Database(connectionSettings=connectionConfig(type=DatabaseType.SQLITE, path=str(workspace / 'copy.db')), create=True) as database:
         database.alter(statement)
 

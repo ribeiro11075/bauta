@@ -52,10 +52,16 @@ def studio(settings):
 
 
 def _client(application):
+    """A client sending the header every change needs."""
+
     return TestClient(application, headers={'X-Bauta-Studio': '1'})
 
 
 def _password(application, role):
+    """A client that has signed in as the `role` account with its password, and
+    what the sign-in answered.
+    """
+
     client = _client(application)
     response = client.post('/api/auth/login', json={'email': '{}@example.com'.format(role), 'password': PASSWORD})
     assert response.status_code == 200, response.text
@@ -63,6 +69,8 @@ def _password(application, role):
 
 
 def _code(secret, offset=0):
+    """The authenticator code for `secret` now, or `offset` seconds away."""
+
     return pyotp.TOTP(secret).at(time.time() + offset)
 
 
@@ -83,11 +91,15 @@ def _turnOn(application, role='viewer'):
 
 
 def _user(application, email):
+    """The account with `email`, or None."""
+
     with application.state.database.open() as session:
         return session.scalar(select(User).where(User.email == email))
 
 
 def _actions(application):
+    """Every activity log entry, as (action, target, detail), oldest first."""
+
     with application.state.database.open() as session:
         return [(entry.action, entry.target, entry.detail) for entry in session.scalars(select(Activity).order_by(Activity.id))]
 

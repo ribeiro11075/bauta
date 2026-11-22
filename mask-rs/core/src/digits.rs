@@ -8,11 +8,12 @@ use std::sync::OnceLock;
 use num_bigint::BigUint;
 use num_traits::Zero;
 
-/// The powers of ten kept ready: past the furthest `number` scales a value
-/// (twice its 400-digit exponent limit and its 60-digit precision), and so
-/// past `key`'s 256-digit limit too.
+// TABLE_SIZE: the powers of ten kept ready: past the furthest `number` scales a
+//   value (twice its 400-digit exponent limit and its 60-digit precision), and
+//   so past `key`'s 256-digit limit too.
 const TABLE_SIZE: usize = 2 * 400 + 2 * 60 + 1;
 
+/// 10**0 through 10**(TABLE_SIZE - 1), built once.
 fn powersOfTen() -> &'static [BigUint] {
     static POWERS: OnceLock<Vec<BigUint>> = OnceLock::new();
     POWERS.get_or_init(|| {

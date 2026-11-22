@@ -13,6 +13,22 @@ from typing import Dict, List, Mapping, Optional, Tuple, Type, TypeVar
 
 from ..project import UsageError
 
+# OIDC_PREFIX: single sign-on through OpenID Connect: on once an issuer is
+#   named.
+# SESSION_HOURS, SSO_SESSION_HOURS: how long a session lasts, by default: one
+#   signed in with a password, and one through the identity provider. An SSO
+#   session is shorter: someone the identity provider disables keeps a Studio
+#   session they already have until it ends.
+# SECRET_KEY_FILE: the key authenticator secrets are encrypted with, made in
+#   the data directory unless BAUTA_STUDIO_SECRET_KEY_FILE names one kept
+#   elsewhere.
+# LOCAL_HOSTS: hosts a developer's identity provider, or Studio itself, may be
+#   reached on over plain HTTP. Anywhere else, tokens and codes travel only
+#   over TLS.
+# HISTORY_RUNS: how many runs' history the run list reads back.
+# PRIVATE_DIRECTORY_MODE: what Studio creates its data directory, and those in
+#   it, with: its owner's alone. It holds password hashes, run logs and the
+#   jobs files as they were.
 CONFIG_VARIABLE = 'BAUTA_STUDIO_CONFIG'
 DATA_VARIABLE = 'BAUTA_STUDIO_DATA'
 DATABASE_URL_VARIABLE = 'BAUTA_STUDIO_DATABASE_URL'
@@ -23,30 +39,16 @@ PASSWORD_LOGIN_VARIABLE = 'BAUTA_STUDIO_PASSWORD_LOGIN'
 REQUIRE_TWO_FACTOR_VARIABLE = 'BAUTA_STUDIO_REQUIRE_2FA'
 SECRET_KEY_FILE_VARIABLE = 'BAUTA_STUDIO_SECRET_KEY_FILE'
 SESSION_HOURS_VARIABLE = 'BAUTA_STUDIO_SESSION_HOURS'
-# Single sign-on through OpenID Connect: on once an issuer is named.
 OIDC_PREFIX = 'BAUTA_STUDIO_OIDC_'
-# How long a session lasts, by default: one signed in with a password, and one
-# through the identity provider. An SSO session is shorter: someone the
-# identity provider disables keeps a Studio session they already have until it
-# ends.
 SESSION_HOURS = 12
 SSO_SESSION_HOURS = 8
-# The key authenticator secrets are encrypted with, made in the data directory
-# unless BAUTA_STUDIO_SECRET_KEY_FILE names one kept elsewhere.
 SECRET_KEY_FILE = 'secret.key'
 DEFAULT_SCOPES = ('openid', 'email', 'profile')
 DEFAULT_ROLE_CLAIM = 'groups'
 DEFAULT_SSO_LABEL = 'Sign in with SSO'
-# Hosts a developer's identity provider, or Studio itself, may be reached on
-# over plain HTTP. Anywhere else, tokens and codes travel only over TLS.
 LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1'}
-# How many runs' history the run list reads back.
 HISTORY_RUNS = 50
-# What Studio creates its data directory, and those in it, with: its owner's
-# alone. It holds password hashes, run logs and the jobs files as they were.
 PRIVATE_DIRECTORY_MODE = 0o700
-
-
 EnumT = TypeVar('EnumT', bound=Enum)
 
 
@@ -109,11 +111,13 @@ def _hours(variable: str, value: Optional[str], default: int) -> int:
 
 
 def _truthy(value: Optional[str]) -> bool:
+    """Whether an environment variable says yes: 1, true, yes or on."""
 
     return (value or '').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 def _list(value: Optional[str]) -> Tuple[str, ...]:
+    """A comma-separated variable as its items, stripped, empty ones left out."""
 
     return tuple(item.strip() for item in (value or '').split(',') if item.strip())
 
@@ -177,12 +181,14 @@ class SsoSettings:
     viewerGroups: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        """Takes `roles` as text too, as the environment gives it."""
 
         object.__setattr__(self, 'roles', _choice(RoleSource, OIDC_PREFIX + 'ROLES', self.roles))
 
 
     @property
     def redirectUri(self) -> str:
+        """Where the provider sends the browser back: Studio's callback."""
 
         return self.publicUrl + '/api/auth/sso/callback'
 
@@ -201,6 +207,8 @@ class SsoSettings:
         """
 
         def get(name: str) -> Optional[str]:
+            """One BAUTA_STUDIO_OIDC_ variable, stripped, or None when unset or blank."""
+
             value = environment.get(OIDC_PREFIX + name)
             return value.strip() if value is not None and value.strip() else None
 
@@ -271,13 +279,13 @@ class Settings:
     by default one Studio makes in the data directory.
     """
 
+    # bautaCommand: how a run is started: this Python's bauta, so Studio and
+    #   the runs it starts are always the same version.
     configDirectory: Path
     dataDirectory: Path
     databaseUrl: str
     secureCookies: bool = True
     sessionHours: int = SESSION_HOURS
-    # How a run is started: this Python's bauta, so Studio and the runs it
-    # starts are always the same version.
     bautaCommand: List[str] = field(default_factory=lambda: [sys.executable, '-m', 'bauta'])
     transformModules: Tuple[str, ...] = ()
     sso: Optional[SsoSettings] = None
@@ -286,8 +294,11 @@ class Settings:
     secretKeyFile: Optional[Path] = None
 
     def __post_init__(self) -> None:
+        """Takes the two-factor and password-login policies as text too, as the
+        environment gives them, and refuses a policy that turns passwords off
+        without single sign-on, which would leave no one able to sign in.
+        """
 
-        # Taken as text too, as the environment gives them.
         object.__setattr__(self, 'requireTwoFactor', _choice(TwoFactorPolicy, REQUIRE_TWO_FACTOR_VARIABLE, self.requireTwoFactor))
         object.__setattr__(self, 'passwordLogin', _choice(PasswordLogin, PASSWORD_LOGIN_VARIABLE, self.passwordLogin))
 
@@ -298,6 +309,9 @@ class Settings:
 
     @classmethod
     def fromEnvironment(cls, configDirectory: Optional[str] = None, dataDirectory: Optional[str] = None) -> 'Settings':
+        """Studio's settings from the environment, with the configuration and
+        data directories given here taking precedence.
+        """
 
         config = Path(configDirectory or os.environ.get(CONFIG_VARIABLE) or os.environ.get('BAUTA_CONFIG') or 'configuration').resolve()
         data = Path(dataDirectory or os.environ.get(DATA_VARIABLE) or 'studio-data').resolve()
@@ -319,12 +333,14 @@ class Settings:
 
     @property
     def runLogDirectory(self) -> Path:
+        """Where the logs of the runs Studio starts are kept."""
 
         return self.dataDirectory / 'runs'
 
 
     @property
     def keyFile(self) -> Path:
+        """The key file authenticator secrets are encrypted with."""
 
         return self.secretKeyFile or self.dataDirectory / SECRET_KEY_FILE
 

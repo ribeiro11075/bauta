@@ -45,11 +45,10 @@ from bauta.configuration import DataJobConfig, connectionConfig
 from bauta.jobs.pipeline import _executeDataJob
 from bauta.masking import core as maskingCore
 
-# A throwaway key for a throwaway database.
+# BENCHMARK_KEY: a throwaway key for a throwaway database.
+# MASKERS: (label, BAUTA_NATIVE, BAUTA_PIPELINE, BAUTA_MASKING_THREADS)
 BENCHMARK_KEY = 'benchmark-key-not-for-real-use'
-
 COLUMNS = 'id INTEGER PRIMARY KEY, ref TEXT, account INTEGER, email TEXT, token TEXT, secret TEXT, phone TEXT'
-
 POLICIES: Dict[str, Tuple[str, Dict[str, str]]] = {
     'cheap': ('email, two hash, three keep',
               {'ref': 'keep', 'account': 'keep', 'email': 'email', 'token': 'hash', 'secret': 'hash', 'phone': 'keep'}),
@@ -60,8 +59,6 @@ POLICIES: Dict[str, Tuple[str, Dict[str, str]]] = {
     'keys': ('five key columns, one hash',
              {'ref': 'key', 'account': 'key', 'email': 'key', 'token': 'key', 'secret': 'hash', 'phone': 'key'}),
     }
-
-# (label, BAUTA_NATIVE, BAUTA_PIPELINE, BAUTA_MASKING_THREADS)
 MASKERS = [
     ('Python', '0', '0', '1'),
     ('Rust, one thread, in turn', '1', '0', '1'),
@@ -71,6 +68,9 @@ MASKERS = [
 
 
 def buildSource(path: Path, rows: int) -> None:
+    """Writes a SQLite file of `rows` people, their values derived from the row
+    number so every build is the same.
+    """
 
     connection = sqlite3.connect(path)
     connection.execute('CREATE TABLE people ({})'.format(COLUMNS))
@@ -123,6 +123,10 @@ def measure(workingDirectory: Path, source: Path, policy: str, native: str, pipe
 
 
 def main(rows: int, python: bool, workingDirectory: Path) -> Dict[str, List[Tuple[str, Dict[str, Any]]]]:
+    """Masks the source under each policy and each masker, timing each, and
+    returns the figures. Exits where the native masker isn't installed, since
+    every figure but one is of it.
+    """
 
     source = workingDirectory / 'source-{}.db'.format(rows)
     if not source.exists():

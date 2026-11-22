@@ -1,18 +1,26 @@
+// A job's recent runs as charts: one measure per chart, a column per run,
+// oldest on the left. Rows and duration are drawn as two charts, never one
+// with two scales. A run that failed or was skipped has no measure: it is
+// marked at the baseline in the status colour, with its word in the tooltip
+// and the key.
+
 import { useId, useState } from 'react'
 import type { JobRecord } from '../api'
 import { count, seconds, whenExactly } from '../format'
 
-// One measure of a job's recent runs, a column per run, oldest on the left.
-// Rows and duration are drawn as two charts, never one with two scales. A
-// run that failed or was skipped has no measure: it is marked at the
-// baseline in the status colour, with its word in the tooltip and the key.
-
+// WIDTH, HEIGHT, PAD: the chart's size in SVG units, and the room kept for
+//   its axis labels. BAR_MAX, GAP: the widest a run's bar is drawn, and the
+//   space between bars.
 const WIDTH = 560
 const HEIGHT = 160
 const PAD = { top: 12, right: 8, bottom: 22, left: 56 }
 const BAR_MAX = 24
 const GAP = 2
 
+/**
+ * The smallest round number at or above `value` -- 1, 2, 2.5 or 5 times a power
+ * of ten -- for the top of an axis.
+ */
 function niceCeiling(value: number): number {
   if (value <= 0) return 1
   const power = 10 ** Math.floor(Math.log10(value))
@@ -27,6 +35,10 @@ interface Props {
   format: (value: number) => string
 }
 
+/**
+ * One measure of `records` as a bar per run, with a tooltip for the run under
+ * the pointer or the focus.
+ */
 export function TrendChart({ title, records, measure, format }: Props) {
   const runs = [...records].reverse()
   const [hover, setHover] = useState<number | null>(null)
@@ -39,6 +51,7 @@ export function TrendChart({ title, records, measure, format }: Props) {
   const plotHeight = HEIGHT - PAD.top - PAD.bottom
   const slot = plotWidth / runs.length
   const bar = Math.max(2, Math.min(BAR_MAX, slot - GAP))
+  /** The vertical position of a value on the plot. */
   const y = (value: number) => PAD.top + plotHeight - (value / top) * plotHeight
   const ticks = [0, top / 2, top]
   const shown = hover !== null ? runs[hover] : null
@@ -89,6 +102,7 @@ export function TrendChart({ title, records, measure, format }: Props) {
   )
 }
 
+/** A job's rows and duration over its recent runs, as two charts side by side. */
 export function JobTrends({ records }: { records: JobRecord[] }) {
   if (!records.length) return null
   const failed = records.some((record) => record.status !== 'completed')

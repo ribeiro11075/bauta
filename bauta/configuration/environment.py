@@ -10,11 +10,12 @@ import shlex
 import subprocess
 from typing import Any, List, Optional, Union
 
-# ${NAME}, ${NAME:-default} or ${file:/path}; $${...} escapes one.
+# ENVIRONMENT_VARIABLE: ${NAME}, ${NAME:-default} or ${file:/path}; $${...}
+#   escapes one.
+# _TOKEN_LIKE: a run of characters a token is written in -- base64, base64url,
+#   hex, a JWT's dots -- long enough to be one rather than a word of a message.
 ENVIRONMENT_VARIABLE = re.compile(r'(\$?)\$\{(?:file:([^}]+)|([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?)\}')
 PASSWORD_COMMAND_TIMEOUT_SECONDS = 60
-# A run of characters a token is written in -- base64, base64url, hex, a JWT's
-# dots -- long enough to be one rather than a word of a message.
 _TOKEN_LIKE = re.compile(r'[A-Za-z0-9+/=_.%~-]{24,}')
 
 
@@ -33,6 +34,12 @@ def _expand(value: Any, missing: List[str], directory: Optional[str]) -> Any:
         return value
 
     def replace(match: Any) -> str:
+        """One ${...} reference's replacement: a file's contents, without the
+        trailing newline secret files usually end with; a variable's value or
+        its default; or, for `$${...}`, the reference itself unescaped. What is
+        missing is noted for the caller and replaced with nothing.
+        """
+
         escape, path, name, default = match.groups()
 
         if escape:
@@ -44,8 +51,6 @@ def _expand(value: Any, missing: List[str], directory: Optional[str]) -> Any:
                 path = os.path.join(directory, path)
             try:
                 with open(path) as file:
-                    # Secret files usually end with a newline nobody meant as
-                    # part of the secret.
                     return file.read().rstrip('\r\n')
             except OSError as error:
                 missing.append('file {} ({})'.format(path, error.strerror or error))

@@ -85,6 +85,8 @@ def _writeJobs(workspace, settings=JOBS_YAML, **changes):
 
 
 def _targetRowCount(workspace) -> int:
+    """The rows in the workspace's `tgt` table."""
+
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     try:
         return int(connection.execute('SELECT count(*) FROM tgt').fetchone()[0])
@@ -369,6 +371,8 @@ jobs:
 
 @pytest.fixture
 def maskedWorkspace(workspace, monkeypatch):
+    """The workspace with a masked jobs.yaml and its key in the environment."""
+
     monkeypatch.setenv('MASKING_KEY', 'a-cli-test-masking-key')
     (workspace / 'configuration' / 'jobs.yaml').write_text(MASKED_JOBS_YAML)
 
@@ -453,6 +457,10 @@ def test_dry_run_passes_a_complete_masking_policy(maskedWorkspace, capsys):
 
 @pytest.fixture
 def schemaWorkspace(workspace):
+    """The workspace's database with customers and orders tables, orders
+    referencing customers, for `schema`, `discover` and `subset`.
+    """
+
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     connection.executescript('''
         CREATE TABLE customers (id INT PRIMARY KEY, email TEXT, tier TEXT);
@@ -1025,6 +1033,8 @@ def test_coverage_passes_once_the_rest_is_acknowledged_and_names_a_stale_declara
 
 
 def _sourceValues(workspace):
+    """The `name` values of the workspace's `src` table."""
+
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     try:
         return [row[0] for row in connection.execute('SELECT name FROM src')]
@@ -1081,6 +1091,10 @@ def test_validate_refuses_an_option_that_duplicates_a_field(workspace):
 
 
 def _runWithManifest(workspace, monkeypatch, signingKey=None):
+    """Runs the audit jobs with a manifest written to manifest.json, signed
+    where `signingKey` is given, and returns the manifest.
+    """
+
     import json
 
     (workspace / 'configuration' / 'jobs.yaml').write_text(AUDIT_JOBS_YAML)
@@ -1301,6 +1315,8 @@ def test_synthesize_rejects_a_bad_table_argument(workspace):
 
 
 def _createTables(workspace, *schemas):
+    """Runs each CREATE statement on the workspace's database."""
+
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     for schema in schemas:
         connection.execute(schema)
@@ -1751,6 +1767,10 @@ jobs:
 
 @pytest.fixture
 def incrementalWorkspace(workspace):
+    """The workspace's database with an orders table to copy incrementally, and
+    the copy and stage tables it goes to.
+    """
+
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     connection.executescript('''
         CREATE TABLE orders (id INT PRIMARY KEY, name TEXT, updated INT);
@@ -1765,6 +1785,8 @@ def incrementalWorkspace(workspace):
 
 
 def _copied(workspace):
+    """The (id, name) rows of orders_copy, sorted."""
+
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     try:
         return sorted(connection.execute('SELECT id, name FROM orders_copy').fetchall())
@@ -1773,6 +1795,8 @@ def _copied(workspace):
 
 
 def _source(workspace, statement):
+    """Runs one statement on the workspace's database and commits it."""
+
     connection = sqlite3.connect(str(workspace / 'demo.db'))
     connection.execute(statement)
     connection.commit()

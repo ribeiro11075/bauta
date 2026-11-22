@@ -34,6 +34,8 @@ POSTGRESQL_SETTINGS = connectionConfig(
 
 @pytest.fixture
 def mysqlDatabase():
+    """A connection to the MySQL server; skipped where there is none."""
+
     try:
         database = Database(connectionSettings=MYSQL_SETTINGS)
     except Exception as error:
@@ -46,6 +48,8 @@ def mysqlDatabase():
 
 @pytest.fixture
 def postgresqlDatabase():
+    """A connection to the PostgreSQL server; skipped where there is none."""
+
     try:
         database = Database(connectionSettings=POSTGRESQL_SETTINGS)
     except Exception as error:
@@ -58,6 +62,8 @@ def postgresqlDatabase():
 
 @pytest.fixture
 def sourceTable(mysqlDatabase):
+    """A two-row MySQL table, dropped after."""
+
     tableName = 'source_{}'.format(uuid.uuid4().hex[:8])
 
     mysqlDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR(50), amount INT)'.format(tableName))
@@ -70,10 +76,12 @@ def sourceTable(mysqlDatabase):
 
 @pytest.fixture
 def targetTable(postgresqlDatabase):
+    """A PostgreSQL table whose amount is VARCHAR, as the currency transform
+    writes it ("$100.00"), dropped after.
+    """
+
     tableName = 'target_{}'.format(uuid.uuid4().hex[:8])
 
-    # amount is VARCHAR here, not INT -- the currency transform below turns it
-    # into a formatted string ("$100.00") before it's loaded
     postgresqlDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR(50), amount VARCHAR(20))'.format(tableName))
 
     yield tableName
@@ -108,6 +116,8 @@ DURATIONS = [(1, '12:34:56.123456'), (2, '-838:59:59'), (3, '838:59:59')]
 
 @pytest.fixture
 def mysqlDurations(mysqlDatabase):
+    """A MySQL table of TIME(6) values holding DURATIONS, dropped after."""
+
     table = 'durations_{}'.format(uuid.uuid4().hex[:8])
     mysqlDatabase.alter('CREATE TABLE {} (id INT PRIMARY KEY, tm TIME(6))'.format(table))
     mysqlDatabase.alter("INSERT INTO {} VALUES {}".format(table, ', '.join("({}, '{}')".format(*row) for row in DURATIONS)))

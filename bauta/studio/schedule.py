@@ -15,14 +15,17 @@ from sqlalchemy.orm import Session
 from ..project import Project
 from .db import Setting
 
+# DEFAULT_STALE_HOURS: a nightly job that misses one night is stale by the next
+#   morning.
+# HISTORY_PER_JOB: how far back each job's history is read for its last
+#   completed run.
 STALENESS_SETTING = 'staleness'
-# A nightly job that misses one night is stale by the next morning.
 DEFAULT_STALE_HOURS = 26
-# How far back each job's history is read for its last completed run.
 HISTORY_PER_JOB = 200
 
 
 def _iso(seconds: Optional[float]) -> Optional[str]:
+    """A Unix time as ISO 8601 in UTC, or None for none."""
 
     if seconds is None:
         return None
@@ -40,6 +43,7 @@ def staleness(session: Session) -> Dict[str, Any]:
 
 
 def setStaleness(session: Session, defaultHours: float, jobs: Mapping[str, float]) -> Dict[str, Any]:
+    """Stores when jobs go stale. Raises ValueError for hours that aren't above 0."""
 
     if defaultHours <= 0 or any(hours <= 0 for hours in jobs.values()):
         raise ValueError('hours must be more than 0')

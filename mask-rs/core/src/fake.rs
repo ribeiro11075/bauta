@@ -1,5 +1,5 @@
 //! The `fake*` strategies: a realistic replacement picked from lists by the
-//! keyed hash. `builtinMasking._FakeStrategy` and its subclasses.
+//! keyed hash. `strategies.fake._FakeStrategy` and its subclasses.
 //!
 //! The lists are Python's, handed over when a masker is built, so there is one
 //! copy of them to keep: changing a list changes every mask made from it, and a
@@ -27,6 +27,7 @@ pub struct FakeLists {
     pub companyWords: Vec<String>,
 }
 
+/// Which fake value a strategy makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FakeKind {
     FirstName,
@@ -52,6 +53,7 @@ impl FakeKind {
     }
 }
 
+/// One part of an address template: literal text or a field.
 #[derive(Clone, Debug)]
 enum Piece {
     Text(String),
@@ -60,6 +62,8 @@ enum Piece {
     Kind,
 }
 
+/// A `fake*` strategy: its kind, its locale's lists, its maxLength, and its
+/// locale's address template, parsed once.
 #[derive(Clone, Debug)]
 pub struct FakeStrategy {
     kind: FakeKind,
@@ -125,10 +129,12 @@ impl FakeStrategy {
     }
 }
 
+/// An index below `upper`, from the keyed hash of `message` under `purpose`.
 fn below(hash: &KeyedHash, upper: usize, message: &[u8], purpose: &[u8]) -> usize {
     hash.below(message, &BigUint::from(upper), purpose).to_usize().expect("below a usize bound")
 }
 
+/// One of `choices`, picked as Python's `_FakeStrategy._pick` picks it.
 fn pick<'a>(hash: &KeyedHash, choices: &'a [String], message: &[u8], purpose: &[u8]) -> &'a str {
     &choices[below(hash, choices.len(), message, purpose)]
 }

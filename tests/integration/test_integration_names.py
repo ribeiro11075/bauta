@@ -28,6 +28,10 @@ RESERVED = 'group'
 
 @pytest.fixture(params=NAMES)
 def database(request, tmp_path):
+    """A connection to each database, dropping the tables a test records in
+    `created` after it.
+    """
+
     with Database(connectionSettings=serverSettings(request.param, tmp_path)) as database:
         created = []
         database.created = created  # type: ignore[attr-defined]

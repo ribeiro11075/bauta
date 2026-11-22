@@ -24,6 +24,10 @@ NAMES = EMBEDDED + sorted(SERVERS)
 
 @pytest.fixture(params=NAMES)
 def database(request, tmp_path):
+    """A connection to each database, dropping the tables and views a test
+    records after it.
+    """
+
     with Database(connectionSettings=serverSettings(request.param, tmp_path)) as database:
         created = []
         views = []
@@ -43,6 +47,10 @@ def database(request, tmp_path):
 
 
 def _create(database, name):
+    """Creates a keyed table named `name` and a random suffix, recorded for
+    dropping.
+    """
+
     table = '{}_{}'.format(name, uuid.uuid4().hex[:6])
     database.alter('CREATE TABLE {} (id INTEGER NOT NULL PRIMARY KEY, label VARCHAR(20))'.format(table))
     database.created.append(table)
@@ -51,6 +59,8 @@ def _create(database, name):
 
 
 def _createView(database, table):
+    """Creates a view over `table`, recorded for dropping."""
+
     view = 'v_{}'.format(table)
     database.alter('CREATE VIEW {} AS SELECT id FROM {}'.format(view, table))
     database.views.append(view)

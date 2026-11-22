@@ -1,3 +1,6 @@
+// The configuration page: the jobs files, opened and edited in place by an
+// admin, each save validated before it is written.
+
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
@@ -19,6 +22,10 @@ interface OpenFile {
   digest: string
 }
 
+/**
+ * The jobs files as tabs, the one in the `file` query parameter open, with what
+ * keeps the configuration from loading or validating.
+ */
 export function Configuration() {
   const user = useUser()
   const configuration = useQuery({ queryKey: ['configuration'], queryFn: () => api<ConfigurationData>('/configuration') })
@@ -53,6 +60,11 @@ export function Configuration() {
   )
 }
 
+/**
+ * One jobs file in a text area. Saving sends the text with the digest it was
+ * read with, so a file changed since is refused rather than overwritten, and
+ * shows the diff written.
+ */
 function Editor({ path }: { path: string }) {
   const client = useQueryClient()
   const file = useQuery({ queryKey: ['file', path], queryFn: () => api<OpenFile>('/configuration/file', { query: { path } }), refetchOnWindowFocus: false })

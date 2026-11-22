@@ -12,10 +12,12 @@ from ..core import NORMALIZE_STEPS, KeyedHash, MaskingError, Strategy
 from .common import _booleanOption, _choiceOption, _digitCount, _normalizeOption, _requireAsciiCharset, _requireIdentifierLength, _typeName, structuredText
 
 
+# _ALPHANUMERIC_CLASSES, _HEX_CLASSES: the alphabets `key` permutes each
+#   character within, by charset. Per case, so a value keeps each character's
+#   case and two spellings of one value never share a mask.
+# _FPE_ALPHABETS: `fpe`'s alphabet for each charset. FF1 needs one alphabet for
+#   every position, so it takes both cases together.
 _ALPHANUMERIC_CLASSES = ('0123456789', 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-# Per case, so a hex value keeps each character's case and two spellings of
-# one value never share a mask. FF1 needs one alphabet for every position,
-# so `fpe` uses both cases together instead (_FPE_ALPHABETS).
 _HEX_CLASSES = ('0123456789', 'abcdef', 'ABCDEF')
 _FPE_ALPHABETS = {
     'digits': '0123456789',
@@ -40,12 +42,14 @@ class KeyStrategy(Strategy):
     OPTIONS = {'charset': _choiceOption('alphanumeric', 'digits', 'hex'), 'normalize': _normalizeOption(*NORMALIZE_STEPS)}
 
     def _maskInteger(self, value: int) -> int:
+        """An integer permuted among those with its sign and digit count. Zero
+        belongs to the non-negative one-digit range only: letting a negative
+        digit map to it would make -0 collide with 0's own image.
+        """
 
         _requireIdentifierLength('key', _digitCount(value))
         magnitude = abs(value)
         digitCount = len(str(magnitude))
-        # Zero belongs to the non-negative one-digit range only; letting a
-        # negative digit map to it would make -0 collide with 0's own image.
         low = 10 ** (digitCount - 1) if digitCount > 1 or value < 0 else 0
         size = 10 ** digitCount - low
         masked = low + self.keyedHash.permute(size, magnitude - low, b'negative' if value < 0 else b'integer')
@@ -70,6 +74,11 @@ class KeyStrategy(Strategy):
 
 
     def _maskText(self, text: str, charset: str) -> str:
+        """Text with the characters `charset` covers permuted within their
+        classes, by position, and every other character kept where it is. The
+        permutation is keyed on the text's shape too, so different shapes never
+        meet.
+        """
 
         _requireIdentifierLength('key', len(text))
         _requireAsciiCharset('key', text, charset)
@@ -100,6 +109,9 @@ class KeyStrategy(Strategy):
 
 
     def mask(self, value: Any) -> Any:
+        """An integer, whole Decimal, UUID or text masked one-to-one in its own
+        shape. Raises MaskingError for anything else.
+        """
 
         if isinstance(value, bool):
             raise MaskingError('the key strategy cannot mask a bool')
@@ -137,12 +149,19 @@ class FPEStrategy(Strategy):
     OPTIONS = {'charset': _choiceOption(*_FPE_ALPHABETS), 'strict': _booleanOption, 'normalize': _normalizeOption(*NORMALIZE_STEPS)}
 
     def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
+        """Adds the FF1 ciphers built so far, by radix, and the `key` strategy
+        that masks values too short for FF1.
+        """
+
         super().__init__(keyedHash, options)
         self._ciphers: Dict[int, Any] = {}
         self._short = KeyStrategy(keyedHash, {})
 
 
     def _cipher(self, radix: int) -> Any:
+        """The FF1 cipher for `radix`, under a key derived from the column's
+        subkey, built once.
+        """
 
         from ..fpe import FF1
 
@@ -161,6 +180,11 @@ class FPEStrategy(Strategy):
 
 
     def _maskInteger(self, value: int) -> int:
+        """An integer encrypted with FF1 over its digits, keeping its sign and
+        digit count; one too short for FF1 is masked by `key` instead. Results
+        with a leading zero, which would shorten the number, are cycle-walked
+        past: the input has none, so the walk comes back to such a value.
+        """
 
         _requireIdentifierLength('fpe', _digitCount(value))
         digits = [int(character) for character in str(abs(value))]
@@ -170,8 +194,6 @@ class FPEStrategy(Strategy):
             self._tooShort(cipher, 'digits')
             return self._short._maskInteger(value)
 
-        # Cycle-walk past results with a leading zero, which would shorten the
-        # number. The input has none, so the walk comes back to such a value.
         tweak = b'negative' if value < 0 else b'integer'
         masked = cipher.encrypt(digits, tweak)
         while masked[0] == 0:
@@ -183,6 +205,10 @@ class FPEStrategy(Strategy):
 
 
     def _maskText(self, text: str, charset: str) -> str:
+        """Text with the characters of `charset` encrypted together with FF1
+        and the rest kept; text with too few of them is masked by `key`
+        instead.
+        """
 
         _requireIdentifierLength('fpe', len(text))
         _requireAsciiCharset('fpe', text, charset)
@@ -206,6 +232,9 @@ class FPEStrategy(Strategy):
 
 
     def mask(self, value: Any) -> Any:
+        """An integer, whole Decimal, UUID or text encrypted with FF1 in its
+        own shape. Raises MaskingError for anything else.
+        """
 
         if isinstance(value, bool):
             raise MaskingError('the fpe strategy cannot mask a bool')

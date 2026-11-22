@@ -76,6 +76,11 @@ def _normalized(definition: str) -> str:
 
 
 def _normalizedCode(code: str) -> str:
+    """SQL code, outside its literals, with what the databases add when they
+    restate a check -- PostgreSQL's casts, MySQL's character set introducers,
+    SQL Server's brackets -- taken out, and upper-cased, so the same check
+    reads the same from any of them.
+    """
 
     code = re.sub(r'::[\w ]+(?:\[\])?', '', code)
     code = re.sub(r'\b_(?:utf8mb4|utf8mb3|utf8|latin1|binary|ascii)\b', '', code)
@@ -95,6 +100,7 @@ def _unwrapped(text: str) -> str:
 
 
 def _balanced(text: str) -> bool:
+    """Whether text's parentheses, outside literals and comments, close in order."""
 
     depth = 0
     for character in codeOnly(text):
@@ -135,6 +141,9 @@ def _topLevel(text: str, word: str) -> List[str]:
 
 
 def _value(quoted: Optional[str], number: Optional[str]) -> Any:
+    """A literal of a check as a Python value: quoted text unescaped, a number
+    with a point as a Decimal, else an int.
+    """
 
     if quoted is not None:
         return quoted.replace("''", "'")

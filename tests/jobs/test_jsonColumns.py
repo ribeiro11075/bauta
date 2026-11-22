@@ -15,6 +15,8 @@ KEY = 'a-json-columns-unit-test-key-0123456'
 
 
 def _plan(columns):
+    """A plan masking `columns` under the test key, bound to them in order."""
+
     return MaskingPlan(key=KEY, columns=columns).bind(list(columns))
 
 

@@ -18,40 +18,58 @@ from .context import Context, reachingDatabases
 
 
 class AuditRequest(BaseModel):
+    """Whether the audit connects to the databases."""
+
     connect: bool = False
 
 
 class CoverageRequest(BaseModel):
+    """The connection and schema to check coverage of; every source's when not
+    given.
+    """
+
     connection: Optional[str] = None
     schema_: Optional[str] = Field(default=None, alias='schema')
 
 
 class DiscoveryApply(BaseModel):
+    """The jobs whose proposed policies are accepted."""
+
     jobs: List[str]
 
 
 class CheckSchedule(BaseModel):
+    """The check schedule: whether it runs, at what time in UTC, and which checks."""
+
     enabled: bool
     time: str
     kinds: List[str]
 
 
 def _now() -> str:
+    """The time now, in UTC, as ISO 8601."""
 
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
 
 
 def build(context: Context) -> APIRouter:
+    """The routes for what proves a copy is safe: checks, the audit, coverage,
+    manifests and dry runs.
+    """
 
     router = APIRouter()
     sessions, viewer, operator, admin, settings, project = context.sessions, context.viewer, context.operator, context.admin, context.settings, context.project
 
     @router.get('/discovery')
     def discoveryRead(user: User = Depends(viewer), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """GET /discovery: the latest check for new columns."""
+
         return {'check': checks.latestDict(session, 'discovery')}
 
     @router.post('/discovery/check')
     def discoveryCheck(user: User = Depends(operator), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /discovery/check: checks the masked jobs for new columns."""
+
         with reachingDatabases('could not check for new columns'):
             check = checks.runDiscovery(session, project(), user.email)
         record(session, user, 'checked for new columns', drifted=len(check['jobs']))
@@ -60,6 +78,10 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/discovery/apply')
     def discoveryApply(body: DiscoveryApply, user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /discovery/apply: writes the latest check's proposed policies
+        into the chosen jobs. Admins only.
+        """
+
         kept = checks.latestDict(session, 'discovery')
         if kept is None:
             raise HTTPException(status_code=409, detail='check for new columns first')
@@ -71,6 +93,10 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/overview')
     def overview(user: User = Depends(viewer), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """GET /overview: the home page: recent runs, stale jobs and the latest
+        checks.
+        """
+
         current = project()
         evidence.archiveManifest(session, current)
         stale = [entry for entry in schedule.jobSchedule(current, schedule.staleness(session)) if entry['stale']]
@@ -90,6 +116,10 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/proof')
     def proof(user: User = Depends(viewer), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """GET /proof: the archived manifests, verified, and the latest checks
+        of each kind.
+        """
+
         current = project()
         evidence.archiveManifest(session, current)
         manifests = [{'key': kept.runId, 'archivedAt': kept.archivedAt.isoformat() if kept.archivedAt else None,
@@ -104,6 +134,8 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/proof/audit')
     def runAudit(body: AuditRequest, user: User = Depends(operator), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /proof/audit: runs the audit, stored when it connected."""
+
         current = project()
         with reachingDatabases('could not run the audit'):
             report = current.audit(connect=body.connect)
@@ -116,6 +148,8 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/proof/coverage')
     def runCoverage(body: CoverageRequest, user: User = Depends(operator), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /proof/coverage: checks which tables are covered."""
+
         current = project()
         with reachingDatabases('could not check coverage'):
             results = checks.runCoverage(session, current, user.email, connection=body.connection, schema=body.schema_)
@@ -125,6 +159,8 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/proof/references')
     def runReferences(user: User = Depends(operator), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /proof/references: checks the targets for orphaned rows."""
+
         with reachingDatabases('could not check references'):
             result = checks.runReferences(session, project(), user.email)
         record(session, user, 'checked references', summary=result['report']['summary'])
@@ -133,10 +169,14 @@ def build(context: Context) -> APIRouter:
 
     @router.get('/checks/schedule')
     def checkSchedule(user: User = Depends(viewer), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """GET /checks/schedule: the check schedule."""
+
         return {'schedule': checks.schedule(session), 'kinds': checks.KINDS}
 
     @router.put('/checks/schedule')
     def setCheckSchedule(body: CheckSchedule, user: User = Depends(admin), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """PUT /checks/schedule: sets the check schedule. Admins only."""
+
         try:
             value = checks.setSchedule(session, body.enabled, body.time, body.kinds)
         except ValueError as error:
@@ -147,6 +187,8 @@ def build(context: Context) -> APIRouter:
 
     @router.post('/proof/dry-run')
     def dryRun(user: User = Depends(operator), session: Session = Depends(sessions)) -> Dict[str, Any]:
+        """POST /proof/dry-run: validates the configuration and dry-runs every job."""
+
         current = project()
         problems = current.validationProblems() + current.dryRunProblems()
         record(session, user, 'ran a dry run', problems=len(problems))

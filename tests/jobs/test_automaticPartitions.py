@@ -17,6 +17,8 @@ KEY = 'an-automatic-partitions-test-key'
 
 
 def _budget(share=4, threads=1, automatic=False, places=None):
+    """A CoreBudget of `share` cores, as a run would hand a job."""
+
     return CoreBudget(share=share, maskingThreads=threads, automaticThreads=automatic, places=places)
 
 
@@ -106,6 +108,10 @@ def test_an_automatic_job_holds_one_place_to_start_and_what_it_is_given_after():
 
 @pytest.fixture
 def sqliteFiles(tmp_path):
+    """Connections to a `source` SQLite file holding 100 customers and an empty
+    `target` one.
+    """
+
     for name in ('source', 'target'):
         connection = sqlite3.connect(tmp_path / '{}.db'.format(name))
         connection.execute('CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)')
@@ -118,6 +124,10 @@ def sqliteFiles(tmp_path):
 
 
 def _messages(monkeypatch):
+    """The messages the package logs from here on, and a function that stops
+    collecting them.
+    """
+
     messages = []
     handler = logging.Handler()
     handler.emit = lambda record: messages.append(record.getMessage())

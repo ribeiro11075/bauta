@@ -33,16 +33,22 @@ class Column:
     """
 
     def __init__(self, name: str, declared: Optional[ColumnType], reported: Optional[Tuple[int, int]]) -> None:
+        """One column of the target: its declared type, if any, and the
+        precision and scale the driver reported, for a decimal. `lenient` means
+        a text column that takes numbers and dates as their text, as a declared
+        one does; `documents`, that it has held a dict or list; `jsonText`,
+        that it holds JSON text alone, whatever its value, as a PostgreSQL json
+        or jsonb column does, which JSON Lines writes as it is; `required`,
+        that it can't be null, as an Iceberg table's key or a column the table
+        requires.
+        """
+
         self.name = name
         self.type = declared
         self.reported = reported
-        # A declared text column takes numbers and dates as their text.
         self.lenient = declared is not None
         self.documents = False
-        # Holds JSON text alone, whatever its value: a PostgreSQL json or
-        # jsonb column, which JSON Lines writes as it is.
         self.jsonText = False
-        # Can't be null: an Iceberg table's key, or a column it requires.
         self.required = False
 
 
@@ -53,7 +59,7 @@ class ColumnarTarget(LoadTarget):
     says where that goes, and publishes it in finish().
     """
 
-    # Where the columns are written, for messages.
+    # loadName: where the columns are written, for messages.
     loadName: str
 
     def holdJson(self, indexes: Sequence[int]) -> None:
@@ -69,6 +75,10 @@ class ColumnarTarget(LoadTarget):
 
 
     def __init__(self, job: str, jobConfig: DataJobConfig, rowGroupSize: int) -> None:
+        """A target for one job's rows, buffering them as Arrow arrays until
+        `rowGroupSize` bytes are held.
+        """
+
         self.job = job
         self.jobConfig = jobConfig
         self.rowGroupSize = rowGroupSize
@@ -80,6 +90,12 @@ class ColumnarTarget(LoadTarget):
 
 
     def begin(self, sourceColumns: List[str], description: Optional[Sequence[Sequence[Any]]] = None) -> None:
+        """Sets up the columns from the query's, named by targetColumns where
+        it names them, with their declared types and what the driver reported
+        of each, then prepares the target. Refuses a count of names that
+        differs from the query's, two names alike but for case, and a declared
+        type for no column.
+        """
 
         jobConfig = self.jobConfig
         names = jobConfig.targetColumns or sourceColumns
@@ -121,6 +137,12 @@ class ColumnarTarget(LoadTarget):
 
 
     def write(self, rows: List[Any]) -> None:
+        """Adds a chunk of rows to the buffer, as one Arrow array per column,
+        settling each untyped column's type from the first values that tell it.
+        A column settled as text by its values is lenient from then on:
+        SQLite's columns hold numbers among text, so a later number is its text
+        too. Writes the buffer out once it holds a row group.
+        """
 
         import pyarrow
 
@@ -142,8 +164,6 @@ class ColumnarTarget(LoadTarget):
             if column.type is None:
                 inferred = inferType(column.name, values, column.reported)
                 column.type = None if inferred is None else self._settled(inferred)
-                # Settled as text by its values: SQLite's columns hold numbers
-                # among text, so a later number is its text too.
                 column.lenient = column.type is not None and column.type.kind == 'string'
             if column.type is None:
                 arrays.append(pyarrow.nulls(len(values)))
@@ -159,6 +179,7 @@ class ColumnarTarget(LoadTarget):
 
 
     def _field(self, column: Column) -> Any:
+        """The Arrow field a settled column is written as."""
 
         import pyarrow
 
@@ -194,6 +215,10 @@ class ColumnarTarget(LoadTarget):
 
 
     def _flush(self) -> None:
+        """Writes the buffered chunks as one table, casting each column to its
+        settled type: a column settled after the first of them holds nulls of
+        no type in the earlier ones.
+        """
 
         import pyarrow
 
@@ -203,8 +228,6 @@ class ColumnarTarget(LoadTarget):
         schema = self._settleSchema()
         columns = []
         for index, field in enumerate(schema):
-            # A column settled after the first of these chunks holds nulls of
-            # no type in the earlier ones.
             columns.append(pyarrow.chunked_array([arrays[index] if arrays[index].type == field.type else arrays[index].cast(field.type)
                                                   for arrays in self._buffered], type=field.type))
         table = pyarrow.Table.from_arrays(columns, schema=schema)
@@ -215,5 +238,6 @@ class ColumnarTarget(LoadTarget):
 
 
     def _writeTable(self, table: Any) -> None:
+        """Writes one Arrow table of buffered rows to the target."""
 
         raise NotImplementedError

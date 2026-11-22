@@ -34,19 +34,16 @@ sys.path.append(str(demoDirectory.parents[1]))
 from bauta import (Configuration, Database, DataJobsFile, FileMemory, expandEnvironmentVariables, planSubset, proposeTable,
                              runDataJobs)
 
+# DEMO_MASKING_KEY: a throwaway key for a throwaway database. A real key is
+#   random, lives in a secret store, and is never written into a script or a
+#   YAML file.
 DEFAULT_WORKING_DIRECTORY = demoDirectory / 'transaction'
-
 DEMO_CONFIGURATION_DIRECTORY = demoDirectory / 'configuration'
-
-# A throwaway key for a throwaway database. A real key is random, lives in a
-# secret store, and is never written into a script or a YAML file.
 DEMO_MASKING_KEY = 'masking-demo-key-not-for-real-use'
-
 SCHEMA = '''
 CREATE TABLE customers (id INT PRIMARY KEY, email TEXT, full_name TEXT, phone TEXT, birth_date TEXT, region TEXT, notes TEXT);
 CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT REFERENCES customers(id), amount NUMERIC);
 '''
-
 CUSTOMERS = [
     (1, 'ana.silva@corp.example', 'Ana Silva', '+351 912 345 678', '1985-04-12', 'eu', 'prefers email; allergic to penicillin'),
     (2, 'ben.okafor@corp.example', 'Ben Okafor', '+1 (555) 010-2233', '1990-11-02', 'us', None),
@@ -54,7 +51,6 @@ CUSTOMERS = [
     (4, 'dara.nolan@corp.example', 'Dara Nolan', '+353 87 123 4567', '2001-01-19', 'eu', None),
     (5, 'eve.martin@corp.example', 'Eve Martin', '+33 6 12 34 56 78', '1969-09-09', 'eu', 'called about a refund'),
     ]
-
 ORDERS = [(100, 1, 25.00), (101, 1, 99.90), (102, 2, 12.50), (103, 3, 310.00), (104, 4, 45.25), (105, 5, 8.75), (106, 5, 60.00)]
 
 
@@ -71,6 +67,10 @@ def showCommand(arguments: List[Any], environment: Optional[Dict[str, Any]] = No
     """
 
     def shown(value: Any) -> str:
+        """One argument as a reader would type it: a path relative to here,
+        quoted for the shell, in double quotes where that is all it needs.
+        """
+
         text = os.path.relpath(value) if isinstance(value, Path) else str(value)
         if "'" in text and not any(character in text for character in '"$`\\'):
             return '"{}"'.format(text)
@@ -94,6 +94,7 @@ def showCommand(arguments: List[Any], environment: Optional[Dict[str, Any]] = No
 
 
 def printRows(heading: str, rows: Any) -> None:
+    """Prints a heading and each row under it, indented."""
 
     print('  {}'.format(heading))
     for row in rows:

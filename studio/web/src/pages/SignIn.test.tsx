@@ -1,14 +1,19 @@
+// Tests of the sign-in page: passwords, single sign-on, the code step and what
+// a refusal says.
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SignInOptions } from '../api'
 import { SignIn } from './SignIn'
 
+/** Renders the sign-in page with `options`. */
 function show(options: Partial<SignInOptions> = {}) {
   const shown: SignInOptions = { hasUsers: true, sso: null, passwordLogin: 'all', ...options }
   render(<QueryClientProvider client={new QueryClient()}><SignIn options={shown} /></QueryClientProvider>)
 }
 
+/** Types an email and a wrong password, and submits them. */
 function submit() {
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ann@example.com' } })
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'wrong password!' } })

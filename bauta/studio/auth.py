@@ -22,42 +22,48 @@ from sqlalchemy.orm import Session
 
 from .db import Activity, Database, User, UserSession, aware, utcnow
 
+# LOGIN_ATTEMPTS, LOGIN_ATTEMPTS_PER_ADDRESS, LOGIN_ATTEMPTS_PER_EMAIL,
+#   LOGIN_WINDOW_SECONDS: failed sign-ins allowed in the window before more are
+#   refused: for an email from one address, which is what a person mistyping
+#   hits; from one address across every email, which stops trying many
+#   accounts; and for one email across every address, which stops many machines
+#   trying one account while leaving it too high for a stranger to lock its
+#   owner out cheaply.
+# CODE_ATTEMPTS, CODE_ATTEMPTS_PER_ADDRESS, CODE_ATTEMPTS_PER_EMAIL: the same
+#   for authenticator codes, after a right password: tighter for the account,
+#   since a code is six digits and whoever tries already has the password. Ten
+#   guesses in the window, with three codes valid at a time, is a chance in
+#   about three thousand a day.
+# SSO_FAILURES_PER_ADDRESS: single sign-ons that come back failed, by address:
+#   each that reaches the identity provider costs a request against its rate
+#   limits.
+# PASSWORD_CHECKS_AT_ONCE: each check takes argon2's 64 MiB and tens of
+#   milliseconds, and needs no account to ask for, so only so many run at once;
+#   past the wait, it is refused.
+# _DUMMY_HASH: checked against when an email is unknown, so a wrong email takes
+#   as long as a wrong password and the time says nothing about who has an
+#   account.
+# changingAccounts: one change to an account at a time, from the Users page or
+#   a sign-in that links or makes one: two admins demoting each other at once
+#   each counted the other as the admin who'd remain. Studio runs as one
+#   process.
 SESSION_COOKIE = 'bauta_studio_session'
 CSRF_HEADER = 'X-Bauta-Studio'
 SAFE_METHODS = {'GET', 'HEAD', 'OPTIONS'}
 MINIMUM_PASSWORD_LENGTH = 12
-# Failed sign-ins allowed in the window before more are refused: for an email
-# from one address, which is what a person mistyping hits; from one address
-# across every email, which stops trying many accounts; and for one email
-# across every address, which stops many machines trying one account while
-# leaving it too high for a stranger to lock its owner out cheaply.
 LOGIN_ATTEMPTS = 5
 LOGIN_ATTEMPTS_PER_ADDRESS = 30
 LOGIN_ATTEMPTS_PER_EMAIL = 100
 LOGIN_WINDOW_SECONDS = 300
-# The same for authenticator codes, after a right password: tighter for the
-# account, since a code is six digits and whoever tries already has the
-# password. Ten guesses in the window, with three codes valid at a time, is a
-# chance in about three thousand a day.
 CODE_ATTEMPTS = 5
 CODE_ATTEMPTS_PER_ADDRESS = 30
 CODE_ATTEMPTS_PER_EMAIL = 10
-# Single sign-ons that come back failed, by address: each that reaches the
-# identity provider costs a request against its rate limits.
 SSO_FAILURES_PER_ADDRESS = 30
-# Each check takes argon2's 64 MiB and tens of milliseconds, and needs no
-# account to ask for, so only so many run at once; past the wait, it is refused.
 PASSWORD_CHECKS_AT_ONCE = 4
 PASSWORD_CHECK_WAIT_SECONDS = 10.0
-
 hasher = PasswordHasher()
-# Checked against when an email is unknown, so a wrong email takes as long as
-# a wrong password and the time says nothing about who has an account.
 _DUMMY_HASH = hasher.hash(secrets.token_urlsafe(16))
 _passwordChecks = threading.BoundedSemaphore(PASSWORD_CHECKS_AT_ONCE)
-# One change to an account at a time, from the Users page or a sign-in that
-# links or makes one: two admins demoting each other at once each counted the
-# other as the admin who'd remain. Studio runs as one process.
 changingAccounts = threading.Lock()
 
 
@@ -66,6 +72,9 @@ class PasswordCheckBusy(Exception):
 
 
 def hashPassword(password: str) -> str:
+    """A password hashed with argon2. Raises ValueError for one shorter than
+    MINIMUM_PASSWORD_LENGTH.
+    """
 
     if len(password) < MINIMUM_PASSWORD_LENGTH:
         raise ValueError('a password must be at least {} characters'.format(MINIMUM_PASSWORD_LENGTH))
@@ -90,6 +99,9 @@ def checkPassword(user: Optional[User], password: str) -> bool:
 
 
 def _tokenHash(token: str) -> str:
+    """What a session token is kept as: its SHA-256, so the table holds nothing
+    a browser could present.
+    """
 
     return hashlib.sha256(token.encode('ascii')).hexdigest()
 
@@ -104,6 +116,10 @@ class LoginThrottle:
 
     def __init__(self, clock: Callable[[], float] = time.monotonic,
                  limits: Tuple[int, int, int] = (LOGIN_ATTEMPTS, LOGIN_ATTEMPTS_PER_ADDRESS, LOGIN_ATTEMPTS_PER_EMAIL)) -> None:
+        """A throttle of failed sign-ins over LOGIN_WINDOW_SECONDS, at `limits`
+        for an email from one address, an address, and an email.
+        """
+
         self._both, self._perAddress, self._perEmail = limits
         self._failures: Dict[Tuple[str, ...], List[float]] = {}
         self._lock = threading.Lock()
@@ -112,6 +128,7 @@ class LoginThrottle:
 
 
     def _limits(self, email: str, address: str) -> List[Tuple[Tuple[str, ...], int]]:
+        """The three keys a sign-in counts against, each with its limit."""
 
         return [(('both', email, address), self._both), (('address', address), self._perAddress), (('email', email), self._perEmail)]
 
@@ -140,12 +157,14 @@ class LoginThrottle:
 
 
     def allowed(self, email: str, address: str) -> bool:
+        """Whether a sign-in may be checked: none of its keys at its limit."""
 
         with self._lock:
             return all(self._recent(key) < limit for key, limit in self._limits(email, address))
 
 
     def failed(self, email: str, address: str) -> None:
+        """Counts a failed sign-in against each of its keys."""
 
         with self._lock:
             self._sweep()
@@ -180,6 +199,7 @@ def startSession(session: Session, user: User, response: Response, hours: int, s
 
 
 def endSession(session: Session, request: Request, response: Response) -> None:
+    """Ends the browser's session, if it has one, and clears its cookie."""
 
     token = request.cookies.get(SESSION_COOKIE)
     if token:
@@ -208,6 +228,9 @@ def endExpiredSessions(database: Database) -> None:
 
 
 def userFromRequest(session: Session, request: Request) -> Optional[User]:
+    """The active user the request's session cookie names, or None; an expired
+    session is deleted as it is found.
+    """
 
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
@@ -238,6 +261,10 @@ def requireRole(role: str, sessions: Callable[..., object]) -> Callable[..., Use
     """
 
     def dependency(request: Request, session: Session = Depends(sessions)) -> User:
+        """The signed-in user, if they hold `role`. A change needs the CSRF
+        header, which a page on another site can't send. Raises 401 or 403.
+        """
+
         if request.method not in SAFE_METHODS and request.headers.get(CSRF_HEADER) != '1':
             raise HTTPException(status_code=403, detail='missing the {} header'.format(CSRF_HEADER))
         user = userFromRequest(session, request)

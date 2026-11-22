@@ -25,9 +25,9 @@ fn skipUnoptimised(what: &str) -> bool {
     false
 }
 
-/// Deliberately far below `ring`'s measured 2.48 GB/s: this fails on a software
-/// fallback (~0.3 GB/s) and on a slow CI box, without failing on a merely
-/// unremarkable one.
+// FLOOR_GB_PER_SECOND: deliberately far below `ring`'s measured 2.48 GB/s: this
+//   fails on a software fallback (~0.3 GB/s) and on a slow CI box, without
+//   failing on a merely unremarkable one.
 const FLOOR_GB_PER_SECOND: f64 = 1.0;
 
 #[test]

@@ -20,23 +20,30 @@ DOUBLE = {'postgresql': 'DOUBLE PRECISION', 'oracle': 'BINARY_DOUBLE', 'mssql': 
 
 @pytest.fixture
 def databaseName(request):
+    """The server a test module targets, as its DATABASE names it."""
 
     return request.module.DATABASE
 
 
 @pytest.fixture
 def connectionSettings(databaseName, tmp_path):
+    """The settings that reach that server."""
+
     return serverSettings(databaseName, tmp_path)
 
 
 @pytest.fixture
 def liveDatabase(connectionSettings):
+    """An open connection to that server."""
 
     with Database(connectionSettings=connectionSettings, create=True) as database:
         yield database
 
 
 def _table(database, prefix, columns):
+    """Creates a table named `prefix` and a random suffix, with `columns`, and
+    returns its name.
+    """
 
     name = '{}_{}'.format(prefix, uuid.uuid4().hex[:8])
     database.alter('CREATE TABLE {} ({})'.format(name, columns))
@@ -46,6 +53,7 @@ def _table(database, prefix, columns):
 
 @pytest.fixture
 def peopleTable(liveDatabase):
+    """A people table on the server, dropped after the test."""
 
     name = _table(liveDatabase, 'people', 'id INT PRIMARY KEY, name VARCHAR(50), amount INT')
 

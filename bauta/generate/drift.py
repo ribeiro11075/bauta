@@ -18,14 +18,13 @@ from ..configuration import DataJobConfig, parseYaml
 from ..database.dialects import catalogTable
 from .discovery import BUILTIN_RULES, DEFAULT_SAMPLE_SIZE, DiscoveryRules, Suggestion, _flow, _scalar, proposeTable, suggestColumn
 
-# A sourceQuery that reads one table whole, as discover writes them: its
-# columns are proposed from the table, keys and foreign keys included. The
-# name may be qualified, each part quoted or not, as discover writes a table
-# of another schema: `"app"."orders"`.
+# _NAME_PART: a sourceQuery that reads one table whole, as discover writes
+#   them: its columns are proposed from the table, keys and foreign keys
+#   included. The name may be qualified, each part quoted or not, as discover
+#   writes a table of another schema: `"app"."orders"`.
+# PROPOSED: marks a line --apply wrote, so a reviewer sees which lines are new.
 _NAME_PART = r'(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[\w$#]+)'
 _WHOLE_TABLE = re.compile(r'^\s*select\s+\*\s+from\s+({0}(?:\.{0})*)\s*;?\s*$'.format(_NAME_PART), re.IGNORECASE)
-
-# Marks a line --apply wrote, so a reviewer sees which lines are new.
 PROPOSED = 'proposed by discover --update'
 
 
@@ -41,11 +40,15 @@ class JobDrift(NamedTuple):
     removed: List[str]
 
     def any(self) -> bool:
+        """Whether the query returns a column the policy lacks, or lacks one
+        the policy names.
+        """
 
         return bool(self.added or self.removed)
 
 
 def _wholeTable(query: str) -> Optional[str]:
+    """The table a query that reads one table whole names, or None."""
 
     match = _WHOLE_TABLE.match(query)
 
@@ -111,6 +114,7 @@ def renderDrift(drifts: Sequence[JobDrift], origins: Dict[str, Any]) -> str:
 
 
 def _indent(line: str) -> int:
+    """How many spaces a line is indented by."""
 
     return len(line) - len(line.lstrip(' '))
 

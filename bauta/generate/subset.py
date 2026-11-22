@@ -15,8 +15,9 @@ from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Se
 from ..configuration import findCycle
 from ..database.dialects import ForeignKey
 
-# The longest chain of selections a query may carry. N tables followed down
-# and back up need 2N - 1; MySQL refuses 33 ("Too high level of nesting").
+# MAX_SELECTION_DEPTH: the longest chain of selections a query may carry. N
+#   tables followed down and back up need 2N - 1; MySQL refuses 33 ("Too high
+#   level of nesting").
 MAX_SELECTION_DEPTH = 32
 
 
@@ -34,6 +35,7 @@ class SubsetPlan(NamedTuple):
 
 
 def _ignored(foreignKey: ForeignKey, ignore: Set[Tuple[str, str]]) -> bool:
+    """Whether a foreign key is one of those the subset was told to ignore."""
 
     return any((foreignKey.table.upper(), column.upper()) in ignore for column in foreignKey.columns)
 
@@ -59,6 +61,13 @@ class _Builder:
     """
 
     def __init__(self, names: Dict[str, str], materialize: bool, quote: Callable[[str], str], quoteTable: Callable[[str], str]) -> None:
+        """A builder of a subset's named selections. `bodies` holds each
+        selection's SQL and `dependencies` the selections it reads.
+        `existsConditions` holds the conditions exists() wrote, which are never
+        NULL, so NOT of one is exact; the root's filter is the user's SQL, and
+        may be NULL.
+        """
+
         self.names = names
         self.quoteTable = quoteTable
         self.materialize = materialize
@@ -66,12 +75,11 @@ class _Builder:
         self.counter = 0
         self.bodies: Dict[str, str] = {}
         self.dependencies: Dict[str, List[str]] = {}
-        # The conditions exists() wrote, which are never NULL, so NOT of one
-        # is exact; the root's filter is the user's SQL, and may be.
         self.existsConditions: Set[str] = set()
 
 
     def alias(self, prefix: str) -> str:
+        """A fresh name for a selection, from `prefix`."""
 
         self.counter += 1
 
@@ -158,6 +166,8 @@ class _Builder:
         depths: Dict[str, int] = {}
 
         def visit(name: str) -> int:
+            """The length of the longest chain of selections down from `name`."""
+
             if name not in depths:
                 depths[name] = 1 + max((visit(dependency) for dependency in self.dependencies[name]), default=0)
             return depths[name]
@@ -195,6 +205,7 @@ def _traverse(parentEdges: Dict[str, List[ForeignKey]], childEdges: Dict[str, Li
 
 
 def _edges(foreignKeys: Iterable[ForeignKey]) -> Tuple[Dict[str, List[ForeignKey]], Dict[str, List[ForeignKey]]]:
+    """Each table's foreign keys to its parents, and to its children, by table."""
 
     parentEdges: Dict[str, List[ForeignKey]] = {}
     childEdges: Dict[str, List[ForeignKey]] = {}

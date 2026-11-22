@@ -25,44 +25,38 @@ bauta audit --connect --strict   # also asks the databases; fails on warnings
 | --- | --- |
 | error | A masked query returns a column the policy doesn't cover, or names one it doesn't return (`--connect`). |
 | error | A masked query couldn't be run to check (`--connect`). |
-| error | A masked job's target table couldn't be read, so its columns couldn't be matched to the policy: most often it doesn't exist yet. Create it with [`schema`](../reference/commands/schema.md), or name its columns in `targetColumns` (`--connect`). |
-| error | A `swap` job replaces a table that a foreign key declared in the target references, or one an earlier swap left on its stage table. The key stays on the old table, now the stage, and the next run can't empty the stage (`--connect`). |
-| warning | A `swap` job replaces a table that declares foreign keys of its own. Its stage table is given the target's primary and unique keys but none of its foreign keys, so after a run the copy stops enforcing them (`--connect`). |
+| error | A masked job's target table couldn't be read, most often because it doesn't exist yet: create it with [`schema`](../reference/commands/schema.md), or name `targetColumns` (`--connect`). |
+| error | A `swap` job replaces a table a foreign key in the target references, so the next run can't empty the stage (`--connect`). |
+| warning | A `swap` job replaces a table that declares foreign keys, which the copy stops enforcing every other run (`--connect`). |
 | warning | A column is kept unmasked although its name suggests personal data (`email`, `ssn`, `phone`, ...), by the built-in rules or [your own](propose-a-policy.md#your-own-rules-discoveryyaml). |
-| warning | A column is kept unmasked although its sampled values look like personal data, whatever it is called: `SELECT ssn AS ref` with `ref: keep` passes every check by name. The value rules [`discover`](propose-a-policy.md) uses, and the ones it applies inside JSON documents (`--connect`). An unmasked job with such a column is an error, as for one named like it. |
-| warning | A domain whose columns hold its values differently, so `key`, `fpe` or `hash` masks them differently and their references stop matching: an id as a number in one column and as text in another, or values padded with spaces, as `CHAR` columns pad them, in one and not another. [`normalize`](../reference/strategies.md#values-held-more-than-one-way-normalize) makes them agree (`--connect`). |
+| warning | A column is kept unmasked although its sampled values look like personal data, whatever it is called (`SELECT ssn AS ref` with `ref: keep`), by [`discover`](propose-a-policy.md)'s value rules (`--connect`). In an unmasked job it is an error. |
+| warning | A domain whose columns hold values differently (an id as a number and as text, or padded and not), so their masks and references stop matching; [`normalize`](../reference/strategies.md#values-held-more-than-one-way-normalize) makes them agree (`--connect`). |
 | warning | `defaultStrategy` is `keep`, so any column added to the source later is copied unmasked. |
 | warning | A job copies from a database without masking while other jobs mask what they read from it. |
 | warning | A masked job reads over a connection that isn't encrypted, as the server reports it (`--connect`). |
 | warning | `shuffle` on an incremental job, whose small chunks leave values near their own rows. |
-| warning | An incremental job that [`run --full-refresh`](../concepts/how-it-works.md#deletes) can't replace, so rows deleted from its source stay in the copy: a database target with no `targetTableStage`, or a files target, which it can't overwrite without changing the layout its readers expect. A scheduled refresh refuses to run at all while any job is like this, so `--strict` in CI catches it first. |
+| warning | An incremental job that [`run --full-refresh`](../concepts/how-it-works.md#deletes) can't replace (no `targetTableStage`, or a files target), so rows deleted from its source stay in the copy, and a scheduled refresh refuses to run. |
 | warning | A domain is masked two ways, or under two keys, in one target database, so its masks won't match across the columns that share it. Copies in different target databases may use different keys. |
 | warning | A foreign-key column isn't masked exactly like the key it references (strategy, options, domain and key), so the copied references won't match (`--connect`). |
 | warning | A foreign key and the key it references are both masked with `shuffle`, which moves values between rows, so the references point at other rows (`--connect`). |
-| warning | A job copies only part of a table that another job's table references (it has a `watermarkColumn`, or its `sourceQuery` has a `WHERE`), and the referencing job isn't limited to match, so the copy can reference rows it lacks (`--connect`). A query counts as partial when it has a `WHERE`, `LIMIT`, `TOP` or `FETCH FIRST`, or joins another table. |
-| warning | A job's table references another job's table, and the job can load before the other: it doesn't wait for it through `predecessors`, the other is inactive, or a job on the way has a longer `refresh` (`--connect`). |
-| warning | A database declares no foreign keys in the schemas its jobs use, but does in others, so no reference between the tables copied was checked: set `currentSchema` on the connection, or qualify the jobs' tables with their schema (`--connect`). |
+| warning | A job copies only part of a referenced table (a watermark, `WHERE`, `LIMIT` or join), and the referencing job isn't limited to match, so the copy can reference rows it lacks (`--connect`). |
+| warning | A job's table references another job's, and it can load first: it doesn't wait through `predecessors`, the other is inactive, or a longer `refresh` sits between them (`--connect`). |
+| warning | A database declares foreign keys only in schemas its jobs don't use, so no reference was checked: set `currentSchema`, or qualify the jobs' tables (`--connect`). |
 | note | Columns that fall to `defaultStrategy`, by name (`--connect`). |
 | note | A target doesn't declare foreign keys its sources do between the tables copied into it, so nothing there stops a row that references nothing; [`verify-references`](copy-a-subset.md#verify-references-checking-the-copys-references) counts them (`--connect`). |
 | note | `redact`, or `json` redacting what its fields don't name, which removes identifiers with a recognisable shape but not names. |
 | note | A column kept unmasked whose sampled values are UUIDs, which other systems may hold too (`--connect`). |
 
-Without `--connect`, columns are shown as declared. With it, each job's query is run to list the columns it really returns and the policy each one gets, and its first `--sample` rows (1,000 by default) are read to question kept columns and shared domains by their values. The rows stay in the memory of the `audit` process; no value appears in the report, its JSON or its errors. `--sample 0` reads none, as before.
+Without `--connect`, columns are shown as declared. With it, each job's query is run to list the columns it really returns, and its first `--sample` rows (1,000 by default, `0` for none) are read to question kept columns and shared domains by their values. No value appears in the report, its JSON or its errors.
 
-The foreign-key check reads the foreign keys of each target database and of the sources copied into it, since a copy often declares none, each from the schemas its jobs use, as [`verify-references`](copy-a-subset.md#verify-references-checking-the-copys-references) reads them. A key's tables are matched to jobs by `targetTableFinal`'s name, without its schema, and a masked job's target columns to its query's columns by position, as the load matches them. A job that doesn't mask copies every column as it is, and so does `keep`; a reference masked with `null` points at nothing, so it can't break.
+The foreign-key checks read the keys of each target and of the sources copied into it, as [`verify-references`](copy-a-subset.md#verify-references-checking-the-copys-references) does, and match them to jobs by table name. A pair of jobs counts as matched for a partial copy when either query names the other's table, as [`subset`](copy-a-subset.md)'s queries and [tables that reference each other](../concepts/how-it-works.md#tables-that-reference-each-other) do. Whether a job waits for another is decided as a run decides it ([refresh and predecessors](../concepts/how-it-works.md#refresh-and-predecessors)). The `swap` checks read only the target's own keys, and a job whose `postTargetAdhocQueries` name the referencing table is taken to recreate them.
 
-The check for a parent copied in part uses the same keys and the same matching by table name. It doesn't parse SQL. A pair of jobs counts as matched when either query names the other's table: a child limited by `EXISTS` over its parent, as [`subset`](copy-a-subset.md) generates, or a parent that also selects what its children reference, as in [tables that reference each other](../concepts/how-it-works.md#tables-that-reference-each-other). A table that references itself is left to `subset`, which reports it as a cycle. Whether a job waits for another is decided as a run decides it: through active predecessors only, and in the cycles each runs in (see [refresh and predecessors](../concepts/how-it-works.md#refresh-and-predecessors)).
-
-The check on `swap` jobs reads only the keys the target declares, since a key only the source has constrains nothing in the copy. A job whose `postTargetAdhocQueries` name the referencing table is taken to recreate its keys there. See [how a swap works](../concepts/how-it-works.md#how-a-swap-works).
-
-`audit` exits 1 on an error, and with `--strict` on a warning too, so it can gate a CI pipeline. **Gate it with `--connect`.** Offline, a column is judged by the name its policy gives it, so a query renaming one -- `select email as contact` with `contact: keep` -- passes; with `--connect`, the values sampled from `contact` look like email addresses, and it is a warning. Offline audit says so as it starts. Give the CI job a login that can read the source, as `run` has. `--format json` writes the same report for other tools, `--format html` [one page for a reviewer](#a-report-for-reviewers), and `--output FILE` writes it to a file. `--job` narrows it.
+`audit` exits 1 on an error, and with `--strict` on a warning too, so it can gate CI. **Gate it with `--connect`**: offline, `select email as contact` with `contact: keep` passes on its name, where the sampled values give it away. `--format json` writes the report for other tools, `--format html` [one page for a reviewer](#a-report-for-reviewers), and `--output FILE` to a file; `--job` narrows it.
 
 
 ## `coverage`: what the jobs do not cover
 
-`audit` checks the jobs that exist. It cannot see a table nobody wrote a job for — a table with no job has nothing to audit — and that is exactly what a new release adds to production.
-
-`coverage` starts from the database instead of from the configuration. It lists every table in a source database and says what the jobs do with each:
+`audit` checks the jobs that exist, so it can't see a table nobody wrote a job for, which is exactly what a new release adds to production. `coverage` starts from the database instead, listing every table and what the jobs do with it:
 
 ```
 bauta coverage
@@ -91,7 +85,7 @@ Add a job for each table above, or declare it in `acknowledged` with the reason 
 | not copied, declared | No job reads it, and [`acknowledged`](../reference/jobs.md#acknowledged) records why. |
 | NOT COVERED | No job reads it, and nothing says that was intended. |
 
-A table counts as covered when a job reading that database reads rows from it: names it after `FROM` or `JOIN` in its `sourceQuery`, directly or through a common table expression, a derived table or a `UNION`. A table named only in a comment, a string, or a subquery that filters — `where customer_id in (select id from accounts)` — is not covered by that job; until this release any mention counted, so a table nobody copied could pass. This reads SQL only as far as that: a job whose query reaches a table through a view covers it in fact but not in this report, and has to be declared. A query whose parentheses don't balance falls back to counting any mention.
+A table counts as covered when a job reads rows from it: names it after `FROM` or `JOIN`, directly or through a CTE, derived table or `UNION`. A table named only in a comment, a string or a filtering subquery is not covered. A query reaching a table through a view covers it in fact but not here, so declare it.
 
 For a table nothing covers, `coverage` reads its column names and marks the ones that look like personal data, by the same rules as [`discover`](propose-a-policy.md), including your own from [`discovery.yaml`](propose-a-policy.md#your-own-rules-discoveryyaml). Columns of covered tables aren't read.
 
@@ -107,8 +101,8 @@ bauta audit --connect --format html --output audit.html
 bauta coverage --format html --output coverage.html
 ```
 
-Each opens with a summary -- how many errors, warnings and notes, or how many tables are in each state, and whether that is ready to rely on -- then a section per job, with how it masks each column, its key's fingerprint and what was found about it, or a section per state listing its tables and the jobs or reasons that cover them.
+Each opens with a summary, then a section per job (how it masks each column, its key's fingerprint, its findings) or per coverage state.
 
-- **It holds what the text report holds, and nothing more:** names of jobs, connections, tables and columns, strategies, key fingerprints and findings. Never a value from a table, and never a key. Every name is escaped, so a table or job named like markup reads as text.
-- **One file, with nothing fetched.** No script, font, stylesheet or image from anywhere else, so it reads the same attached to a ticket, opened offline or archived beside a release. It follows the reader's light or dark setting.
-- **The exit status is the command's,** so the step that writes the page for the reviewer can also fail the build.
+- **It holds what the text report holds:** names, strategies, fingerprints and findings, never a value or a key.
+- **One self-contained file**, fetching nothing, so it reads the same attached to a ticket or archived beside a release.
+- **The exit status is the command's**, so the step that writes it can also fail the build.

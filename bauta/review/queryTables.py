@@ -15,18 +15,19 @@ from typing import Dict, List, Optional, Set, Tuple
 from ..configuration.sqltext import codeOnly
 
 
-# A quoted identifier in each style, a word, or one character of anything else.
+# _TOKEN: a quoted identifier in each style, a word, or one character of
+#   anything else.
+# _CLAUSES: where a FROM list ends.
+# _SET_OPERATIONS: after which a parenthesized query is one of a set
+#   operation's operands.
 _TOKEN = re.compile(r'"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]|[A-Za-z_À-￿][\w$#À-￿]*|\d[\w.]*|\S')
-
-# Where a FROM list ends.
 _CLAUSES = frozenset({'WHERE', 'GROUP', 'ORDER', 'HAVING', 'LIMIT', 'OFFSET', 'FETCH', 'WINDOW', 'QUALIFY', 'FOR', 'ON', 'USING',
                       'CONNECT', 'START', 'RETURNING', 'INTO', 'SELECT', 'PIVOT', 'UNPIVOT', 'MATCH_RECOGNIZE', 'TABLESAMPLE'})
-
-# After which a parenthesized query is one of a set operation's operands.
 _SET_OPERATIONS = frozenset({'UNION', 'INTERSECT', 'EXCEPT', 'MINUS', 'ALL', 'DISTINCT'})
 
 
 def _unquoted(token: str) -> str:
+    """An identifier token without its quotes, doubled quotes undoubled."""
 
     if token[:1] in ('"', '`') and len(token) > 1:
         return token[1:-1].replace(token[0] * 2, token[0])
@@ -37,19 +38,33 @@ def _unquoted(token: str) -> str:
 
 
 def _isName(token: str) -> bool:
+    """Whether a token can be a name: quoted, or starting with a letter or an
+    underscore.
+    """
 
     return bool(token) and (token[0] in '"`[' or token[0].isalpha() or token[0] == '_' or ord(token[0]) >= 0xc0)
 
 
 class _Reader:
+    """Reads the tables a tokenized query takes rows from, following its WITH
+    expressions and parenthesized queries. `matching` maps each opening
+    parenthesis to its closing one.
+    """
 
     def __init__(self, tokens: List[str], foldCase: bool = True) -> None:
+        """A reader over `tokens`; names are folded to upper case unless
+        `foldCase` is False.
+        """
+
         self.tokens = tokens
         self.foldCase = foldCase
         self.matching = self._matchParentheses()
 
 
     def _matchParentheses(self) -> Dict[int, int]:
+        """Each opening parenthesis's index mapped to its closing one's. Raises
+        ValueError where they don't balance.
+        """
 
         matching: Dict[int, int] = {}
         open_: List[int] = []
@@ -67,11 +82,13 @@ class _Reader:
 
 
     def _word(self, index: int) -> str:
+        """The token at `index` in upper case, or nothing past the end."""
 
         return self.tokens[index].upper() if index < len(self.tokens) else ''
 
 
     def _startsQuery(self, index: int) -> bool:
+        """Whether a query, or a parenthesis that may open one, begins at `index`."""
 
         return self._word(index) in ('SELECT', 'WITH', '(')
 
@@ -204,6 +221,8 @@ class _Scan:
     """
 
     def __init__(self, inFrom: bool, expecting: bool) -> None:
+        """A scan starting in a FROM list or not, and expecting a table name or not."""
+
         self.inFrom = inFrom
         self.expecting = expecting
         self.previous = ''

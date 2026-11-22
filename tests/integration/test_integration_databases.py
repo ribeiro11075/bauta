@@ -24,6 +24,7 @@ DATABASES = [pytest.param(name) for name in EMBEDDED] + [pytest.param(name, mark
 
 @pytest.fixture(params=DATABASES)
 def databaseName(request):
+    """Each server the module runs against."""
 
     return request.param
 
@@ -46,6 +47,7 @@ def _fromNothing(databaseName):
 
 
 def _createLike(database, table, suffix):
+    """Creates a table like the people table, named with `suffix`."""
 
     other = table + suffix
     database.alter('CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR(50), amount INT)'.format(other))

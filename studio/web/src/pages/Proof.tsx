@@ -1,3 +1,8 @@
+// The proof page: what a reviewer needs to sign off a copy. Every table
+// accounted for (coverage), every policy checked (the audit), foreign keys
+// whose rows point at nothing (references), each run's manifest verified,
+// and the schedule that runs the checks nightly.
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
@@ -17,6 +22,10 @@ interface ProofData {
     verification: { verified: boolean; signed?: boolean; signatureChecked?: boolean; problem?: string } }[]
 }
 
+// MANIFEST_STATES: what each verification of a manifest says, its colour, and
+//   the hint beside it. COVERAGE_STATES: each state a table can be in, its
+//   words and colour, worst first. KIND_LABELS: each kind of check, as the
+//   schedule names it.
 export const MANIFEST_STATES: Record<ManifestState['state'], { label: string; kind: string; hint: string }> = {
   'verified': { label: 'Verified', kind: 'ok', hint: 'Intact, and signed with the key Studio checks against.' },
   'intact-unsigned': { label: 'Intact', kind: 'ok', hint: 'Unchanged since written. Unsigned, so it doesn\'t show who wrote it.' },
@@ -36,10 +45,14 @@ const COVERAGE_STATES: [string, string, string][] = [
   ['acknowledged', 'Not copied, declared', 'idle'],
 ]
 
+const KIND_LABELS: Record<string, string> = { coverage: 'Coverage', audit: 'Audit against the databases', discovery: 'Discovery', references: 'References' }
+
+/** The proof page, with the buttons that run each check again. */
 export function Proof() {
   const user = useUser()
   const client = useQueryClient()
   const proof = useQuery({ queryKey: ['proof'], queryFn: () => api<ProofData>('/proof') })
+  /** Reads the page again after a check. */
   const refresh = () => client.invalidateQueries({ queryKey: ['proof'] })
   const coverage = useMutation({ mutationFn: () => api('/proof/coverage', { method: 'POST', body: {} }), onSuccess: refresh })
   const audit = useMutation({ mutationFn: () => api('/proof/audit', { method: 'POST', body: { connect: true } }), onSuccess: refresh })
@@ -71,6 +84,7 @@ export function Proof() {
   )
 }
 
+/** The proof itself: coverage, the audit, references and the manifests. */
 function ProofBody({ data, operator }: { data: ProofData; operator: boolean }) {
   const report = data.audit.report
   const coverage = data.coverages.length ? data.coverages : null
@@ -183,6 +197,7 @@ function ProofBody({ data, operator }: { data: ProofData; operator: boolean }) {
   )
 }
 
+/** One coverage check's tables, by state. */
 function CoverageTables({ report, at, by }: { report: CoverageReport; at: string; by: string }) {
   return (
     <section>
@@ -212,6 +227,7 @@ function CoverageTables({ report, at, by }: { report: CoverageReport; at: string
   )
 }
 
+/** The latest check of foreign keys for orphaned rows. */
 function References({ check }: { check: Check<ReferencesReport> | null }) {
   if (!check) return null
   const report = check.report
@@ -242,8 +258,7 @@ function References({ check }: { check: Check<ReferencesReport> | null }) {
   )
 }
 
-const KIND_LABELS: Record<string, string> = { coverage: 'Coverage', audit: 'Audit against the databases', discovery: 'Discovery', references: 'References' }
-
+/** The nightly check schedule: whether it runs, when, and which checks; an admin can change it. */
 function ScheduleCard() {
   const user = useUser()
   const client = useQueryClient()

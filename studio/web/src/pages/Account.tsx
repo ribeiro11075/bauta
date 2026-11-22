@@ -1,3 +1,5 @@
+// The Account page: a person's own password and two-factor sign-in.
+
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type User } from '../api'
@@ -5,7 +7,7 @@ import { useUser } from '../App'
 import { PageHead, Pill } from '../components/ui'
 import { CodeInput, RecoveryCodes, TwoFactorSetup } from '../components/TwoFactor'
 
-// Someone's own account: their password and their two-factor sign-in.
+/** Someone's own account: their password and their two-factor sign-in. */
 export function Account() {
   const user = useUser()
 
@@ -26,6 +28,7 @@ export function Account() {
   )
 }
 
+/** Changing your own password, given the one you have; every other session of yours ends. */
 function ChangePassword() {
   const empty = { current: '', new: '', again: '' }
   const [form, setForm] = useState(empty)
@@ -61,6 +64,7 @@ function ChangePassword() {
   )
 }
 
+/** Setting up an authenticator app, and showing the recovery codes once. */
 function TwoFactorOff() {
   const client = useQueryClient()
   const [settingUp, setSettingUp] = useState(false)
@@ -77,6 +81,7 @@ function TwoFactorOff() {
   )
 }
 
+/** New recovery codes, or turning two-factor sign-in off, each given a code. */
 function TwoFactorOn() {
   const client = useQueryClient()
   const [action, setAction] = useState<'codes' | 'off' | null>(null)

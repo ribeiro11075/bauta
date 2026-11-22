@@ -22,19 +22,21 @@ from __future__ import annotations
 import re
 from typing import Iterator, List, Optional, Tuple
 
+# POSTGRESQL_FIELD_END: where a field of a PostgreSQL message ends: the next
+#   `DETAIL:  `-style line, the `LINE 1: ` quoting the statement, or the end of
+#   the text. A value may hold newlines, so a field isn't a line.
+# ORACLE_LINE_END: where a line of an Oracle message ends, for the same reason:
+#   at the next ORA- line or the link to Oracle's help that closes the message.
+# _IDENTIFIER_BEFORE: the word before a quote that says the quote names
+#   something rather than quoting data: `relation "orders"`, `for key
+#   'users.email'`, `in object 'dbo.orders'`. Bare `key` isn't one: DuckDB
+#   writes `Duplicate key "id: 5"`.
+# _PYMSSQL_MESSAGE: pymssql's message: the repr of (code, bytes), the whole
+#   text in one quote.
 REDACTED = '<redacted>'
-
 QUOTE = r"\\?'"
-
-# Where a field of a PostgreSQL message ends: the next `DETAIL:  `-style line,
-# the `LINE 1: ` quoting the statement, or the end of the text. A value may
-# hold newlines, so a field isn't a line.
 POSTGRESQL_FIELD_END = r'(?=\n(?:[A-Z][A-Z ]*:  |LINE \d+: )|\n?\Z)'
-
-# Where a line of an Oracle message ends, for the same reason: at the next
-# ORA- line or the link to Oracle's help that closes the message.
 ORACLE_LINE_END = r'(?=\nORA-\d{5}: |\nHelp: https://docs\.oracle\.com/|\n?\Z)'
-
 _PATTERNS: List[Tuple['re.Pattern[str]', str]] = [(re.compile(pattern, flags), replacement) for pattern, flags, replacement in (
 
     # PostgreSQL: DETAIL:  Key (email)=(ann@example.com) already exists.
@@ -116,13 +118,9 @@ _PATTERNS: List[Tuple['re.Pattern[str]', str]] = [(re.compile(pattern, flags), r
     # DuckDB: Type INT64 with value 99999999999 can't be cast ... -- unquoted
     (r'(with value ).*?( can\'t be cast)', 0, r'\1' + REDACTED + r'\2'),
     )]
-# The word before a quote that says the quote names something rather than
-# quoting data: `relation "orders"`, `for key 'users.email'`, `in object
-# 'dbo.orders'`. Bare `key` isn't one: DuckDB writes `Duplicate key "id: 5"`.
 _IDENTIFIER_BEFORE = re.compile(
     r'(?:\b(?:relation|table|column|constraint|index|schema|database|catalog|type|function|procedure|view|sequence|object|role|user|'
     r'trigger|encoding|collation|extension|file|directory|for key|of key|format specifier)|\b(?:table or view)):?\s*$', re.IGNORECASE)
-# pymssql's message: the repr of (code, bytes), the whole text in one quote.
 _PYMSSQL_MESSAGE = re.compile(r'(\(\d+, b)([\'"])(.*)\2(\)\s*)$', re.DOTALL)
 
 

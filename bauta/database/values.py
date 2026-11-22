@@ -18,29 +18,29 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..configuration import DatabaseType
 
+# _BOUND_INTEGERS: the integers a driver binds as integers: 64 bits, signed.
+# POSTGRESQL_JSON_TYPES: the json and jsonb type codes: the PostgreSQL columns
+#   a list goes to as JSON, and whose values, read as their text, are JSON
+#   documents.
+# MYSQL_JSON_TYPE: MySQL's type code for JSON. MariaDB's JSON is LONGTEXT,
+#   reported as text, so nothing tells it from a text column.
+# WANTS_COLUMN_TYPES: the databases whose conversions, or binds
+#   (DatabaseDialect.bindTypes), depend on the column a value goes to, whose
+#   type codes cost a statement per table to read.
+# _ROWS_PER_SIGNATURE: rows to each distinct type signature below which finding
+#   a chunk's columns by their signatures beats transposing it: NULLs scattered
+#   over many columns make most rows' signatures distinct.
+# Conversion: a conversion takes the value and the type code of the column it
+#   is going to -- known on PostgreSQL and Oracle only, see WANTS_COLUMN_TYPES
+#   -- and returns what the driver is sent.
 _NON_FINITE_NAMES = {'nan': 'NaN', 'inf': 'an infinity'}
-# The integers a driver binds as integers: 64 bits, signed.
 _BOUND_INTEGERS = range(-2 ** 63, 2 ** 63)
-# The json and jsonb type codes: the PostgreSQL columns a list goes to as JSON,
-# and whose values, read as their text, are JSON documents.
 POSTGRESQL_JSON_TYPES = frozenset({114, 3802})
 _POSTGRESQL_JSON = POSTGRESQL_JSON_TYPES
-# MySQL's type code for JSON. MariaDB's JSON is LONGTEXT, reported as text,
-# so nothing tells it from a text column.
 MYSQL_JSON_TYPE = 245
-# The databases whose conversions, or binds (DatabaseDialect.bindTypes),
-# depend on the column a value goes to, whose type codes cost a statement per
-# table to read.
 WANTS_COLUMN_TYPES = frozenset({DatabaseType.POSTGRESQL, DatabaseType.ORACLE})
 _NONE = type(None)
-# Rows to each distinct type signature below which finding a chunk's columns
-# by their signatures beats transposing it: NULLs scattered over many columns
-# make most rows' signatures distinct.
 _ROWS_PER_SIGNATURE = 8
-
-# A conversion takes the value and the type code of the column it is going
-# to -- known on PostgreSQL and Oracle only, see WANTS_COLUMN_TYPES -- and returns what
-# the driver is sent.
 Conversion = Callable[[Any, Any], Any]
 
 
@@ -116,6 +116,8 @@ def jsonColumnIndexes(databaseType: Optional[DatabaseType], description: Optiona
     """
 
     def isJson(code: Any) -> bool:
+        """Whether a column's type code is this database's JSON type."""
+
         if databaseType == DatabaseType.POSTGRESQL:
             return code in POSTGRESQL_JSON_TYPES
         if databaseType == DatabaseType.MYSQL:
@@ -154,26 +156,31 @@ def decodedJson(rows: Sequence[Sequence[Any]], description: Optional[Sequence[Se
 
 
 def _duration(value: Any, columnType: Any) -> Any:
+    """A conversion: a timedelta as durationText."""
 
     return durationText(value)
 
 
 def _json(value: Any, columnType: Any) -> Any:
+    """A conversion: a list or dict as JSON text."""
 
     return jsonText(value)
 
 
 def _text(value: Any, columnType: Any) -> Any:
+    """A conversion: the value as str()."""
 
     return str(value)
 
 
 def _iso(value: Any, columnType: Any) -> Any:
+    """A conversion: a date or time as ISO 8601."""
 
     return value.isoformat()
 
 
 def _isoDateTime(value: Any, columnType: Any) -> Any:
+    """A conversion: a datetime as ISO 8601 with a space, as SQLite writes them."""
 
     return value.isoformat(sep=' ')
 
@@ -198,29 +205,33 @@ def _postgresqlJson(value: Any, columnType: Any) -> Any:
 
 
 def _postgresqlList(value: Any, columnType: Any) -> Any:
+    """A conversion: a list as JSON for a json or jsonb column, and as it is,
+    for an array, elsewhere.
+    """
 
     return _postgresqlJson(value, columnType) if columnType in _POSTGRESQL_JSON else value
 
 
-# Each database's row names the types its driver can't take as they are. A
-# type is looked up through its bases, so a subclass of datetime is converted
-# as one; None sends a type as it is, as bool, a subclass of int, needs where
-# int has a conversion.
-#
-# - Durations as text, everywhere: see durationText.
-# - Lists and dictionaries (a PostgreSQL array or JSON, a DuckDB LIST, STRUCT
-#   or MAP) as JSON text, which `schema` maps them to: none of sqlite3,
-#   mysql-connector, oracledb and pymssql binds one. DuckDB takes both as they
-#   are; PostgreSQL decides by the column.
-# - A UUID and a time of day as text for mysql-connector and oracledb, which
-#   refuse them.
-# - Times with their microseconds as ISO text on SQL Server: pymssql renders a
-#   bound datetime to the millisecond, losing what a DATETIME2 column holds.
-# - SQLite's dates, times, Decimals and UUIDs as text: it has no type for
-#   them, and Python's built-in adapters for dates are deprecated since 3.12.
-#   A Decimal kept as exact text needs a column of text affinity, which is
-#   what `schema` creates for one.
-# - Integers past 64 bits as exact text on SQLite and DuckDB; see _wideInteger.
+# CONVERSIONS: each database's row names the types its driver can't take as
+#   they are. A type is looked up through its bases, so a subclass of datetime
+#   is converted as one; None sends a type as it is, as bool, a subclass of
+#   int, needs where int has a conversion.
+#   - Durations as text, everywhere: see durationText.
+#   - Lists and dictionaries (a PostgreSQL array or JSON, a DuckDB LIST,
+#     STRUCT or MAP) as JSON text, which `schema` maps them to: none of
+#     sqlite3, mysql-connector, oracledb and pymssql binds one. DuckDB takes
+#     both as they are; PostgreSQL decides by the column.
+#   - A UUID and a time of day as text for mysql-connector and oracledb, which
+#     refuse them.
+#   - Times with their microseconds as ISO text on SQL Server: pymssql renders
+#     a bound datetime to the millisecond, losing what a DATETIME2 column
+#     holds.
+#   - SQLite's dates, times, Decimals and UUIDs as text: it has no type for
+#     them, and Python's built-in adapters for dates are deprecated since
+#     3.12. A Decimal kept as exact text needs a column of text affinity,
+#     which is what `schema` creates for one.
+#   - Integers past 64 bits as exact text on SQLite and DuckDB; see
+#     _wideInteger.
 CONVERSIONS: Dict[DatabaseType, Dict[type, Optional[Conversion]]] = {
     DatabaseType.POSTGRESQL: {datetime.timedelta: _duration, dict: _postgresqlJson, list: _postgresqlList},
     DatabaseType.MYSQL: {datetime.timedelta: _duration, dict: _json, list: _json, uuid.UUID: _text, datetime.time: _iso},
@@ -231,8 +242,6 @@ CONVERSIONS: Dict[DatabaseType, Dict[type, Optional[Conversion]]] = {
                           datetime.datetime: _isoDateTime, datetime.date: _iso, decimal.Decimal: _text, int: _wideInteger, bool: None},
     DatabaseType.DUCKDB: {datetime.timedelta: _duration, int: _wideInteger, bool: None},
     }
-
-
 _found: Dict[Tuple[DatabaseType, type], Optional[Conversion]] = {}
 
 
@@ -292,8 +301,13 @@ class ValuePreparer:
     """
 
     def __init__(self, databaseType: DatabaseType) -> None:
+        """A preparer for one table's chunks. _converting says whether the last
+        chunk held a value a conversion applies to; _bySignature, whether
+        columns are still found by the rows' type signatures, which stops once
+        NULLs make them too many.
+        """
+
         self.databaseType = databaseType
-        # Whether the last chunk held a value a conversion applies to.
         self._converting = False
         self._bySignature = True
 
@@ -319,6 +333,11 @@ class ValuePreparer:
 
 
     def prepare(self, rows: List[Tuple[Any, ...]], columnTypes: Optional[Sequence[Any]] = None) -> List[Tuple[Any, ...]]:
+        """The chunk as the driver must receive it, only the columns holding a
+        value to convert converted. `columnTypes`, where known, are the type
+        codes of the columns the values go to. A conversion may leave every
+        value as it was, and the column is then kept as it is.
+        """
 
         if not rows:
             return rows
@@ -349,8 +368,6 @@ class ValuePreparer:
 
             columnType = columnTypes[index] if columnTypes is not None and index < len(columnTypes) else None
             values = tuple(value if (conversion := conversions[type(value)]) is None else conversion(value, columnType) for value in column)
-            # A conversion may leave every value as it was, and the column is
-            # then kept as it is.
             if any(new is not old for new, old in zip(values, column)):
                 converted[index] = values
 

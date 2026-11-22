@@ -1,3 +1,7 @@
+// The pieces every page shares: status pills, the bar of where a job's time
+// went, bauta's prose and diffs, the page heading, loading and failure states,
+// and the button that starts a run.
+
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
@@ -5,8 +9,9 @@ import { api, ApiError, can, type Job, type Launched, type Stages } from '../api
 import { useUser } from '../App'
 import { duration } from '../format'
 
-// Status pills ---------------------------------------------------------------
-
+// RUN_STATUS, JOB_STATUS: each status's words and the pill colour it takes.
+// STAGE_LABELS: each stage of a job's time, its words and its colour, in the
+//   order the bar draws them.
 const RUN_STATUS: Record<string, [string, string]> = {
   running: ['Running', 'run'],
   succeeded: ['Succeeded', 'ok'],
@@ -23,23 +28,6 @@ const JOB_STATUS: Record<string, [string, string]> = {
   waiting: ['Waiting', 'idle'],
 }
 
-export function Pill({ kind, children }: { kind: string; children: ReactNode }) {
-  return <span className={`pill ${kind}`}>{children}</span>
-}
-
-export function RunStatus({ status, counts }: { status: string; counts?: Record<string, number> }) {
-  const [label, kind] = RUN_STATUS[status] ?? [status, 'idle']
-  const failed = (counts?.failed ?? 0) + (counts?.skipped ?? 0)
-  return <Pill kind={kind}>{status === 'partial' && failed ? `${failed} failed` : label}</Pill>
-}
-
-export function JobStatus({ status }: { status: string }) {
-  const [label, kind] = JOB_STATUS[status] ?? [status, 'idle']
-  return <Pill kind={kind}>{label}</Pill>
-}
-
-// Where the time went --------------------------------------------------------
-
 const STAGE_LABELS: [keyof Stages, string, string][] = [
   ['read', 'Reading', 's-read'],
   ['mask', 'Masking', 's-mask'],
@@ -47,8 +35,35 @@ const STAGE_LABELS: [keyof Stages, string, string][] = [
   ['wait', 'Waiting on read limit', 's-wait'],
 ]
 
-// Stages are busy time and overlap, so the bar shows each stage's share of
-// the busy time, not of the run's duration; the title says the seconds.
+// Status pills ---------------------------------------------------------------
+
+/**
+ * A small coloured label, `kind` naming its colour; the words carry the
+ * meaning, never the colour alone.
+ */
+export function Pill({ kind, children }: { kind: string; children: ReactNode }) {
+  return <span className={`pill ${kind}`}>{children}</span>
+}
+
+/** A run's status as a pill, a partial run's saying how many of its jobs failed. */
+export function RunStatus({ status, counts }: { status: string; counts?: Record<string, number> }) {
+  const [label, kind] = RUN_STATUS[status] ?? [status, 'idle']
+  const failed = (counts?.failed ?? 0) + (counts?.skipped ?? 0)
+  return <Pill kind={kind}>{status === 'partial' && failed ? `${failed} failed` : label}</Pill>
+}
+
+/** A job's status in a run, as a pill. */
+export function JobStatus({ status }: { status: string }) {
+  const [label, kind] = JOB_STATUS[status] ?? [status, 'idle']
+  return <Pill kind={kind}>{label}</Pill>
+}
+
+// Where the time went --------------------------------------------------------
+
+/**
+ * Stages are busy time and overlap, so the bar shows each stage's share of the
+ * busy time, not of the run's duration; the title says the seconds.
+ */
 export function StageBar({ stages, label }: { stages: Stages | null; label: string }) {
   if (!stages) return <div className="bar" role="img" aria-label={`${label}: no stage times recorded`} />
   const total = stages.read + stages.mask + stages.write + stages.wait || 1
@@ -62,6 +77,7 @@ export function StageBar({ stages, label }: { stages: Stages | null; label: stri
   )
 }
 
+/** The key to StageBar's colours. */
 export function StageKey() {
   return (
     <div className="row" style={{ gap: 16 }}>
@@ -72,20 +88,25 @@ export function StageKey() {
   )
 }
 
+/** A history record's stage times, or null where it recorded none. */
 export function jobStages(record: { readSeconds?: number | null; maskSeconds?: number | null; writeSeconds?: number | null; throttledSeconds?: number | null }): Stages | null {
   if (record.readSeconds == null) return null
   return { read: record.readSeconds ?? 0, mask: record.maskSeconds ?? 0, write: record.writeSeconds ?? 0, wait: record.throttledSeconds ?? 0 }
 }
 
-// Text from bauta, such as an audit finding, marks commands and settings
-// with backticks; they read as code.
+/**
+ * Text from bauta, such as an audit finding, marks commands and settings with
+ * backticks; they read as code.
+ */
 export function Prose({ text }: { text: string }) {
   return <>{text.split(/(`[^`]+`)/).map((part, index) => part.startsWith('`') && part.endsWith('`') && part.length > 1
     ? <code key={index}>{part.slice(1, -1)}</code> : part)}</>
 }
 
-// A unified diff, additions and removals marked by more than colour: each
-// line keeps its own + or -.
+/**
+ * A unified diff, additions and removals marked by more than colour: each line
+ * keeps its own + or -.
+ */
 export function DiffView({ diff }: { diff: string }) {
   return (
     <pre className="log diff" style={{ marginTop: 10 }}>
@@ -98,6 +119,7 @@ export function DiffView({ diff }: { diff: string }) {
 
 // Page furniture ---------------------------------------------------------------
 
+/** A page's heading: its crumb trail, title and subtitle, with actions beside. */
 export function PageHead({ title, sub, crumb, children }: { title: ReactNode; sub?: ReactNode; crumb?: ReactNode; children?: ReactNode }) {
   return (
     <div>
@@ -113,10 +135,15 @@ export function PageHead({ title, sub, crumb, children }: { title: ReactNode; su
   )
 }
 
+/** What a page shows while its data loads. */
 export function Loading() {
   return <div className="empty" role="status">Loading…</div>
 }
 
+/**
+ * What a page shows when its data can't be had: the configuration's own message
+ * when it doesn't load (a 409), else the error's.
+ */
 export function Failure({ error }: { error: unknown }) {
   if (error instanceof ApiError && error.status === 409) {
     return (
@@ -136,9 +163,11 @@ interface FullRefreshProblem {
   fix: { stageTable: string; command: string } | null
 }
 
-// What keeps a full refresh from replacing a job, and the way to fix it: in
-// place for an admin, who can make the stage table and name it in the job;
-// otherwise the command whoever runs the server can.
+/**
+ * What keeps a full refresh from replacing a job, and the way to fix it: in
+ * place for an admin, who can make the stage table and name it in the job;
+ * otherwise the command whoever runs the server can.
+ */
 function FullRefreshFix({ problem }: { problem: FullRefreshProblem }) {
   const user = useUser()
   const client = useQueryClient()
@@ -164,6 +193,11 @@ function FullRefreshFix({ problem }: { problem: FullRefreshProblem }) {
   )
 }
 
+/**
+ * A button opening the dialog that starts a run: of `jobs` where given, else of
+ * the jobs chosen there, or every due job; with a full refresh where every job
+ * can take one, and what stops one where not.
+ */
 export function StartRunButton({ jobs, label = 'Start a run', primary = true }: { jobs?: string[]; label?: string; primary?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const [selected, setSelected] = useState<string[]>(jobs ?? [])
@@ -184,6 +218,7 @@ export function StartRunButton({ jobs, label = 'Start a run', primary = true }: 
 
   useEffect(() => setSelected(jobs ?? []), [jobs])
 
+  /** Adds a job to the chosen ones, or takes it out. */
   const toggle = (name: string) => setSelected((current) => (current.includes(name) ? current.filter((job) => job !== name) : [...current, name]))
 
   return (

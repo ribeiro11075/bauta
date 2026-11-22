@@ -1,3 +1,13 @@
+"""Run state: what each job last did, kept between runs.
+
+For each job, when it last completed (what `refresh` is measured from), the
+watermark an incremental job has reached, and the fingerprint of the key its
+target was masked with (see jobs.keys). MemoryBackend is the contract;
+FileMemory keeps it in a YAML file and DatabaseMemory in a table.
+
+Also the locks that keep two runs of a job apart: exclusiveLock, on a file of
+its own, and exclusiveRun, held by a run over the jobs it starts.
+"""
 from __future__ import annotations
 
 import contextlib
@@ -138,6 +148,7 @@ class MemoryBackend(ABC):
         return self
 
     def __exit__(self, *exception: Any) -> None:
+        """Closes the backend."""
 
         self.close()
 
@@ -183,11 +194,15 @@ class _MemoryDumper(yaml.SafeDumper):
 
 
 def _representDecimal(dumper: yaml.SafeDumper, value: decimal.Decimal) -> yaml.ScalarNode:
+    """A Decimal as a `!decimal` scalar, so it reads back exactly rather than
+    as a float.
+    """
 
     return dumper.represent_scalar('!decimal', str(value))
 
 
 def _constructDecimal(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> decimal.Decimal:
+    """A `!decimal` scalar read back as a Decimal."""
 
     return decimal.Decimal(str(loader.construct_scalar(node)))
 
@@ -215,6 +230,8 @@ class FileMemory(MemoryBackend):
     """
 
     def __init__(self, memoryFile: Union[str, Path]) -> None:
+        """State kept in `memoryFile`, locked through a `.lock` file beside it."""
+
         self.memoryFile = Path(memoryFile)
         self._lockFile = self.memoryFile.with_name(self.memoryFile.name + '.lock')
 
@@ -242,9 +259,11 @@ class FileMemory(MemoryBackend):
 
 
     def _read(self, section: str) -> Dict[str, Any]:
+        """One section of the document, read under the lock. A file that
+        doesn't exist yet is checked for first, so that reading never creates a
+        lock file beside it.
+        """
 
-        # Checked first so that reading never creates a lock file beside a
-        # memory file that doesn't exist yet.
         if not self.memoryFile.exists():
             return {}
 
@@ -253,6 +272,10 @@ class FileMemory(MemoryBackend):
 
 
     def _write(self, section: str, job: str, value: Any) -> None:
+        """Sets one job's value in one section, None removing it: the file
+        re-read, changed and replaced through a temporary file, all under the
+        lock.
+        """
 
         temporary = self.memoryFile.with_name(self.memoryFile.name + '.tmp')
         self.memoryFile.parent.mkdir(parents=True, exist_ok=True)
@@ -274,31 +297,37 @@ class FileMemory(MemoryBackend):
 
 
     def read(self) -> Dict[str, float]:
+        """Each job's last completed run, as a Unix time."""
 
         return self._read('lastRun')
 
 
     def recordRun(self, job: str) -> None:
+        """Records that the job completed now."""
 
         self._write('lastRun', job, time.time())
 
 
     def readWatermarks(self) -> Dict[str, Any]:
+        """Each incremental job's watermark."""
 
         return self._read('watermarks')
 
 
     def recordWatermark(self, job: str, value: Any) -> None:
+        """Records the job's watermark."""
 
         self._write('watermarks', job, value)
 
 
     def readKeyFingerprints(self) -> Dict[str, str]:
+        """The fingerprint of the key each masked job's target was last masked with."""
 
         return self._read('maskingKeys')
 
 
     def recordKeyFingerprint(self, job: str, fingerprint: Optional[str]) -> None:
+        """Records the fingerprint of the job's key, or forgets it given None."""
 
         self._write('maskingKeys', job, fingerprint)
 
@@ -316,10 +345,13 @@ class DatabaseMemory(MemoryBackend):
     """
 
     def __init__(self, connectionSettings: ConnectionConfig, table: str = 'bauta_memory') -> None:
+        """State kept in `table` on a connection. DuckDB is refused: the run
+        holds this connection open for as long as it lasts, and DuckDB lets one
+        process at a time open a file, so every job that recorded its run would
+        wait on the run itself, then fail.
+        """
+
         if connectionSettings.type == DatabaseType.DUCKDB:
-            # The run holds this connection open for as long as it lasts, and
-            # DuckDB lets one process at a time open a file, so every job that
-            # recorded its run would wait on the run itself, then fail.
             raise ConfigurationError('run state cannot be kept in DuckDB ({}): DuckDB lets one process at a time open a file, and the run '
                                      'and each job are processes of their own. Keep it in a file, or in a server database'.format(
                                          connectionSettings.describeTarget()))
@@ -396,12 +428,16 @@ class DatabaseMemory(MemoryBackend):
 
 
     def _query(self, statement: str) -> Any:
+        """The rows of a SELECT on the table, whose name the statement takes as {}."""
 
         def work(database: Database) -> Any:
+            """Runs the query, then rolls back: reading opens a transaction on
+            PostgreSQL, which on a held connection would stay open for the life
+            of the run -- idle in transaction, which holds back vacuum and
+            trips server timeouts.
+            """
+
             rows = database.query(statement.format(database.statementName(self.table)))
-            # Reading opens a transaction on PostgreSQL, which on a held
-            # connection would stay open for the life of the run -- idle in
-            # transaction, which holds back vacuum and trips server timeouts.
             database.rollback()
             return rows
 
@@ -409,12 +445,16 @@ class DatabaseMemory(MemoryBackend):
 
 
     def _upsert(self, data: Any, columns: Any) -> None:
+        """Upserts rows into the table's given columns only."""
 
         self._run(lambda database: database.upsert(table=self.table, data=data, columns=columns))
 
 
     @staticmethod
     def _encodeWatermark(value: Any) -> Tuple[str, str]:
+        """A watermark as (text, type tag), so it comes back as the type the
+        source compares against.
+        """
 
         if isinstance(value, datetime.datetime):
             return value.isoformat(), 'datetime'
@@ -437,6 +477,7 @@ class DatabaseMemory(MemoryBackend):
 
     @staticmethod
     def _decodeWatermark(text: str, typeTag: str) -> Any:
+        """A stored watermark back as the type its tag names."""
 
         if typeTag == 'datetime':
             return datetime.datetime.fromisoformat(text)
@@ -471,11 +512,15 @@ class DatabaseMemory(MemoryBackend):
 
 
     def recordRun(self, job: str) -> None:
+        """Records that the job completed now."""
 
         self._upsert([(job, time.time())], ['job', 'last_run'])
 
 
     def readWatermarks(self) -> Dict[str, Any]:
+        """Each incremental job's watermark, leaving out the rows that hold key
+        fingerprints.
+        """
 
         rows = self._query('SELECT job, watermark_value, watermark_type FROM {}')
 
@@ -495,12 +540,16 @@ class DatabaseMemory(MemoryBackend):
 
 
     def recordKeyFingerprint(self, job: str, fingerprint: Optional[str]) -> None:
+        """Records the fingerprint of the job's key, in a row of its own beside
+        the job's.
+        """
 
         self._upsert([(job + KEY_FINGERPRINT_SUFFIX, fingerprint, KEY_FINGERPRINT_TYPE)],
                      ['job', 'watermark_value', 'watermark_type'])
 
 
     def recordWatermark(self, job: str, value: Any) -> None:
+        """Records the job's watermark, with its type tag."""
 
         text, typeTag = self._encodeWatermark(value)
 

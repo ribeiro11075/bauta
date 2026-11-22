@@ -13,6 +13,8 @@ _job = functools.partial(dataJob, sourceConnection='prod', targetConnection='sta
 
 
 def _masked(columns, **overrides: Any) -> DataJobConfig:
+    """A job masking `columns` under the test key, with `overrides`."""
+
     masking = {'key': KEY, 'columns': columns}
     if 'defaultStrategy' in overrides:
         masking['defaultStrategy'] = overrides.pop('defaultStrategy')
@@ -20,6 +22,8 @@ def _masked(columns, **overrides: Any) -> DataJobConfig:
 
 
 def _messages(report, severity=None):
+    """The (job, message) of each finding, of one severity where given."""
+
     return [(finding['job'], finding['message']) for finding in report['findings'] if severity in (None, finding['severity'])]
 
 
@@ -118,6 +122,10 @@ def test_fpe_without_strict_is_noted():
 
 
 def _customersAndOrders(customerId, orderCustomerId, orderKey=KEY, orderTarget='staging'):
+    """A customers job and an orders job whose ids are masked as given, for the
+    checks that compare one column across jobs.
+    """
+
     return {
         'maskCustomers': _masked({'id': customerId, 'email': 'email'}, sourceQuery='select id, email from customers'),
         'maskOrders': _job(sourceQuery='select id, customer_id from orders', targetTableFinal='orders', targetConnection=orderTarget,
@@ -127,6 +135,8 @@ def _customersAndOrders(customerId, orderCustomerId, orderKey=KEY, orderTarget='
 
 
 def _crossJob(report):
+    """The warnings about more than one job."""
+
     return [message for job, message in _messages(report, 'warning') if job is None]
 
 
@@ -178,12 +188,18 @@ def test_default_domains_are_compared_too():
 
 
 def _foreignKey():
+    """The foreign key from orders.customer_id to customers.id."""
+
     from bauta.database.dialects import ForeignKey
 
     return ForeignKey('orders', ('customer_id',), 'customers', ('id',), 'fk_orders_customers')
 
 
 def _connected(jobs, **overrides):
+    """The audit of `jobs` with what connecting found, by default both jobs'
+    columns and the foreign key in the target.
+    """
+
     arguments = dict(
         returnedColumns={'maskCustomers': ['id', 'email'], 'maskOrders': ['id', 'customer_id']},
         targetColumns={'maskCustomers': ['id', 'email'], 'maskOrders': ['id', 'customer_id']},
@@ -217,6 +233,8 @@ def test_a_reference_copied_as_it_is_to_a_masked_key_is_flagged():
 
 
 def _references(report):
+    """The warnings about a column masked unlike the column it references."""
+
     return [message for _, message in _messages(report, 'warning') if 'which it references' in message]
 
 
@@ -253,6 +271,8 @@ def test_a_job_whose_columns_do_not_line_up_is_not_guessed_at():
 
 
 def _copies(customersQuery, ordersQuery='select * from orders', **customers: Any):
+    """Unmasked customers and orders jobs, with the customers query given."""
+
     return {
         'loadCustomers': _job(sourceQuery=customersQuery, unmasked=True, **customers),
         'loadOrders': _job(sourceQuery=ordersQuery, targetTableFinal='orders', unmasked=True),
@@ -260,6 +280,8 @@ def _copies(customersQuery, ordersQuery='select * from orders', **customers: Any
 
 
 def _coverage(jobs):
+    """The warnings about a referenced table copied only in part."""
+
     report = auditJobs(jobs, ConnectedFacts(foreignKeys={'staging': [_foreignKey()]}))
     return [(job, message) for job, message in _messages(report, 'warning') if 'copies only in part' in message]
 
@@ -322,6 +344,8 @@ def test_coverage_needs_foreign_keys():
 
 
 def _ordered(orders: Any = None, **customers: Any):
+    """A customers job and an orders job, each with its settings given."""
+
     return {
         'loadCustomers': _job(**customers),
         'loadOrders': _job(sourceQuery='select * from orders', targetTableFinal='orders', **(orders or {})),
@@ -329,6 +353,8 @@ def _ordered(orders: Any = None, **customers: Any):
 
 
 def _ordering(jobs):
+    """The warnings about a job loading before the table it references."""
+
     report = auditJobs(jobs, ConnectedFacts(foreignKeys={'staging': [_foreignKey()]}))
     return [(job, message) for job, message in _messages(report, 'warning') if 'loaded yet' in message or 'inactive' in message]
 
@@ -396,6 +422,8 @@ def test_a_predecessor_outside_the_audited_jobs_is_not_guessed_at():
 
 
 def _swapped(**customers: Any):
+    """A customers job loaded by swap, and an orders job after it."""
+
     fields = dict(insertStrategy='swap', targetTableStage='customers_stage')
     fields.update(customers)
     return {
@@ -405,6 +433,8 @@ def _swapped(**customers: Any):
 
 
 def _swaps(jobs, foreignKey=None):
+    """The errors the audit finds in `jobs` given a declared foreign key."""
+
     report = auditJobs(jobs, ConnectedFacts(declaredForeignKeys={'staging': [foreignKey or _foreignKey()]}))
     return _messages(report, 'error')
 

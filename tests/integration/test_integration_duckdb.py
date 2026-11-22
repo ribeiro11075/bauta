@@ -31,6 +31,7 @@ DATABASE = 'duckdb'
 
 
 def _people(database, name='people'):
+    """Creates a people table, and returns its name."""
 
     database.alter('CREATE TABLE {} (id INTEGER PRIMARY KEY, name VARCHAR, amount DECIMAL(12,2))'.format(name))
 

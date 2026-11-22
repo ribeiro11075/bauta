@@ -46,6 +46,8 @@ def _write(tmp_path, rows=ROWS, chunk=100, **settings):
 
 
 def _text(path):
+    """A part's text, decompressed where it is gzip."""
+
     raw = path.read_bytes()
     return (gzip.decompress(raw) if path.name.endswith('.gz') else raw).decode('utf-8')
 

@@ -21,20 +21,21 @@ from ..log.scrubbing import describeError
 from ..project import Project
 from .db import Activity, Check, Database, Setting, aware
 
+# SCHEDULE: who ran a check the schedule ran.
+# TICK_SECONDS: how often the schedule looks at the clock.
+# CHECKS_PAGE: checks read from Studio's database at a time, looking for the
+#   latest.
 SCHEDULE_SETTING = 'checkSchedule'
 KINDS = ['coverage', 'audit', 'discovery', 'references']
 DEFAULT_SCHEDULE = {'enabled': False, 'time': '03:00', 'kinds': KINDS}
-# Who ran a check the schedule ran.
 SCHEDULE = 'schedule'
-# How often the schedule looks at the clock.
 TICK_SECONDS = 60.0
-# Checks read from Studio's database at a time, looking for the latest.
 CHECKS_PAGE = 200
-
 logger = logging.getLogger(__name__)
 
 
 def saveCheck(session: Session, kind: str, email: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    """Stores a check's result, run by `email`, and returns it as the API gives it."""
 
     check = Check(kind=kind, email=email, result=result)
     session.add(check)
@@ -66,6 +67,7 @@ def latest(session: Session, kind: str, count: int = 1, where: Optional[Callable
 
 
 def latestDict(session: Session, kind: str) -> Optional[Dict[str, Any]]:
+    """The latest check of `kind`, as the API gives it, or None."""
 
     found = latest(session, kind)
 
@@ -92,11 +94,15 @@ def runCoverage(session: Session, project: Project, email: str, connection: Opti
 
 
 def runAudit(session: Session, project: Project, email: str) -> Dict[str, Any]:
+    """Runs the audit against the databases, and stores it."""
 
     return saveCheck(session, 'audit-connected', email, {'report': project.audit(connect=True), 'connected': True})
 
 
 def runDiscovery(session: Session, project: Project, email: str) -> Dict[str, Any]:
+    """Looks for columns the masked jobs' policies don't cover, and stores what
+    it found.
+    """
 
     from .discovery import findings
 
@@ -104,6 +110,7 @@ def runDiscovery(session: Session, project: Project, email: str) -> Dict[str, An
 
 
 def runReferences(session: Session, project: Project, email: str) -> Dict[str, Any]:
+    """Checks the targets' foreign keys for orphaned rows, and stores the report."""
 
     from ..review.references import referencesReport
 
@@ -120,11 +127,15 @@ RUNNERS: Dict[str, Callable[[Session, Project, str], Any]] = {
 # What's new ---------------------------------------------------------------------
 
 def _uncovered(check: Check) -> Dict[str, List[str]]:
+    """The tables a coverage check found no job copying, each with the columns
+    that looked personal.
+    """
 
     return {entry['table']: entry.get('personalDataColumns', []) for entry in check.result['report']['tables'] if entry['state'] == 'uncovered'}
 
 
 def _drifted(check: Check) -> Dict[str, List[str]]:
+    """The jobs a discovery check found new columns in, each with those columns."""
 
     return {entry['job']: [added['column'] for added in entry['added']] for entry in check.result.get('jobs', [])}
 
@@ -137,6 +148,7 @@ def _broken(check: Check) -> Dict[str, int]:
 
 
 def _ofDatabase(database: str) -> Callable[[Check], bool]:
+    """A test that a coverage check is of `database`."""
 
     return lambda check: bool(check.result['report']['database'] == database)
 
@@ -187,6 +199,10 @@ def schedule(session: Session) -> Dict[str, Any]:
 
 
 def setSchedule(session: Session, enabled: bool, time: str, kinds: List[str]) -> Dict[str, Any]:
+    """Stores the check schedule: whether it runs, its time of day in UTC as
+    HH:MM, and the kinds of check it runs. Raises ValueError for a time or kind
+    that isn't one.
+    """
 
     try:
         hours, minutes = (int(part) for part in time.split(':'))
@@ -208,6 +224,7 @@ def setSchedule(session: Session, enabled: bool, time: str, kinds: List[str]) ->
 
 
 def _lastScheduledRun(session: Session) -> Optional[datetime.datetime]:
+    """When the schedule last ran the checks, from the activity log, or None."""
 
     found = session.scalars(select(Activity).where(Activity.action == 'ran the scheduled checks').order_by(Activity.id.desc()).limit(1)).first()
     if found is None:

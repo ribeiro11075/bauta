@@ -53,6 +53,9 @@ def _digitCount(value: int) -> int:
 
 
 def _requireIdentifierLength(strategy: str, length: int) -> None:
+    """Raises MaskingError for a value longer than MAXIMUM_KEY_LENGTH, which
+    `key` and `fpe` refuse, naming `strategy`.
+    """
 
     if length > MAXIMUM_KEY_LENGTH:
         raise MaskingError('the {} strategy masks identifiers of up to {} characters or digits, and this value is longer; '
@@ -77,8 +80,11 @@ def _requireAsciiCharset(strategy: str, text: str, charset: str) -> None:
 
 
 def _integerOption(minimum: int, maximum: Optional[int] = None) -> Callable[[Any], int]:
+    """A check for a whole number of at least `minimum` and at most `maximum`."""
 
     def check(value: Any) -> int:
+        """`value` itself, if it is a whole number in range. Raises ValueError."""
+
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError('must be a whole number')
         if value < minimum or (maximum is not None and value > maximum):
@@ -89,6 +95,9 @@ def _integerOption(minimum: int, maximum: Optional[int] = None) -> Callable[[Any
 
 
 def _numberOption(value: Any) -> decimal.Decimal:
+    """A number option as a Decimal: from an int, float, Decimal or numeric
+    text, and finite. Raises ValueError.
+    """
 
     if isinstance(value, bool) or not isinstance(value, (int, float, decimal.Decimal, str)):
         raise ValueError('must be a number')
@@ -103,6 +112,7 @@ def _numberOption(value: Any) -> decimal.Decimal:
 
 
 def _textOption(value: Any) -> str:
+    """`value` itself, if it is non-empty text. Raises ValueError."""
 
     if not isinstance(value, str) or not value:
         raise ValueError('must be non-empty text')
@@ -111,6 +121,7 @@ def _textOption(value: Any) -> str:
 
 
 def _booleanOption(value: Any) -> bool:
+    """`value` itself, if it is true or false. Raises ValueError."""
 
     if not isinstance(value, bool):
         raise ValueError('must be true or false')
@@ -119,8 +130,11 @@ def _booleanOption(value: Any) -> bool:
 
 
 def _choiceOption(*choices: str) -> Callable[[Any], str]:
+    """A check for one of `choices`."""
 
     def check(value: Any) -> str:
+        """`value` itself, if it is one of the choices. Raises ValueError."""
+
         if value not in choices:
             raise ValueError('must be one of: {}'.format(', '.join(choices)))
         return str(value)
@@ -134,6 +148,10 @@ def _normalizeOption(*allowed: str) -> Callable[[Any], List[str]]:
     """
 
     def check(value: Any) -> List[str]:
+        """The steps named, in NORMALIZE_STEPS order. Raises ValueError for an
+        empty list or an unknown step.
+        """
+
         if not isinstance(value, list) or not value or any(step not in allowed for step in value):
             raise ValueError('must be a non-empty list of: {}'.format(', '.join(allowed)))
         return [step for step in NORMALIZE_STEPS if step in value]
@@ -142,6 +160,7 @@ def _normalizeOption(*allowed: str) -> Callable[[Any], List[str]]:
 
 
 def _typeName(value: Any) -> str:
+    """The value's type name, the only thing about a value a message may say."""
 
     return type(value).__name__
 

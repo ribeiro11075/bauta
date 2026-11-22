@@ -20,7 +20,8 @@ from ..project import Project
 from .configfiles import EditConflict, EditRefused, readFile, writeFile
 from .settings import Settings
 
-# The settings the form edits, by kind; others a job has are left alone.
+# TEXT_FIELDS: the settings the form edits, by kind; others a job has are left
+#   alone.
 TEXT_FIELDS = ['sourceConnection', 'targetConnection', 'sourceQuery', 'targetTableFinal', 'targetTableStage', 'insertStrategy', 'watermarkColumn',
                'watermarkInitial']
 NUMBER_FIELDS = ['refresh', 'chunkSize', 'retries', 'timeoutSeconds']
@@ -33,12 +34,14 @@ DEFAULT_KEY_VARIABLE = 'MASKING_KEY'
 
 
 def _yaml() -> Any:
+    """A round-trip YAML reader and writer that keeps comments, quotes and
+    layout, and never re-wraps a line, so a long query stays on its own.
+    """
 
     from ruamel.yaml import YAML
 
     yaml = YAML(typ='rt')
     yaml.preserve_quotes = True
-    # Never re-wrapped: a long query stays on its line.
     yaml.width = 1 << 16
     yaml.indent(mapping=2, sequence=4, offset=2)
 
@@ -46,11 +49,13 @@ def _yaml() -> Any:
 
 
 def _load(text: str) -> Any:
+    """YAML text read for editing, its comments and layout kept."""
 
     return _yaml().load(text)
 
 
 def _dump(document: Any) -> str:
+    """A document written back as YAML, as _yaml writes it."""
 
     stream = io.StringIO()
     _yaml().dump(document, stream)
@@ -72,6 +77,9 @@ def _plain(value: Any) -> Any:
 
 
 def _keySource(fileMasking: Any, defaults: Any) -> Dict[str, Any]:
+    """Where a job's masking key comes from, for the form: the file's defaults,
+    a ${VARIABLE}, the file itself, or nowhere.
+    """
 
     key = fileMasking.get('key') if isinstance(fileMasking, dict) else None
     if key is None:
@@ -85,6 +93,9 @@ def _keySource(fileMasking: Any, defaults: Any) -> Dict[str, Any]:
 
 
 def _documentJobs(document: Any, relative: str) -> Any:
+    """The `jobs:` mapping of a jobs file. Raises EditRefused for a file
+    without one.
+    """
 
     if not isinstance(document, dict) or not isinstance(document.get('jobs'), dict):
         raise EditRefused('{} holds no jobs: mapping'.format(relative))
@@ -173,6 +184,10 @@ def _effective(job: Any, field: str) -> Any:
 
 
 def _setField(mapping: Any, field: str, value: Any) -> None:
+    """Sets one field of a job from the form, as the field's type: a number, a
+    flag, a list, or text, multi-line text as a literal block. An empty value
+    removes the field.
+    """
 
     from ruamel.yaml.scalarstring import LiteralScalarString
 

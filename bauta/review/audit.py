@@ -18,17 +18,18 @@ from ..generate.discovery import BUILTIN_RULES, DiscoveryRules, personalDataHint
 from ..jobs.fullRefresh import fullRefreshProblem
 from ..masking import MaskingError, MaskingPlan, changesValues, keyFingerprint, policyFor, resolveStrategy
 
+# _TYPED_STRATEGIES: the strategies whose mask of a value depends on how it is
+#   held: `key` and `fpe` mask 42 and '42' differently, and every keyed
+#   strategy masks 'AB12' and 'AB12  ' differently. `hash` keys numbers on
+#   their digits, so only padding matters to it.
+# _PARTIAL_QUERIES: what a query says when it returns some of a table's rows,
+#   as far as reading it without parsing SQL can tell. A join usually narrows
+#   too, and saying so is worth the occasional job that joins only to widen its
+#   columns.
 SEVERITIES = ('error', 'warning', 'info')
-# The strategies whose mask of a value depends on how it is held: `key` and
-# `fpe` mask 42 and '42' differently, and every keyed strategy masks 'AB12'
-# and 'AB12  ' differently. `hash` keys numbers on their digits, so only
-# padding matters to it.
 _TYPED_STRATEGIES = frozenset({'key', 'fpe'})
 _PADDED_STRATEGIES = frozenset({'key', 'fpe', 'hash'})
 _INTEGER_TEXT = re.compile(r'-?[1-9][0-9]*|0')
-# What a query says when it returns some of a table's rows, as far as reading
-# it without parsing SQL can tell. A join usually narrows too, and saying so is
-# worth the occasional job that joins only to widen its columns.
 _PARTIAL_QUERIES = (
     (r'\bwhere\b', 'its sourceQuery has a WHERE'),
     (r'\blimit\b', 'its sourceQuery has a LIMIT'),
@@ -39,6 +40,9 @@ _PARTIAL_QUERIES = (
 
 
 class Finding(NamedTuple):
+    """One thing `audit` reports: an error, a warning or an info line, about
+    one job or, without one, the configuration as a whole.
+    """
 
     severity: str
     job: Optional[str]
@@ -60,15 +64,20 @@ class _Usage(NamedTuple):
 
     @property
     def label(self) -> str:
+        """`job.column`, for messages."""
 
         return '{}.{}'.format(self.job, self.column)
 
     @property
     def signature(self) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """What must agree between two columns holding the same values for
+        their masks to agree: domain, policy and key.
+        """
 
         return self.domain, self.policy, self.keyFingerprint
 
     def describe(self) -> str:
+        """How the column is masked, in words, for a message."""
 
         if self.policy is None:
             return 'not masked'
@@ -90,6 +99,9 @@ def _describePolicy(policy: Mapping[str, Any]) -> str:
 
 
 def _usages(name: str, plan: MaskingPlan, columns: Sequence[Mapping[str, Any]]) -> List[_Usage]:
+    """How each column of a masked job that changes its values is masked, for
+    the checks that compare columns across jobs.
+    """
 
     fingerprint = keyFingerprint(plan.key)
     declared = {column.upper(): policy for column, policy in plan.columns.items()}
@@ -109,6 +121,7 @@ def _usages(name: str, plan: MaskingPlan, columns: Sequence[Mapping[str, Any]]) 
 
 
 def _labels(usages: Iterable[_Usage]) -> str:
+    """The usages' `job.column` labels, sorted and joined."""
 
     return ', '.join(sorted(usage.label for usage in usages))
 
@@ -139,6 +152,10 @@ def _auditDomains(target: str, usages: Sequence[_Usage], findings: List[Finding]
 
 
 def _forms(values: Sequence[Any]) -> Set[str]:
+    """The forms a column's sampled values take -- number, text, padded text
+    and so on -- since a keyed strategy masks the same value held in two forms
+    differently.
+    """
 
     forms = set()
     for value in values:
@@ -213,6 +230,10 @@ def _auditForeignKeys(target: str, jobs: Mapping[str, DataJobConfig], usagesByJo
             filled.setdefault((table, column.upper()), []).append(usage)
 
     def lookup(table: str, column: str) -> List[_Usage]:
+        """How a column is masked, by its own policy and by a defaultStrategy
+        covering its table.
+        """
+
         return filled.get((table.upper(), column.upper()), []) + filled.get((table.upper(), '*'), [])
 
     for foreignKey in foreignKeys:
@@ -260,6 +281,7 @@ def _tableName(table: str) -> str:
 
 
 def _mentions(query: str, table: str) -> bool:
+    """Whether a query names `table`, as a whole word."""
 
     return re.search(r'(?<![\w$]){}(?![\w$])'.format(re.escape(_tableName(table))), query, re.IGNORECASE) is not None
 
@@ -375,6 +397,8 @@ def _auditUndeclared(target: str, jobs: Mapping[str, DataJobConfig], foreignKeys
     loaded = {_tableName(job.targetTableFinal).upper() for job in jobs.values()}
 
     def folded(foreignKey: ForeignKey) -> Tuple[Any, ...]:
+        """A foreign key with its names folded, for comparing keys."""
+
         return (_tableName(foreignKey.table).upper(), tuple(column.upper() for column in foreignKey.columns),
                 _tableName(foreignKey.referencedTable).upper(), tuple(column.upper() for column in foreignKey.referencedColumns))
 
@@ -485,6 +509,12 @@ class _Sampled(NamedTuple):
 def _auditMaskedJob(name: str, job: DataJobConfig, returned: Optional[Sequence[str]], findings: List[Finding],
                     usages: Dict[str, List[_Usage]], rules: DiscoveryRules, rows: Optional[Sequence[Sequence[Any]]] = None,
                     sampled: Optional[List[_Sampled]] = None) -> Dict[str, Any]:
+    """Audits one masked job: its policy against the columns sourceQuery
+    returns (`returned`, where the query could be run), columns kept unmasked
+    whose name or sampled values look personal, the defaultStrategy, and the
+    strategies whose limits a reviewer should see. Appends to `findings`,
+    records the job's usages, and returns its entry for the report.
+    """
 
     assert job.masking is not None
     plan = MaskingPlan(key=job.masking.key.get_secret_value(), columns=job.masking.columns, defaultStrategy=job.masking.defaultStrategy)

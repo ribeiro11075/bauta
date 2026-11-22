@@ -43,6 +43,9 @@ class UncheckedNote(NamedTuple):
 
 
 def uncheckedNote(database: str, missed: Mapping[str, Mapping[str, int]]) -> UncheckedNote:
+    """The foreign keys a check couldn't follow, by alias and count, leaving
+    out aliases with none.
+    """
 
     return UncheckedNote(database, {alias: dict(counts) for alias, counts in sorted(missed.items()) if counts})
 
@@ -82,6 +85,8 @@ def orphanQuery(databaseType: Any, table: str, columns: Sequence[str], reference
     """
 
     def quoted(alias: str, column: str) -> str:
+        """A column qualified by its table's alias, quoted for the database."""
+
         return '{}.{}'.format(alias, quoteIdentifier(databaseType, column))
 
     present = ' AND '.join('{} IS NOT NULL'.format(quoted('c', column)) for column in columns)
@@ -120,6 +125,10 @@ def _plan(database: Any, loaded: Mapping[str, str], sourceKeys: Sequence[Foreign
     columnsByTable: Dict[str, Optional[Dict[str, str]]] = {}
 
     def spelled(table: str, columns: Sequence[str]) -> Tuple[Optional[List[str]], Optional[str]]:
+        """The columns as the target table spells them, or None and why: the
+        table isn't in the target, or lacks one of them.
+        """
+
         if table not in columnsByTable:
             columnsByTable[table] = {column.upper(): column for column in database.getAllColumnNames(table)} if database.tableExists(table) else None
         known = columnsByTable[table]
@@ -214,6 +223,7 @@ def renderReferences(results: Sequence[ReferenceResult], notes: Sequence[Uncheck
 
 
 def _status(result: ReferenceResult) -> str:
+    """A result as OK, ORPHANS or ERROR."""
 
     if result.orphans is None:
         return 'ERROR'
@@ -222,6 +232,9 @@ def _status(result: ReferenceResult) -> str:
 
 
 def summarize(results: Sequence[ReferenceResult]) -> str:
+    """One line counting the foreign keys checked, those with orphaned rows,
+    and those not checked.
+    """
 
     orphaned = sum(1 for result in results if result.orphans)
     unchecked = sum(1 for result in results if result.orphans is None)

@@ -1,3 +1,6 @@
+// The schedule page: where each job stands for the next run cron starts, as
+// `bauta jobs` sees it, which have gone stale, and when a job goes stale.
+
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
@@ -6,12 +9,14 @@ import { useUser } from '../App'
 import { Failure, Loading, PageHead, Pill } from '../components/ui'
 import { ago, when } from '../format'
 
+// STATES: each place a job can stand in the schedule, its words and colour.
 const STATES: Record<ScheduleEntry['state'], [string, string]> = {
   due: ['Due', 'run'],
   throttled: ['Waiting for its window', 'idle'],
   inactive: ['Inactive', 'idle'],
 }
 
+/** A job's refresh window in words. */
 function refreshText(minutes: number | null): string {
   if (!minutes) return 'every run'
   if (minutes % 1440 === 0) return `every ${minutes / 1440} d`
@@ -19,6 +24,7 @@ function refreshText(minutes: number | null): string {
   return `every ${minutes} min`
 }
 
+/** Each job's place in the schedule, and the staleness settings. */
 export function Schedule() {
   const user = useUser()
   const schedule = useQuery({ queryKey: ['schedule'], queryFn: () => api<{ jobs: ScheduleEntry[]; staleness: Staleness }>('/schedule'), refetchInterval: 30000 })
@@ -56,6 +62,10 @@ export function Schedule() {
   )
 }
 
+/**
+ * How many hours after its last completed run a job goes stale, by default and
+ * for each job that differs. Admins only.
+ */
 function StalenessForm({ current, jobs }: { current: Staleness; jobs: string[] }) {
   const client = useQueryClient()
   const [defaultHours, setDefaultHours] = useState(String(current.defaultHours))

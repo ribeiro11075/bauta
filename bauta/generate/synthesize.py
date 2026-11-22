@@ -24,22 +24,19 @@ from ..log import LOGGER_NAME
 from ..masking import STRATEGIES, KeyedHash, changesValues
 from .schema import INTEGER_BOOLEAN_NOTE, PortableType, portableType, tableKey
 
+# PARENT_SAMPLE_SIZE: how many parent keys are read to draw foreign-key values
+#   from.
+# PROFILE_MOST_LABELS: how a column's values are spread in a source, for
+#   `--profile`: where synthetic rows take their shape from production without
+#   taking anyone's values. Labels are read only from a column with at most
+#   this many values, and only those this many rows share, so a value rare
+#   enough to point at someone is never copied.
 logger = logging.getLogger(LOGGER_NAME)
-
 DEFAULT_NULL_SHARE = 0.1
-
-# How many parent keys are read to draw foreign-key values from.
 PARENT_SAMPLE_SIZE = 100_000
-
 _WORDS = ('alpha', 'bravo', 'delta', 'harbor', 'maple', 'orbit', 'quartz', 'river', 'summit', 'timber', 'velvet', 'willow',
           'amber', 'cobalt', 'ember', 'falcon', 'granite', 'juniper', 'lumen', 'meadow', 'nectar', 'pebble', 'saffron', 'tundra')
-
 _EPOCH = datetime.date(2015, 1, 1)
-# How a column's values are spread in a source, for `--profile`: where
-# synthetic rows take their shape from production without taking anyone's
-# values. Labels are read only from a column with at most this many values,
-# and only those this many rows share, so a value rare enough to point at
-# someone is never copied.
 PROFILE_MOST_LABELS = 20
 PROFILE_FEWEST_ROWS_PER_LABEL = 5
 _FAKE_DESCRIPTIONS = {
@@ -131,6 +128,10 @@ Generator = Callable[[int], Any]
 
 
 def _templateFor(words: AbstractSet[str]) -> str:
+    """The shape a column's synthetic values take, by the words of its name: a
+    card number, postcode, SSN, phone number and so on, as digits keyed into
+    other digits.
+    """
 
     if words & {'creditcard', 'cardnumber', 'ccnumber', 'pan'}:
         return '4000 0000 0000 0000'
@@ -148,6 +149,11 @@ class _Synthesizer:
     """Builds one table's column generators."""
 
     def __init__(self, table: str, seed: int, nullShare: float, rules: DiscoveryRules = BUILTIN_RULES) -> None:
+        """A synthesizer for one table, keyed on the seed and the table so a
+        rerun gives the same rows, with `nullShare` of a nullable column's
+        values NULL.
+        """
+
         self.salt = 'bauta synthetic data|{}|{}'.format(seed, table.lower())
         self.keyedHash = KeyedHash(self.salt, table.lower())
         self.nullShare = nullShare
@@ -226,7 +232,10 @@ class _Synthesizer:
         count = sum(character.isdigit() for character in template)
 
         def generate(row: int) -> Any:
-            # The row number, in the template's digits, keyed into other digits.
+            """The row number, in the template's digits, keyed into other
+            digits; as an integer for a numeric column.
+            """
+
             seeded = iter(str(row).rjust(count, '0')[-count:])
             text = digits.mask(''.join(next(seeded) if character.isdigit() else character for character in template))
             if not numeric:
@@ -384,6 +393,8 @@ class _Synthesizer:
             edges.append(running / total)
 
         def pick(row: int) -> Any:
+            """One of `values`, drawn for the row by the weights `edges` cumulate."""
+
             drawn = self._unit(row, name + '#pick')
             return values[next((index for index, edge in enumerate(edges) if drawn < edge), len(values) - 1)]
 
@@ -438,11 +449,13 @@ class _Synthesizer:
 
 
 def _sequential(start: int) -> Generator:
+    """A generator of consecutive integers from `start`."""
 
     return lambda row: start + row
 
 
 def _offset(generator: Generator, offset: int) -> Generator:
+    """`generator`, its rows numbered from `offset`."""
 
     return lambda row: generator(offset + row)
 
@@ -459,6 +472,7 @@ def _textKeys(existing: int, width: int, fixed: bool) -> Generator:
 
 
 def _integerKind(portable: PortableType) -> bool:
+    """Whether a portable type holds integers."""
 
     return portable.kind in ('smallint', 'integer', 'bigint') or (portable.kind == 'decimal' and not portable.scale)
 
@@ -518,6 +532,8 @@ def planTable(database: Any, table: str, rows: int, seed: int = 0, foreignKeys: 
     ordered = [generators[column.upper()] for column in columns]
 
     def makeRow(row: int) -> Tuple[Any, ...]:
+        """One synthetic row."""
+
         return tuple(generator(row) for generator in ordered)
 
     return columns, makeRow, [plans[column.upper()] for column in columns], available
@@ -620,6 +636,8 @@ def _fitting(generator: Generator, length: Optional[int]) -> Generator:
         return generator
 
     def fitted(row: int) -> Any:
+        """The generator's value, cut to the column's length where it is text."""
+
         value = generator(row)
         return value[:length] if isinstance(value, str) else value
 

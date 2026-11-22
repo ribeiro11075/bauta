@@ -1,3 +1,5 @@
+// Tests of the card that measures a job against its source.
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -7,9 +9,11 @@ import { BenchCard, type BenchCheck } from './Bench'
 let role: User['role'] = 'operator'
 vi.mock('../App', () => ({ useUser: () => ({ role }) }))
 
+/** A benchmark of copyPeople in `status`, with `extra` fields. */
 const bench = (status: BenchCheck['status'], extra: Partial<BenchCheck> = {}): BenchCheck =>
   ({ id: 1, at: '2026-10-16T12:00:00Z', by: 'ann@example.com', job: 'copyPeople', rows: 1000, status, ...extra })
 
+/** Renders the card for copyPeople with `check` as its latest benchmark. */
 function show(check: BenchCheck | null) {
   render(<QueryClientProvider client={new QueryClient()}><BenchCard job="copyPeople" bench={check} /></QueryClientProvider>)
 }

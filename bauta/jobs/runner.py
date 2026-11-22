@@ -26,11 +26,9 @@ from .partitions import CoreBudget
 from .throttle import sharedReadLimits
 from .workers import PROCESS_CONTEXT, _JobProcess
 
+# SIGNAL_POLL_SECONDS: how late the run loop may notice SIGINT/SIGTERM.
+#   Completions and timeouts wake it on time.
 logger = logging.getLogger(LOGGER_NAME)
-
-
-# How late the run loop may notice SIGINT/SIGTERM. Completions and timeouts
-# wake it on time.
 SIGNAL_POLL_SECONDS = 1.0
 
 
@@ -47,6 +45,10 @@ def _terminationHandling() -> Generator[Dict[str, bool], None, None]:
     state = {'terminating': False}
 
     def handler(signalNumber: int, frame: Any) -> None:
+        """Notes SIGINT or SIGTERM, so the loop lets running jobs finish and
+        starts no more.
+        """
+
         state['terminating'] = True
         logger.warning('Received {}, letting running jobs finish and shutting down'.format(signal.Signals(signalNumber).name))
 
@@ -88,28 +90,33 @@ class RunResult(NamedTuple):
     is output for the caller to act on.
     """
 
+    # runId: the cycle's own, shared with its RunProgress, history and
+    #   manifest.
     outcomes: List[JobOutcome]
     interrupted: bool = False
-    # The cycle's own, shared with its RunProgress, history and manifest.
     runId: Optional[str] = None
 
     @property
     def completed(self) -> List[JobOutcome]:
+        """The outcomes of the jobs that completed."""
 
         return [outcome for outcome in self.outcomes if outcome.status == JobStatus.COMPLETED]
 
     @property
     def failed(self) -> List[JobOutcome]:
+        """The outcomes of the jobs that failed."""
 
         return [outcome for outcome in self.outcomes if outcome.status == JobStatus.FAILED]
 
     @property
     def skipped(self) -> List[JobOutcome]:
+        """The outcomes of the jobs that were skipped."""
 
         return [outcome for outcome in self.outcomes if outcome.status == JobStatus.SKIPPED]
 
     @property
     def rowCount(self) -> int:
+        """Rows written by every job of the cycle."""
 
         return sum(outcome.rowCount for outcome in self.outcomes)
 
@@ -142,18 +149,19 @@ class RunProgress(NamedTuple):
     none of them is waiting. `finished` is said once, as the cycle ends.
     """
 
+    # rows: rows each running job has written so far, as it last said: see
+    #   jobs.progress. A job that has written none yet isn't in it.
     runId: str
     startedAt: float
     jobs: List[str]
     running: Dict[str, float]
     outcomes: List[JobOutcome]
     finished: bool = False
-    # Rows each running job has written so far, as it last said: see
-    # jobs.progress. A job that has written none yet isn't in it.
     rows: Optional[Dict[str, int]] = None
 
 
 def newRunId() -> str:
+    """A new run's id: a random UUID."""
 
     return str(uuid.uuid4())
 

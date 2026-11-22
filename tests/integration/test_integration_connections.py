@@ -24,6 +24,10 @@ pytestmark = pytest.mark.integration
 
 
 def _connect(name: str, **changes):
+    """A connection to server `name`, with `changes` to its settings; skipped
+    where the driver isn't installed.
+    """
+
     driver, settings = SERVERS[name]
     try:
         importlib.import_module(driver)
@@ -33,6 +37,8 @@ def _connect(name: str, **changes):
 
 
 def _requireServer(name: str) -> None:
+    """Skips the test where server `name` can't be reached."""
+
     try:
         _connect(name).close()
     except Exception as error:

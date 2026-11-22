@@ -14,9 +14,9 @@ from ..driver import Connection, Cursor
 from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType
 from .names import catalogName, catalogTableName, quoteIdentifier, unqualifiedName
 
+# _CREATE_TABLE_HEAD: the head of a CREATE TABLE statement as SQLite and DuckDB
+#   keep it, up to the end of the table's name, schema-qualified or not.
 _TABLE_NAME_PART = r'(?:"(?:[^"]|"")*"|\[[^\]]*\]|`(?:[^`]|``)*`|[^\s.(]+)'
-# The head of a CREATE TABLE statement as SQLite and DuckDB keep it, up to the
-# end of the table's name, schema-qualified or not.
 _CREATE_TABLE_HEAD = re.compile(r'^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?{0}(?:\s*\.\s*{0})?'.format(_TABLE_NAME_PART), re.IGNORECASE)
 M = TypeVar('M')
 
@@ -147,6 +147,8 @@ def _columnDefinitions(rows: Sequence[Sequence[Any]]) -> List[ColumnDefinition]:
     """
 
     def number(value: Any) -> Optional[int]:
+        """A catalog number as an int, NULL kept."""
+
         return None if value is None else int(value)
 
     return [
@@ -157,6 +159,8 @@ def _columnDefinitions(rows: Sequence[Sequence[Any]]) -> List[ColumnDefinition]:
 
 
 class ColumnCategory(str, Enum):
+    """What discovery groups a column's type into."""
+
     NUMBER = 'number'
     DATE = 'date'
     TEXT = 'text'
@@ -205,6 +209,7 @@ def _renameStatement(fromTable: str, toTable: str) -> str:
 
 
 def _renameInThreeSteps(targetTable: str, stageTable: str, tempTable: str) -> List[str]:
+    """The three statements that swap two tables by renaming through a third."""
 
     return [_renameStatement(*step) for step in _renameSteps(targetTable, stageTable, tempTable)]
 
@@ -222,13 +227,25 @@ def settingsOf(settings: DatabaseConfig, model: Type[M]) -> M:
 
 
 class DatabaseDialect(ABC):
-    """Everything that differs between database types lives here, not in Database.
+    """Everything that differs between database types lives here, not in Database."""
 
-    `databaseType` lets a dialect read a name the way its own database writes
-    one, for the catalog lookups and the statements it builds.
-    """
-
+    # databaseType: lets a dialect read a name the way its own database writes
+    #   one, for the catalog lookups and the statements it builds.
+    # ATOMIC_SWAP: whether swap() exchanges the tables in one transaction.
+    #   Where it doesn't (Oracle, which commits each rename), a process killed
+    #   between renames leaves them part-way; see
+    #   Database.recoverInterruptedSwap.
+    # REFUSED_FLOATS: the floats this database's ordinary float columns can't
+    #   hold: `nan`, `inf` (either sign). A load carrying one is refused,
+    #   naming the column, rather than left to the driver -- MySQL and SQL
+    #   Server read NaN as a column name, and SQLite stores it as NULL. See
+    #   holdsNonFinite.
+    # FOREIGN_KEY_SCHEMA_BINDS: how many times foreignKeysQuery binds the
+    #   schema.
     databaseType: DatabaseType
+    ATOMIC_SWAP = True
+    REFUSED_FLOATS: frozenset = frozenset()
+    FOREIGN_KEY_SCHEMA_BINDS = 1
 
     def connect(self, settings: DatabaseConfig) -> Tuple[Connection, Cursor]:
         """Returns (connection, cursor), the session prepared. A connection
@@ -312,11 +329,6 @@ class DatabaseDialect(ABC):
         return None
 
 
-    # Whether swap() exchanges the tables in one transaction. Where it doesn't
-    # (Oracle, which commits each rename), a process killed between renames
-    # leaves them part-way; see Database.recoverInterruptedSwap.
-    ATOMIC_SWAP = True
-
 
     def renameStatement(self, fromTable: str, toTable: str) -> str:
         """Renames one table, both named as statements spell them."""
@@ -359,12 +371,6 @@ class DatabaseDialect(ABC):
         """
 
         return None
-
-    # The floats this database's ordinary float columns can't hold: `nan`,
-    # `inf` (either sign). A load carrying one is refused, naming the column,
-    # rather than left to the driver -- MySQL and SQL Server read NaN as a
-    # column name, and SQLite stores it as NULL. See holdsNonFinite.
-    REFUSED_FLOATS: frozenset = frozenset()
 
     def holdsNonFinite(self, columnType: Any) -> bool:
         """Whether a column of this type code holds what REFUSED_FLOATS
@@ -432,12 +438,16 @@ class DatabaseDialect(ABC):
         raise NotImplementedError('{} cannot check for tables'.format(type(self).__name__))
 
     def _catalog(self, cursor: Cursor, query: str, table: str) -> List[Any]:
+        """The rows of a catalog query, bound with the table's schema and name
+        as catalogTableName gives them.
+        """
 
         cursor.execute(query.format(*self.placeholders(2)), catalogTableName(self.databaseType, table))
 
         return cursor.fetchall()
 
     def primaryKey(self, cursor: Cursor, table: str) -> List[str]:
+        """The table's primary-key columns, in key order."""
 
         return [row[0] for row in self._catalog(cursor, self.primaryKeyQuery(), table)]
 
@@ -508,6 +518,7 @@ class DatabaseDialect(ABC):
         return None
 
     def tableGrants(self, cursor: Cursor, table: str) -> List[Tuple[str, str, bool]]:
+        """(privilege, grantee, grantable) for each of the table's own grants."""
 
         query = self.tableGrantsQuery()
         if query is None:
@@ -546,10 +557,12 @@ class DatabaseDialect(ABC):
             cursor.execute('ALTER TABLE {} ADD UNIQUE ({})'.format(table, ', '.join(columns)))
 
     def columnDefinitions(self, cursor: Cursor, table: str) -> List[ColumnDefinition]:
+        """The table's columns, in order, as columnsQuery describes them."""
 
         return _columnDefinitions(self._catalog(cursor, self.columnsQuery(), table))
 
     def tableExists(self, cursor: Cursor, table: str) -> bool:
+        """Whether the table exists."""
 
         return bool(self._catalog(cursor, self.tableExistsQuery(), table)[0][0])
 
@@ -575,9 +588,6 @@ class DatabaseDialect(ABC):
                        (catalogName(self.databaseType, schema) if schema is not None else None,))
 
         return [row[0] for row in cursor.fetchall()]
-
-    # How many times foreignKeysQuery binds the schema.
-    FOREIGN_KEY_SCHEMA_BINDS = 1
 
     def foreignKeysQuery(self) -> str:
         """Every foreign key on a table in the bound schema, or in the
@@ -621,10 +631,16 @@ class DatabaseDialect(ABC):
 
     @abstractmethod
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """An INSERT that updates a row whose primary key is already in
+        `table`, binding a row's values in `allColumns` order.
+        """
+
         ...
 
     @abstractmethod
     def upsertFromStageQuery(self, targetTable: str, stageTable: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """The same upsert, of every row in `stageTable` at once."""
+
         ...
 
     @abstractmethod
@@ -655,6 +671,9 @@ class _OnConflictDialect(DatabaseDialect):
 
     @staticmethod
     def _onConflict(primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """The ON CONFLICT clause of an upsert keyed on `primaryKeyColumns`: DO
+        NOTHING where every column is in the key, else DO UPDATE of the rest.
+        """
 
         if not nonPrimaryKeyColumns:
             return 'ON CONFLICT({}) DO NOTHING'.format(','.join(primaryKeyColumns))
@@ -663,11 +682,16 @@ class _OnConflictDialect(DatabaseDialect):
             ','.join(primaryKeyColumns), ', '.join('{0}=excluded.{0}'.format(column) for column in nonPrimaryKeyColumns))
 
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """INSERT ... VALUES with ON CONFLICT, for one row."""
 
         return 'INSERT INTO {} ({}) VALUES ({}) {}'.format(table, ', '.join(allColumns), ', '.join(self.placeholders(len(allColumns))),
                                                           self._onConflict(primaryKeyColumns, nonPrimaryKeyColumns))
 
     def upsertFromStageQuery(self, targetTable: str, stageTable: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """INSERT ... SELECT from the stage with ON CONFLICT. `WHERE true`
+        resolves the parsing ambiguity SQLite has between a SELECT's join and
+        ON CONFLICT.
+        """
 
         return 'INSERT INTO {} ({}) SELECT {} FROM {} WHERE true {}'.format(targetTable, ', '.join(allColumns), ', '.join(allColumns), stageTable,
                                                                           self._onConflict(primaryKeyColumns, nonPrimaryKeyColumns))

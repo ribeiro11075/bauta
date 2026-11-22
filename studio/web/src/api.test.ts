@@ -1,6 +1,10 @@
+// Tests of the API client: the header every request carries, queries, errors as
+// the server gives them, and roles.
+
 import { describe, expect, it, vi } from 'vitest'
 import { api, ApiError, can, type User } from './api'
 
+/** Stubs fetch to answer every request with `status` and `body` as JSON, and returns the stub. */
 function answering(status: number, body: unknown) {
   const fetchMock = vi.fn(async (..._: unknown[]) => new Response(body === undefined ? '' : JSON.stringify(body), { status }))
   vi.stubGlobal('fetch', fetchMock)
@@ -51,6 +55,7 @@ describe('the API client', () => {
 })
 
 describe('roles', () => {
+  /** A user with only a role. */
   const user = (role: User['role']) => ({ role }) as User
 
   it('lets each role do what those below it can', () => {

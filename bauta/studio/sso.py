@@ -37,44 +37,50 @@ from .db import ADMIN, VIEWER, SsoIdentity, User
 from .sealing import b64, seal, unseal
 from .settings import PasswordLogin, RoleSource, Settings, SsoSettings, httpsUrl
 
-# The cookie holding a sign-in on its way through the identity provider, sent
-# only to the callback. SameSite=Lax, where the session's is Strict: the
-# provider sends the browser back with a cross-site navigation, on which a
-# browser sends no Strict cookie. One per sign-in, named by the start of its
-# state, so a sign-in begun in a second tab doesn't undo the first's.
+# PENDING_COOKIE, PENDING_COOKIE_STATE, PENDING_PATH: the cookie holding a
+#   sign-in on its way through the identity
+#   provider, sent only to the callback. SameSite=Lax, where the session's is
+#   Strict: the provider sends the browser back with a cross-site navigation,
+#   on which a browser sends no Strict cookie. One per sign-in, named by the
+#   start of its state, so a sign-in begun in a second tab doesn't undo the
+#   first's.
+# PENDING_SECONDS: how long someone has at the identity provider before
+#   starting again.
+# DISCOVERY_SECONDS: how long the provider's discovery document and keys are
+#   kept before they are read again: a key the provider withdraws is trusted no
+#   longer than this.
+# FAILURE_SECONDS: how long a failure to read them is remembered: a provider
+#   that is down or slow is asked once in this time, not on every sign-in
+#   started meanwhile.
+# KEYS_REFRESH_SECONDS: the provider's keys are read again for a key they don't
+#   hold, which is how a provider rotating its keys is followed; no more often
+#   than this, so tokens naming made-up keys can't have Studio read them on
+#   every request.
+# CLOCK_LEEWAY_SECONDS: how far apart Studio's clock and the provider's may be.
+# SIGNING_ALGORITHMS: the algorithms an ID token may be signed with: asymmetric
+#   ones only. 'none' signs nothing, and an HMAC one would take the client
+#   secret, which the provider also holds, as its key.
+# PROVIDER_TEXT_LENGTH: the most of what the provider says of a refusal that
+#   goes to the log.
+# IDENTITY_LENGTH: the longest issuer an identity can be kept with.
+# VERIFIED: what a provider says to vouch for an email: OpenID Connect's
+#   email_verified, which some send as a string, or Entra ID's xms_edov, that
+#   the email's domain is one the tenant has verified.
+# STATE: what the sign-in page is told went wrong, by code; what happened in
+#   full is in Studio's log.
 PENDING_COOKIE = 'bauta_studio_sso_'
 PENDING_COOKIE_STATE = 16
 PENDING_PATH = '/api/auth/sso'
-# How long someone has at the identity provider before starting again.
 PENDING_SECONDS = 600
-# How long the provider's discovery document and keys are kept before they
-# are read again: a key the provider withdraws is trusted no longer than this.
 DISCOVERY_SECONDS = 3600
-# How long a failure to read them is remembered: a provider that is down or
-# slow is asked once in this time, not on every sign-in started meanwhile.
 FAILURE_SECONDS = 30
-# The provider's keys are read again for a key they don't hold, which is how a
-# provider rotating its keys is followed; no more often than this, so tokens
-# naming made-up keys can't have Studio read them on every request.
 KEYS_REFRESH_SECONDS = 60
 HTTP_TIMEOUT_SECONDS = 10.0
-# How far apart Studio's clock and the provider's may be.
 CLOCK_LEEWAY_SECONDS = 60
-# The algorithms an ID token may be signed with: asymmetric ones only. 'none'
-# signs nothing, and an HMAC one would take the client secret, which the
-# provider also holds, as its key.
 SIGNING_ALGORITHMS = ('RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512', 'ES256', 'ES384', 'ES512', 'EdDSA')
-# The most of what the provider says of a refusal that goes to the log.
 PROVIDER_TEXT_LENGTH = 300
-# The longest issuer an identity can be kept with.
 IDENTITY_LENGTH = 255
-# What a provider says to vouch for an email: OpenID Connect's email_verified,
-# which some send as a string, or Entra ID's xms_edov, that the email's domain
-# is one the tenant has verified.
 VERIFIED = (True, 'true', 1, '1')
-
-# What the sign-in page is told went wrong, by code; what happened in full is
-# in Studio's log.
 STATE = 'state'
 PROVIDER = 'provider'
 UNREACHABLE = 'unreachable'
@@ -88,7 +94,6 @@ BREAK_GLASS = 'break_glass'
 LAST_ADMIN = 'last_admin'
 DOMAIN = 'domain'
 BUSY = 'busy'
-
 logger = logging.getLogger(__name__)
 
 
@@ -99,12 +104,21 @@ class SsoFailure(Exception):
     """
 
     def __init__(self, code: str, reason: str, who: str = '') -> None:
+        """A refused single sign-on: `code` is what the sign-in page is told,
+        `reason` what the log says, and `who` the email it concerned, where
+        known.
+        """
+
         super().__init__(reason)
         self.code = code
         self.who = who
 
 
 class PendingLogin(NamedTuple):
+    """A sign-in on its way through the provider: its state, nonce and PKCE
+    verifier, kept in a sealed cookie.
+    """
+
     state: str
     nonce: str
     verifier: str
@@ -123,6 +137,7 @@ def codeChallenge(verifier: str) -> str:
 
 
 def _email(claims: Dict[str, Any]) -> str:
+    """The email the claims give, lower-cased, or nothing."""
 
     email = claims.get('email')
 
@@ -169,12 +184,16 @@ class OidcClient:
     """
 
     def __init__(self, settings: SsoSettings, transport: Optional[httpx.BaseTransport] = None, clock: Optional[Callable[[], float]] = None) -> None:
+        """A client of the identity provider, its discovery document and keys
+        read when first needed. The pending-login cookie is signed with a key
+        made at each start: a restart only asks whoever was at the provider
+        just then to sign in again.
+        """
+
         self.settings = settings
         self._clock = clock or (lambda: time.time())
         self._http = httpx.Client(timeout=HTTP_TIMEOUT_SECONDS, transport=transport, follow_redirects=False,
                                   headers={'Accept': 'application/json', 'User-Agent': 'bauta-studio'})
-        # Signs the pending-login cookie. Made at each start: a restart only
-        # asks whoever was at the provider just then to sign in again.
         self._cookieKey = secrets.token_bytes(32)
         self._lock = threading.Lock()
         # One read from the provider at a time: many sign-ins started at once
@@ -192,6 +211,7 @@ class OidcClient:
 
 
     def close(self) -> None:
+        """Closes the HTTP client."""
 
         self._http.close()
 
@@ -199,11 +219,13 @@ class OidcClient:
     # The pending-login cookie.
 
     def newLogin(self) -> PendingLogin:
+        """A new sign-in: random state, nonce and PKCE verifier."""
 
         return PendingLogin(state=secrets.token_urlsafe(32), nonce=secrets.token_urlsafe(32), verifier=secrets.token_urlsafe(64))
 
 
     def seal(self, login: PendingLogin) -> str:
+        """A pending sign-in as its cookie, valid for PENDING_SECONDS."""
 
         return seal(self._cookieKey, login._asdict(), self._clock() + PENDING_SECONDS)
 
@@ -234,6 +256,9 @@ class OidcClient:
     # Talking to the provider.
 
     def _getJson(self, url: str, what: str, **options: Any) -> Dict[str, Any]:
+        """A JSON object from the provider. Raises SsoFailure where it can't be
+        reached, answers otherwise than 200, or with anything but an object.
+        """
 
         try:
             response = self._http.get(url, **options)
@@ -281,6 +306,10 @@ class OidcClient:
 
 
     def _readMetadata(self) -> Dict[str, Any]:
+        """The provider's discovery document, read again after
+        DISCOVERY_SECONDS, and refused unless it names the issuer configured
+        and, over HTTPS, the endpoints a sign-in needs.
+        """
 
         with self._lock:
             if self._metadata is not None and self._clock() - self._metadataAt < DISCOVERY_SECONDS:
@@ -306,12 +335,15 @@ class OidcClient:
 
 
     def authorizationUrl(self, login: PendingLogin) -> str:
+        """Where to send the browser to sign in: the provider's authorization
+        endpoint, its own query kept (as Azure AD B2C's policy), with the code
+        flow's parameters and the PKCE challenge added.
+        """
 
         endpoint = self.metadata()['authorization_endpoint']
         parameters = {'response_type': 'code', 'client_id': self.settings.clientId, 'redirect_uri': self.settings.redirectUri,
                       'scope': ' '.join(self.settings.scopes), 'state': login.state, 'nonce': login.nonce,
                       'code_challenge': codeChallenge(login.verifier), 'code_challenge_method': 'S256'}
-        # Some endpoints carry a query of their own, as Azure AD B2C's policy.
         parts = urllib.parse.urlsplit(endpoint)
         query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True) + list(parameters.items())
 
@@ -357,8 +389,14 @@ class OidcClient:
 
 
     def _keySet(self, refresh: bool) -> jwt.PyJWKSet:
+        """The provider's signing keys, from memory while fresh. `refresh` asks
+        for them again if they are older than KEYS_REFRESH_SECONDS, for a key
+        they don't hold, which is how a key rotation is followed.
+        """
 
         def fresh() -> Optional[jwt.PyJWKSet]:
+            """The keys held, if they are fresh enough to use."""
+
             with self._lock:
                 age = self._clock() - self._keysAt
                 if self._keys is not None and age < DISCOVERY_SECONDS and (not refresh or age < KEYS_REFRESH_SECONDS):
@@ -371,10 +409,11 @@ class OidcClient:
 
 
     def _readKeys(self) -> jwt.PyJWKSet:
+        """The provider's keys for signing, encryption keys left out: an ID
+        token is checked only with a key published for signing.
+        """
 
         data = self._getJson(self.metadata()['jwks_uri'], 'keys')
-        # Keys for encryption are left out: an ID token is checked only with
-        # a key published for signing.
         keys = [key for key in data.get('keys', []) if isinstance(key, dict) and key.get('use', 'sig') == 'sig']
         try:
             keySet = jwt.PyJWKSet.from_dict({'keys': keys})
@@ -388,8 +427,14 @@ class OidcClient:
 
 
     def _signingKey(self, keyId: Optional[str]) -> Optional[jwt.PyJWK]:
+        """The key an ID token names, from the keys held and, failing that,
+        from the keys read again; the only key where the token names none and
+        there is one.
+        """
 
         def find(keySet: jwt.PyJWKSet) -> Optional[jwt.PyJWK]:
+            """The key in `keySet` the token names, or None."""
+
             if keyId is None:
                 return keySet.keys[0] if len(keySet.keys) == 1 else None
             return next((key for key in keySet.keys if key.key_id == keyId), None)
@@ -432,6 +477,9 @@ class OidcClient:
 
 
     def _userinfo(self, accessToken: str, subject: str) -> Dict[str, Any]:
+        """The userinfo endpoint's claims, where the provider has one. Raises
+        SsoFailure where they are for another subject.
+        """
 
         endpoint = self.metadata().get('userinfo_endpoint')
         if not endpoint:
@@ -461,6 +509,7 @@ class OidcClient:
 
 
 def _name(claims: Dict[str, Any]) -> str:
+    """The name the claims give, stripped and cut to 200 characters, or nothing."""
 
     name = claims.get('name')
 
@@ -468,6 +517,7 @@ def _name(claims: Dict[str, Any]) -> str:
 
 
 def _otherActiveAdmins(session: Session, user: User) -> int:
+    """How many active admins there are besides `user`."""
 
     return session.scalar(select(func.count()).select_from(User).where(User.role == ADMIN, User.active.is_(True), User.id != user.id)) or 0
 

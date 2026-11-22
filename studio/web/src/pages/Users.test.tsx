@@ -1,3 +1,6 @@
+// Tests of the Users page: how each person signs in, adding accounts and
+// setting passwords.
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'

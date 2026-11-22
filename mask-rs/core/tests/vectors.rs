@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::str::FromStr;
 use bauta_core::KeyedHash;
 
+/// The reference vectors, as generate_vectors.py wrote them.
 fn vectors() -> Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../vectors/reference.json");
     let file = std::fs::read_to_string(path).expect("reference.json; run generate_vectors.py");
@@ -19,14 +20,17 @@ fn vectors() -> Value {
     serde_json::from_str(&file).expect("reference.json is JSON")
 }
 
+/// The keyed hash the vectors were made under.
 fn keyedHash(vectors: &Value) -> KeyedHash {
     KeyedHash::new(vectors["key"].as_str().unwrap(), vectors["domain"].as_str().unwrap())
 }
 
+/// A vector's hex field, as bytes.
 fn bytesOf(value: &Value, field: &str) -> Vec<u8> {
     hex::decode(value[field].as_str().unwrap()).unwrap()
 }
 
+/// A vector's decimal field, as a number.
 fn bigOf(value: &Value, field: &str) -> BigUint {
     BigUint::from_str(value[field].as_str().unwrap()).unwrap()
 }

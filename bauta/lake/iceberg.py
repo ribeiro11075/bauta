@@ -37,22 +37,22 @@ except ImportError:
     # where pyiceberg is, whose class this replaces.
     PyArrowFileIO = object  # type: ignore[misc,assignment,unused-ignore]
 
+# PREVIOUS_METADATA_VERSIONS: the earlier metadata files kept of a table bauta
+#   creates; past this, each commit deletes the oldest, which pyiceberg
+#   otherwise keeps forever.
+# _ICEBERG_SETTLED: what Iceberg has no type for, as the nearest one it has.
+# _AZURE_SCHEMES: what pyiceberg calls an Azure location.
 logger = logging.getLogger(LOGGER_NAME)
-
-# Kept of a table bauta creates: past this, each commit deletes the oldest
-# metadata file, which pyiceberg otherwise keeps forever.
 PREVIOUS_METADATA_VERSIONS = 20
-
-# What Iceberg has no type for, as the nearest one it has.
 _ICEBERG_SETTLED = {
     'int8': ColumnType('int32'), 'int16': ColumnType('int32'), 'uint8': ColumnType('int32'), 'uint16': ColumnType('int32'),
     'uint32': ColumnType('int64'), 'uint64': ColumnType('decimal', 20, 0),
     }
-# What pyiceberg calls an Azure location.
 _AZURE_SCHEMES = frozenset({'abfs', 'abfss', 'wasb', 'wasbs'})
 
 
 def requirePyiceberg() -> Any:
+    """pyiceberg.catalog, or a ConfigurationError saying how to install it."""
 
     try:
         import pyiceberg.catalog
@@ -109,6 +109,7 @@ def catalogProperties(settings: IcebergConnection) -> Dict[str, str]:
 
 
 def loadCatalog(settings: IcebergConnection) -> Any:
+    """The catalog an Iceberg connection names."""
 
     catalog = requirePyiceberg()
 
@@ -143,9 +144,12 @@ class _TableFiles:
     """
 
     def __init__(self, io: Any) -> None:
+        """The table's FileIO, which Parts writes through."""
+
         self.io = io
 
     def openOutput(self, path: str) -> Any:
+        """A new file at `path`, refused if one is already there."""
 
         return self.io.new_output(path).create(overwrite=False)
 
@@ -161,6 +165,10 @@ class IcebergTarget(ColumnarTarget):
     """
 
     def __init__(self, job: str, jobConfig: DataJobConfig, settings: IcebergConnection) -> None:
+        """A target for one job's Iceberg table. The catalog is loaded last, so
+        what raises before it leaves none open.
+        """
+
         super().__init__(job, jobConfig, settings.rowGroupSize)
         self.settings = settings
         self.identifier = settings.tableIdentifier(jobConfig.targetTableFinal)
@@ -171,16 +179,19 @@ class IcebergTarget(ColumnarTarget):
         self._newColumns: List[str] = []
         self._transaction: Any = None
         self._parts: Optional[Parts] = None
-        # Last: what raises before it leaves no catalog open.
         self.catalog = loadCatalog(settings)
 
 
     def _prepare(self) -> None:
+        """Loads the table, or notes it is to be created, its namespace with
+        it; works out the key; and settles each declared type Iceberg lacks as
+        the nearest it has, as an inferred one is, where pyiceberg would make a
+        uint64 a signed long. Raises for an upsert with no key to match rows
+        by.
+        """
 
         from pyiceberg.exceptions import NoSuchTableError
 
-        # A declared type Iceberg lacks is written as the nearest it has, as a
-        # settled one is: pyiceberg would make a uint64 a signed long.
         for column in self.columns:
             if column.type is not None:
                 column.type = self._settled(column.type)
@@ -259,16 +270,21 @@ class IcebergTarget(ColumnarTarget):
 
 
     def _settled(self, columnType: ColumnType) -> ColumnType:
+        """The nearest type Iceberg has to `columnType`."""
 
         return _ICEBERG_SETTLED.get(columnType.kind, columnType)
 
 
     def _field(self, column: Column) -> Any:
+        """As the base class's, nullable unless the column is required."""
 
         return super()._field(column).with_nullable(not column.required)
 
 
     def _creationProperties(self) -> Dict[str, str]:
+        """The properties a table bauta creates is given: its compression, and
+        its old metadata files deleted past PREVIOUS_METADATA_VERSIONS.
+        """
 
         return {
             'write.parquet.compression-codec': self.settings.effectiveCompression().value,
@@ -288,10 +304,12 @@ class IcebergTarget(ColumnarTarget):
 
 
     def _writeTable(self, table: Any) -> None:
+        """Upserts the rows, or writes them as parts of the commit. A null in a
+        required column is refused here, naming it, rather than by pyiceberg as
+        a schema mismatch.
+        """
 
         for column in self.columns:
-            # Said here, with the column's name, rather than by pyiceberg as a
-            # schema mismatch.
             if column.required and table.column(column.name).null_count:
                 raise FileTypeError('column {} is {} and a row holds no value in it'.format(
                     column.name, 'a key' if column.name in self.key else 'required by the table'))
@@ -358,6 +376,10 @@ class IcebergTarget(ColumnarTarget):
 
 
     def finish(self, rowCount: int) -> None:
+        """Commits what was written, creating an upsert's table, empty and
+        keyed, if there were no rows, then expires the snapshots past
+        keepSnapshots. An append with no rows commits nothing.
+        """
 
         self._flush()
         strategy = self.jobConfig.insertStrategy
@@ -410,6 +432,8 @@ class IcebergTarget(ColumnarTarget):
         """
 
         def referenced(table: Any) -> Set[str]:
+            """Every data file a table's snapshots reference."""
+
             return set(table.inspect.all_files().column('file_path').to_pylist())
 
         try:
@@ -499,6 +523,9 @@ class FileIO(PyArrowFileIO):
 
     @staticmethod
     def parse_location(location: str, properties: Optional[Dict[str, str]] = None) -> Tuple[str, str, str]:
+        """As pyarrow's FileIO parses a location, but with an Azure location's
+        path starting with its container, as Azure's filesystem expects.
+        """
 
         scheme, netloc, path = PyArrowFileIO.parse_location(location, properties or {})
 

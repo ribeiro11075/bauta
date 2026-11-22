@@ -1,3 +1,12 @@
+"""The package's logging: one logger, `bauta`, that never propagates to the
+host's, in text or JSON, to a file, a stream or both (Log).
+
+Every record passes ScrubbingFilter, which takes values out of its message
+before any handler sees it; installDriverScrubbing does the same for the
+drivers' own loggers. A job runs in a process of its own, so its records are
+sent to the parent over a pipe (ConnectionForwarder) and handled there
+(handleForwardedRecord), as if logged in the parent.
+"""
 from __future__ import annotations
 
 import copy
@@ -8,25 +17,24 @@ from typing import Any, Dict, Optional
 
 from .scrubbing import foreignMessages, scrubForeignText, scrubWithin
 
+# _RESERVED_RECORD_FIELDS: everything LogRecord sets on itself. Anything *not*
+#   in here arrived through a log call's extra={...} and is a field the caller
+#   wanted in the output.
+# ATTEMPT_FAILED: the `event` of the record a job's last failed attempt logs,
+#   with its traceback; the cycle's summary reports the same failure in a line.
+# DRIVER_LOGGERS: the loggers of the drivers and libraries that touch rows.
+#   Their records never reach the package's logger, so its filter can't see
+#   them: a driver logging a statement or an error goes wherever the host's
+#   logging sends it, or to Python's last resort on stderr.
 LOGGER_NAME = 'bauta'
-
 TEXT_FORMAT = '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s [%(filename)s:%(lineno)d]'
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
-
-# Everything LogRecord sets on itself. Anything *not* in here arrived through a
-# log call's extra={...} and is a field the caller wanted in the output.
 _RESERVED_RECORD_FIELDS = frozenset({
     'args', 'asctime', 'created', 'exc_info', 'exc_text', 'filename', 'funcName', 'levelname', 'levelno', 'lineno',
     'message', 'module', 'msecs', 'msg', 'name', 'pathname', 'process', 'processName', 'relativeCreated', 'stack_info',
     'taskName', 'thread', 'threadName',
     })
-# The `event` of the record a job's last failed attempt logs, with its
-# traceback; the cycle's summary reports the same failure in a line.
 ATTEMPT_FAILED = 'attemptFailed'
-# The loggers of the drivers and libraries that touch rows. Their records
-# never reach the package's logger, so its filter can't see them: a driver
-# logging a statement or an error goes wherever the host's logging sends it,
-# or to Python's last resort on stderr.
 DRIVER_LOGGERS = frozenset({'psycopg', 'psycopg_pool', 'oracledb', 'mysql', 'pymssql', 'duckdb', 'pyiceberg', 'pyarrow'})
 
 
@@ -36,6 +44,9 @@ class JsonFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
+        """The record as one JSON object: its time, level, logger, message and
+        place, any fields passed in extra={...}, and its traceback, if any.
+        """
 
         payload: Dict[str, Any] = {
             'timestamp': self.formatTime(record, DATE_FORMAT) + '.{:03.0f}'.format(record.msecs),
@@ -65,10 +76,13 @@ class _OneLineFormatter(logging.Formatter):
     """
 
     def __init__(self, formatter: logging.Formatter) -> None:
+        """Formats with `formatter` where it is JSON, else as `[LEVEL] message`."""
+
         super().__init__()
         self._json = formatter if isinstance(formatter, JsonFormatter) else None
 
     def format(self, record: logging.LogRecord) -> str:
+        """The record without its traceback, on one line."""
 
         record = copy.copy(record)
         record.exc_info = None
@@ -95,11 +109,14 @@ class ScrubbingFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Replaces the record's message, and its traceback's, with their
+        scrubbed text; never drops a record. A malformed call is left for the
+        handler to report, as it would be without this.
+        """
 
         try:
             message = record.getMessage()
         except Exception:
-            # A malformed call is the handler's to report, as it would be without this.
             return True
 
         error = record.exc_info[1] if record.exc_info else None
@@ -116,6 +133,7 @@ class ScrubbingFilter(logging.Filter):
 
 
 def _installScrubbing() -> None:
+    """Adds the ScrubbingFilter to the package's logger, once."""
 
     logger = logging.getLogger(LOGGER_NAME)
     if not any(isinstance(existing, ScrubbingFilter) for existing in logger.filters):
@@ -158,6 +176,10 @@ def installDriverScrubbing() -> None:
         return
 
     def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        """A record as the previous factory makes it, scrubbed where it comes
+        from a driver's logger.
+        """
+
         record = previous(*args, **kwargs)
         if record.name.partition('.')[0] in DRIVER_LOGGERS:
             _scrubDriverRecord(record)
@@ -192,11 +214,16 @@ class ConnectionForwarder(logging.Handler):
     """
 
     def __init__(self, connection: Any) -> None:
+        """A handler sending records over `connection`, a job's pipe to its parent."""
+
         super().__init__()
         self.connection = connection
 
 
     def send(self, kind: str, payload: Any) -> None:
+        """Sends a message of `kind` over the pipe, under the handler's lock so
+        it can't interleave with a record.
+        """
 
         self.acquire()
         try:
@@ -206,6 +233,7 @@ class ConnectionForwarder(logging.Handler):
 
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Sends the record, made picklable, to the parent."""
 
         try:
             self.connection.send(('log', portableRecord(record)))
@@ -239,6 +267,7 @@ def handleForwardedRecord(record: logging.LogRecord) -> None:
 
 
 class Log:
+    """The package's logger, configured: where records go and in what format."""
 
     def __init__(self, logFile: Optional[Path] = None, level: int = logging.INFO, logFormat: str = 'text') -> None:
         """Configures the package's own logger, which doesn't propagate, so a

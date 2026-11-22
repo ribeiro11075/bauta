@@ -43,6 +43,11 @@ class Cloud:
     """
 
     def __init__(self, name, scheme, settings, filesystem, rawKeys=None):
+        """A cloud the tests write to: its name, URL scheme, connection
+        settings, a pyarrow filesystem on it, and how to list a bucket's keys
+        unsigned.
+        """
+
         self.name = name
         self.scheme = scheme
         self.settings = settings
@@ -56,18 +61,26 @@ class Cloud:
         return [path for path in paths if not path.startswith('lake/_bauta_staging/')]
 
     def rawKeys(self, bucket):
+        """Every key in `bucket`, read without pyarrow, or the test skipped
+        where the emulator lists them only to a signed request.
+        """
+
         if self._rawKeys is None:
             pytest.skip('{} lists its keys only to a signed request'.format(self.name))
         return self._rawKeys(bucket)
 
 
 def _s3Keys(bucket):
+    """Every key in a bucket on the local S3 emulator."""
+
     with urllib.request.urlopen('http://127.0.0.1:5055/{}?list-type=2'.format(bucket)) as response:
         listing = xml.etree.ElementTree.fromstring(response.read())
     return sorted(element.text for element in listing.iter() if element.tag.endswith('}Key'))
 
 
 def _gcsKeys(bucket):
+    """Every object in a bucket on the local Google Cloud Storage emulator."""
+
     with urllib.request.urlopen('http://127.0.0.1:4443/storage/v1/b/{}/o'.format(bucket)) as response:
         return sorted(item['name'] for item in json.load(response).get('items', []))
 
@@ -91,11 +104,17 @@ CLOUDS = {
 
 @pytest.fixture(params=sorted(CLOUDS))
 def cloud(request):
+    """Each cloud's emulator, once each."""
+
     return CLOUDS[request.param]()
 
 
 @pytest.fixture
 def bucket(cloud):
+    """A new bucket on the cloud; the test is skipped where the emulator isn't
+    running.
+    """
+
     name = 'bauta-{}'.format(uuid.uuid4().hex[:12])
     try:
         cloud.filesystem.create_dir(name)
@@ -106,6 +125,8 @@ def bucket(cloud):
 
 @pytest.fixture
 def source(tmp_path):
+    """A SQLite file of ROWS customers."""
+
     path = tmp_path / 'prod.db'
     connection = sqlite3.connect(path)
     try:
@@ -118,10 +139,14 @@ def source(tmp_path):
 
 
 def _lake(cloud, bucket, **settings):
+    """A files connection rooted in the bucket."""
+
     return connectionConfig(type='files', root='{}{}/lake'.format(cloud.scheme, bucket), **cloud.settings, **settings)
 
 
 def _run(cloud, bucket, source, lake=None, **overrides):
+    """Runs one job copying customers into the bucket, with `overrides`."""
+
     settings = {'prod': connectionConfig(type='sqlite', path=str(source)), 'lake': _lake(cloud, bucket, **(lake or {}))}
     fields = dict(sourceConnection='prod', targetConnection='lake', sourceQuery='select id, email from customers',
                   targetTableFinal='crm/customers', insertStrategy='overwrite', chunkSize=100, unmasked=True)
@@ -130,6 +155,8 @@ def _run(cloud, bucket, source, lake=None, **overrides):
 
 
 def _read(cloud, path):
+    """A directory of Parquet files in the cloud read as one table."""
+
     return pyarrow.dataset.dataset(path, filesystem=cloud.filesystem, format='parquet').to_table()
 
 

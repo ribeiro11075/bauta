@@ -12,7 +12,8 @@ from .base import ColumnDefinition, ForeignKey, settingsOf, _OnConflictDialect, 
 from .names import catalogName, catalogTableName, quoteIdentifier
 
 
-# How long a connection keeps trying to switch a file to WAL while another holds it.
+# WAL_SWITCH_SECONDS: how long a connection keeps trying to switch a file to
+#   WAL while another holds it.
 WAL_SWITCH_SECONDS = 30.0
 _CREATE_INDEX_HEAD = re.compile(r'^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?', re.IGNORECASE)
 
@@ -78,12 +79,13 @@ class SQLiteDialect(_OnConflictDialect):
     sqlite3 reports no column types.
     """
 
+    # REFUSED_FLOATS: it stores NaN as NULL, without a word; the infinities it
+    #   keeps.
     databaseType = DatabaseType.SQLITE
-
-    # It stores NaN as NULL, without a word; the infinities it keeps.
     REFUSED_FLOATS = frozenset({'nan'})
 
     def openConnection(self, settings: DatabaseConfig) -> Any:
+        """A sqlite3 connection."""
 
         import sqlite3
 
@@ -91,29 +93,34 @@ class SQLiteDialect(_OnConflictDialect):
 
 
     def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
+        """SQLite's: the file switched to WAL, so a writer can proceed while a
+        stream reads the same file, where the default journal fails it with
+        "database is locked" (WAL persists in the file, and needs a local
+        filesystem, not NFS or SMB); and declared foreign keys enforced, as on
+        every other database, which SQLite leaves off unless each connection
+        asks.
+        """
 
-        # WAL, so a writer can proceed while a stream reads the same file; the
-        # default journal fails it with "database is locked". It persists in
-        # the file, and needs a local filesystem, not NFS or SMB.
         _useWriteAheadLog(native(connection))
-        # Declared foreign keys are enforced, as on every other database.
-        # SQLite leaves them off unless each connection asks.
         native(connection).execute('PRAGMA foreign_keys=ON')
 
         return connection.cursor()
 
 
     def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
+        """The file's path, and 30 seconds' wait for a lock another connection holds."""
 
         return {'database': settingsOf(settings, SQLiteConnection).path, 'timeout': 30.0}
 
 
     def readOnlySessionStatement(self) -> Optional[str]:
+        """SQLite's: `PRAGMA query_only`."""
 
         return 'PRAGMA query_only = ON'
 
 
     def placeholders(self, count: int) -> List[str]:
+        """sqlite3's qmark style: `?`."""
 
         return count * ['?']
 
@@ -137,6 +144,7 @@ class SQLiteDialect(_OnConflictDialect):
     # Both are bound unquoted, since a pragma takes a name, not a statement.
 
     def primaryKey(self, cursor: Cursor, table: str) -> List[str]:
+        """SQLite's, from pragma_table_info, in key order."""
 
         schema, name = catalogTableName(self.databaseType, table)
         cursor.execute('SELECT name FROM pragma_table_info(?, ?) WHERE pk > 0 ORDER BY pk', (name, schema or 'main'))
@@ -233,6 +241,7 @@ class SQLiteDialect(_OnConflictDialect):
 
 
     def tableExists(self, cursor: Cursor, table: str) -> bool:
+        """SQLite's, from the schema's sqlite_master, ignoring case as SQLite does."""
 
         schema, name = catalogTableName(self.databaseType, table)
         cursor.execute("SELECT count(*) FROM {}.sqlite_master WHERE type = 'table' AND lower(name) = lower(?)".format(

@@ -32,6 +32,8 @@ KEY = 'an-integration-masking-key'
 
 @pytest.fixture(params=sorted(SERVERS))
 def server(request):
+    """Each server's settings and a connection to it."""
+
     settings = serverSettings(request.param)
     database = Database(connectionSettings=settings)
 
@@ -204,6 +206,8 @@ def test_the_deepest_subset_allowed_runs_on_every_server(server):
 
 
 def _maskedJob(source, target, policy):
+    """A jobs file of one upsert job masking `source` into `target` by `policy`."""
+
     return Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'mask': {
         'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'sourceQuery': 'SELECT * FROM {}'.format(source),
         'targetTableFinal': target, 'insertStrategy': 'upsert', 'chunkSize': 5, 'masking': {'key': KEY, 'columns': policy}}}}, DataJobsFile)

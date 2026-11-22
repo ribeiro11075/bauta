@@ -1,3 +1,6 @@
+"""Tests that importing bauta needs no database driver: each is imported only
+when a connection of its type opens, and fails there if missing.
+"""
 import subprocess
 import sys
 from pathlib import Path

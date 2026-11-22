@@ -1,3 +1,13 @@
+"""One open database connection, and everything bauta does through it.
+
+Database is the one class the rest of the package talks to a database through:
+it opens the connection, refuses writes to a readOnly one and unencrypted
+sessions where encryption is required, streams a query's rows in chunks
+(RowStream), reads the catalog, and loads rows by insert, upsert or swap. What
+differs between databases is in the dialects, one module each in `dialects`;
+what a value becomes on its way to each driver is in `values`; what a swap does
+to the tables beyond loading them is in `maintenance`.
+"""
 from __future__ import annotations
 
 import contextlib
@@ -34,13 +44,17 @@ class RowStream:
     """
 
     def __init__(self, database: 'Database', cursor: Cursor, chunkSize: int, firstChunk: List[Tuple[Any, ...]]) -> None:
+        """A stream over `cursor`, its first chunk already fetched.
+        `description`, the query's cursor.description, is set by
+        Database.stream once it has it, for what the driver says of each column
+        beyond its name.
+        """
+
         self._database = database
         self._cursor = cursor
         self._chunkSize = chunkSize
         self._pending: Optional[List[Tuple[Any, ...]]] = firstChunk
         self.closed = False
-        # The query's cursor.description, for what the driver says of each
-        # column beyond its name.
         self.description: Optional[Sequence[Sequence[Any]]] = None
 
 
@@ -50,6 +64,9 @@ class RowStream:
 
 
     def __next__(self) -> List[Tuple[Any, ...]]:
+        """The next chunk of rows, as a list. Closes the stream when it is
+        exhausted, or when a fetch fails.
+        """
 
         if self.closed:
             raise StopIteration
@@ -97,11 +114,15 @@ class RowStream:
 
 
     def __exit__(self, excType: Optional[Type[BaseException]], excValue: Optional[BaseException], traceback: Optional[TracebackType]) -> None:
+        """Closes the stream, releasing any rows left unread."""
 
         self.close()
 
 
 class Database(TableMaintenance):
+    """One connection to a database in connections.yaml, through its dialect.
+    Opened as it is built; a context manager that closes it.
+    """
 
     def __init__(self, connectionSettings: ConnectionConfig, create: bool = False) -> None:
         """`create` lets a SQLite or DuckDB file that doesn't exist yet be
@@ -125,7 +146,6 @@ class Database(TableMaintenance):
         self.primaryKeyCache: Dict[str, List[str]] = {}
         self.columnNameCache: Dict[str, List[str]] = {}
         self.columnTypeCache: Dict[str, Dict[str, Any]] = {}
-        # One per table loaded, so each learns from its table's chunks.
         self._preparers: Dict[str, ValuePreparer] = {}
         self._streams: Set[RowStream] = set()
         self._create = create
@@ -133,6 +153,12 @@ class Database(TableMaintenance):
 
 
     def connect(self) -> None:
+        """Opens the connection and its cursor through the dialect, then
+        applies the connection's guarantees, in order: an unencrypted session
+        refused where requireEncryption is set, the statement timeout, and a
+        read-only session for a readOnly connection. Refuses a SQLite or DuckDB
+        file that doesn't exist unless `create` allows it.
+        """
 
         settings = self.connectionSettings
         if (not self._create and isinstance(settings, (SQLiteConnection, DuckDBConnection)) and settings.path != ':memory:'
@@ -214,12 +240,14 @@ class Database(TableMaintenance):
 
 
     def __exit__(self, excType: Optional[Type[BaseException]], excValue: Optional[BaseException], traceback: Optional[TracebackType]) -> None:
+        """Closes the connection. Where the block is already failing, an error
+        closing is swallowed, so that it can't replace the error that matters.
+        """
 
         if excType is None:
             self.close()
             return
 
-        # Already failing: a close error would replace the error that matters.
         try:
             self.close()
         except Exception:
@@ -227,6 +255,7 @@ class Database(TableMaintenance):
 
 
     def query(self, query: str) -> List[Tuple[Any, ...]]:
+        """Runs `query` and returns all its rows."""
 
         self.cursor.execute(query)
 
@@ -304,6 +333,7 @@ class Database(TableMaintenance):
 
 
     def commit(self) -> None:
+        """Commits the connection's transaction."""
 
         self.connection.commit()
 
@@ -318,6 +348,9 @@ class Database(TableMaintenance):
 
 
     def alter(self, query: str) -> None:
+        """Runs a statement that changes the database, and commits it. Refused
+        on a readOnly connection.
+        """
 
         self._refuseWrite('run a statement that changes it')
         self.cursor.execute(query)
@@ -325,6 +358,7 @@ class Database(TableMaintenance):
 
 
     def truncate(self, table: str) -> None:
+        """Empties `table`, and commits. Refused on a readOnly connection."""
 
         self._refuseWrite('empty {}'.format(table))
         query = self.dialect.truncateQuery(table=self.statementName(table))
@@ -372,6 +406,7 @@ class Database(TableMaintenance):
 
 
     def getAllColumnTypes(self, table: str) -> List[Any]:
+        """The driver's type code for each of the table's columns, in order."""
 
         return [row[1] for row in self._describe(table)]
 
@@ -430,6 +465,7 @@ class Database(TableMaintenance):
 
 
     def quoted(self, columns: Sequence[str]) -> List[str]:
+        """Each column name quoted as this database quotes an identifier."""
 
         return [quoteIdentifier(self.type, column) for column in columns]
 
@@ -621,6 +657,9 @@ class Database(TableMaintenance):
 
 
     def _preparer(self, table: str) -> ValuePreparer:
+        """The table's ValuePreparer, one per table loaded so each learns from
+        its own table's chunks.
+        """
 
         if table not in self._preparers:
             self._preparers[table] = ValuePreparer(self.type)
@@ -722,6 +761,10 @@ class Database(TableMaintenance):
 
 
     def upsertFromStage(self, targetTable: str, stageTable: str, columns: Optional[List[str]] = None) -> None:
+        """Upserts every row of `stageTable` into `targetTable` in one
+        statement, and commits. Refused on a readOnly connection; a clash on a
+        unique key other than the primary key raises UniqueKeyClashError.
+        """
 
         self._refuseWrite('load rows into {}'.format(targetTable))
         allColumns, primaryKeyColumns, nonPrimaryKeyColumns = (self.quoted(bucket) for bucket in self._getColumnBuckets(table=targetTable, columns=columns))

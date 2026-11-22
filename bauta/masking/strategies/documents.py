@@ -14,15 +14,20 @@ from .common import _asciiDigits, _choiceOption, _inScriptOf, _typeName, luhnVal
 from .basic import DigitsStrategy, EmailStrategy
 from .keys import KeyStrategy
 
+# _DATE_LIKE: text shaped like a date, which the phone detector would otherwise
+#   take for a number.
+# _JSON_PATH: a path into a JSON document: keys joined with dots, `[]` for every
+#   element of an array: `contact.alt_email`, `orders[].card`, `[].email`.
 _DATE_LIKE = re.compile(r'^(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})$')
-# A path into a JSON document: keys joined with dots, `[]` for every element
-# of an array: `contact.alt_email`, `orders[].card`, `[].email`.
 _JSON_PATH = re.compile(r'^(?:[^.\[\]]+|\[\])(?:\.[^.\[\]]+|\[\])*$')
 
 
 def _listOption(*choices: str) -> Callable[[Any], List[str]]:
+    """A check for a non-empty list drawn from `choices`."""
 
     def check(value: Any) -> List[str]:
+        """`value` as a list, if every item is one of the choices. Raises ValueError."""
+
         if not isinstance(value, list) or not value or any(item not in choices for item in value):
             raise ValueError('must be a non-empty list of: {}'.format(', '.join(choices)))
         return list(value)
@@ -31,6 +36,9 @@ def _listOption(*choices: str) -> Callable[[Any], List[str]]:
 
 
 def _patternsOption(value: Any) -> List[str]:
+    """The `patterns` option: a non-empty list of regular expressions that
+    compile. Raises ValueError.
+    """
 
     if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
         raise ValueError('must be a non-empty list of regular expressions')
@@ -44,6 +52,7 @@ def _patternsOption(value: Any) -> List[str]:
 
 
 def _validIban(text: str) -> bool:
+    """Whether `text` passes the IBAN checksum: mod 97 of the rearranged digits is 1."""
 
     compact = text.replace(' ', '')
     rearranged = compact[4:] + compact[:4]
@@ -52,6 +61,7 @@ def _validIban(text: str) -> bool:
 
 
 def _validIpv4(text: str) -> bool:
+    """Whether every octet of a dotted quad is at most 255."""
 
     return all(int(octet) <= 255 for octet in text.split('.'))
 
@@ -64,9 +74,10 @@ def _phoneLike(text: str) -> bool:
     return 7 <= sum(character.isdigit() for character in text) <= 15 and not _DATE_LIKE.match(text.strip())
 
 
-# (kind, pattern, check). Earlier kinds win where matches overlap, so the
-# specific ones -- validated by a checksum or a fixed shape -- come before the
-# loose phone pattern, which would otherwise swallow a card number.
+# _DETECTORS: (kind, pattern, check). Earlier kinds win where matches overlap,
+#   so the specific ones -- validated by a checksum or a fixed shape -- come
+#   before the loose phone pattern, which would otherwise swallow a card
+#   number.
 _DETECTORS: Tuple[Tuple[str, 're.Pattern[str]', Callable[[str], bool]], ...] = (
     ('email', re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}'), lambda text: True),
     ('iban', re.compile(r'\b[A-Z]{2}\d{2}(?: ?[A-Z\d]){11,30}\b'), _validIban),
@@ -75,7 +86,6 @@ _DETECTORS: Tuple[Tuple[str, 're.Pattern[str]', Callable[[str], bool]], ...] = (
     ('ip', re.compile(r'(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)'), _validIpv4),
     ('phone', re.compile(r'(?<![\w+])\+?\(?\d[\d ().-]{5,}\d(?!\w)'), _phoneLike),
     )
-
 _DETECTOR_KINDS = tuple(kind for kind, _, _ in _DETECTORS)
 
 
@@ -89,6 +99,11 @@ class RedactStrategy(Strategy):
     OPTIONS = {'replacement': _choiceOption('label', 'mask'), 'detect': _listOption(*_DETECTOR_KINDS), 'patterns': _patternsOption}
 
     def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
+        """Selects the detectors `detect` names, adds one per `patterns` entry,
+        and builds the strategies that mask what they find under `replacement:
+        mask`.
+        """
+
         super().__init__(keyedHash, options)
         kinds = set(self.options.get('detect', _DETECTOR_KINDS))
         self._detectors = [detector for detector in _DETECTORS if detector[0] in kinds]
@@ -130,6 +145,10 @@ class RedactStrategy(Strategy):
 
 
     def _replace(self, kind: str, found: str) -> str:
+        """What replaces an identifier found in the text: its kind as a label,
+        such as [EMAIL], or under `replacement: mask` a keyed value of the same
+        shape.
+        """
 
         if self.options.get('replacement', 'label') == 'label':
             return '[REDACTED]' if kind == 'pattern' else '[{}]'.format(kind.upper())
@@ -170,6 +189,7 @@ class RedactStrategy(Strategy):
 
 
     def mask(self, value: Any) -> Any:
+        """The text with every identifier the detectors find replaced, the rest kept."""
 
         if not isinstance(value, str):
             text = structuredText(value)
@@ -208,6 +228,9 @@ def _jsonPolicy(value: Any) -> Dict[str, Any]:
 
 
 def _jsonFields(value: Any) -> Dict[str, Dict[str, Any]]:
+    """The `fields` option: each path checked and its policy validated. Raises
+    ValueError, naming the path.
+    """
 
     if not isinstance(value, Mapping) or not value:
         raise ValueError('must map paths in the document, such as contact.email or items[].card, to a policy each')
@@ -225,6 +248,7 @@ def _jsonFields(value: Any) -> Dict[str, Dict[str, Any]]:
 
 
 def _pathText(path: Tuple[str, ...]) -> str:
+    """A path as the policy writes it, with `[]` against the key before it."""
 
     return '.'.join(path).replace('.[]', '[]')
 
@@ -252,6 +276,10 @@ def _jsonDocument(text: str) -> Tuple[Any, bool]:
     found = False
 
     def number(text: str) -> _JsonNumber:
+        """Keeps a JSON number with a fraction or exponent as written, and
+        notes one was found.
+        """
+
         nonlocal found
         found = True
         return _JsonNumber(text)
@@ -274,14 +302,14 @@ def _jsonText(node: Any) -> str:
     return json.dumps(node, ensure_ascii=False)
 
 
-# What a value in a JSON document is masked with when its policy sets no
-# `otherwise` and names no path to it, by the words of the key it is under,
-# read as discover reads a column's name. Before, `redact` alone took such a
-# value, and it finds identifiers by their shape: {"name": "Ann Smith", "dob":
-# "1984-03-02", "address": "12 Main St"} came out unchanged. Kept here rather
-# than read from discover's rules, so that changing those never changes a
-# mask. The first entry with a word in the key wins: `company_name` is a
-# company, `email_address` an email.
+# _JSON_KEY_POLICIES: what a value in a JSON document is masked with when its
+#   policy sets no `otherwise` and names no path to it, by the words of the key
+#   it is under, read as discover reads a column's name. Before, `redact` alone
+#   took such a value, and it finds identifiers by their shape: {"name": "Ann
+#   Smith", "dob": "1984-03-02", "address": "12 Main St"} came out unchanged.
+#   Kept here rather than read from discover's rules, so that changing those
+#   never changes a mask. The first entry with a word in the key wins:
+#   `company_name` is a company, `email_address` an email.
 _JSON_KEY_POLICIES: Tuple[Tuple[FrozenSet[str], Dict[str, Any]], ...] = tuple((frozenset(words), policy) for words, policy in (
     (('email', 'emailaddress', 'mail'), {'strategy': 'email'}),
     (('password', 'passwd', 'pwd', 'secret', 'token', 'apikey', 'salt'), {'strategy': 'hash'}),
@@ -364,13 +392,17 @@ class JsonStrategy(Strategy):
     REQUIRED = ('fields',)
 
     def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
+        """Builds the `otherwise` strategy now; the fields' strategies wait for
+        the masking key in bindKey. _byKey says whether values are masked by
+        the words of their key, as they are where `otherwise` is left to its
+        default, with those strategies built as keys are met, each in its key's
+        domain.
+        """
 
         super().__init__(keyedHash, options)
         otherwise = self.options.get('otherwise', {'strategy': 'redact', 'replacement': 'mask'})
         self._otherwise = self._build(keyedHash, otherwise)
         self._fields: Optional[Dict[str, Strategy]] = None
-        # By key, only where `otherwise` is left to its default; built as
-        # keys are met, each in its key's domain.
         self._byKey = 'otherwise' not in self.options
         self._keyStrategies: Dict[Tuple[int, str], Strategy] = {}
         self._maskingKey: Optional[str] = None
@@ -379,6 +411,7 @@ class JsonStrategy(Strategy):
 
     @staticmethod
     def _build(keyedHash: KeyedHash, policy: Mapping[str, Any]) -> Strategy:
+        """A strategy for one policy, under `keyedHash`."""
 
         from ..core import POLICY_FIELDS, resolveStrategy
 
@@ -388,6 +421,9 @@ class JsonStrategy(Strategy):
 
 
     def bindKey(self, key: str) -> None:
+        """Builds each field's strategy in its own domain: the policy's, else
+        the path's last key lower-cased, as a column's domain is its name.
+        """
 
         self._fields = {}
         for path, policy in self.options['fields'].items():
@@ -400,6 +436,10 @@ class JsonStrategy(Strategy):
 
 
     def _maskPart(self, strategy: Strategy, value: Any) -> Any:
+        """One value inside the document masked by `strategy`. `redact` masks
+        text, so under it an integer is masked as digits and anything else is
+        kept.
+        """
 
         if isinstance(strategy, RedactStrategy) and not isinstance(value, str):
             return strategy.maskNumber(value) if isinstance(value, int) and not isinstance(value, bool) else value
@@ -476,6 +516,11 @@ class JsonStrategy(Strategy):
 
 
     def mask(self, value: Any) -> Any:
+        """The document masked field by field, as text if it came as text and
+        as a dict or list if it came as one. Text keeps its numbers as written,
+        since a float would lose digits; json.dumps, in C, writes any document
+        with no such number.
+        """
 
         if self._fields is None:
             raise MaskingError('the json strategy masks its fields under the masking key, which only a masking plan gives it')
@@ -486,7 +531,6 @@ class JsonStrategy(Strategy):
             except ValueError:
                 raise MaskingError('the json strategy needs a JSON document, and this text is not one') from None
             masked = self._walk(document, ())
-            # json.dumps, in C, wherever no number needs writing as it came.
             return _jsonText(masked) if exact else json.dumps(masked, ensure_ascii=False)
 
         if isinstance(value, (dict, list)):

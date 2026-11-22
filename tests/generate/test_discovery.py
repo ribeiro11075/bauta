@@ -17,6 +17,8 @@ DATE = ColumnCategory.DATE
 
 
 def strategyFor(column, values=(), category=None, table='things', keyReference=None):
+    """The strategy discovery proposes for one column."""
+
     return suggestColumn(table, column, category, list(values), keyReference).policy['strategy']
 
 
@@ -124,6 +126,8 @@ def test_a_referenced_column_that_is_not_the_primary_key_gets_a_qualified_domain
 
 @pytest.fixture
 def sampleDatabase(tmp_path):
+    """A SQLite file with customers and orders whose values discovery samples."""
+
     connection = sqlite3.connect(str(tmp_path / 'sample.db'))
     connection.executescript('''
         CREATE TABLE customers (code TEXT PRIMARY KEY, email TEXT, notes TEXT, joined TEXT);
@@ -278,10 +282,14 @@ PORTUGUESE = {
 
 
 def rulesFrom(raw):
+    """Discovery rules from a discovery.yaml's content."""
+
     return discoveryRules(Configuration.validateDiscoveryRules(raw))
 
 
 def suggested(column, values=(), category=None, table='things', rules=None):
+    """The suggestion for one column under `rules`, Portuguese ones by default."""
+
     return suggestColumn(table, column, category, list(values), rules=rules or rulesFrom(PORTUGUESE))
 
 

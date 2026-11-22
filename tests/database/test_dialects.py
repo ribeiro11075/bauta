@@ -1,3 +1,6 @@
+"""Tests of the dialects' SQL: catalog queries, upserts, swaps, renames,
+sessions and binding, as each database's statements are written.
+"""
 import datetime
 import decimal
 import uuid
@@ -37,6 +40,7 @@ def test_the_primary_key_query_ignores_unique_constraints(dialect):
 
 
 class _RecordingCursor:
+    """Stands in for a cursor, recording each statement and returning `rows`."""
 
     def __init__(self, rows):
         self.rows = rows
@@ -301,11 +305,16 @@ def test_copy_writes_each_row_through_psycopg():
 
 
 class _ExecutingCursor:
+    """Stands in for a cursor, recording each statement it is given."""
 
     def __init__(self):
+        """Nothing executed yet."""
+
         self.executed = []
 
     def execute(self, query, parameters=()):
+        """Records the statement and its parameters."""
+
         self.executed.append((query, parameters))
 
 
@@ -337,6 +346,10 @@ def test_only_postgresql_mssql_and_duckdb_have_a_bulk_path():
 
 
 def _settings(**overrides):
+    """A connection's settings of the type `overrides` names, with only the
+    fields that type takes.
+    """
+
     from bauta.configuration import connectionConfig
 
     fields = dict(type='postgresql', user='u', password='secret', database='d', host='h', port=5432)
@@ -479,6 +492,7 @@ def test_mssql_swap_doubles_a_quote_in_a_table_name():
 # COPY: which chunks it is trusted with -------------------------------------------
 
 def _copyableValues():
+    """One value of every type COPY is trusted with, subclasses included."""
 
     class Text(str):
         pass

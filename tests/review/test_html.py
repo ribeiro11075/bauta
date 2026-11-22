@@ -14,6 +14,8 @@ KEY = 'an-html-report-masking-key-never-shown'
 
 
 def _audit():
+    """An audit with a job whose name is HTML, to check it is escaped."""
+
     jobs = {
         'maskCustomers': dataJob(sourceQuery='select * from customers', masking={'key': KEY, 'columns': {'id': 'keep', 'email': 'keep'},
                                                                                   'defaultStrategy': 'hash'}),
@@ -24,6 +26,8 @@ def _audit():
 
 
 def _coverage():
+    """A coverage report with names that need escaping."""
+
     jobs = {'maskCustomers': dataJob(sourceQuery='select * from customers', masking={'key': KEY, 'columns': {'id': 'keep'}}),
             'copyOrders': dataJob(sourceQuery='select * from orders', unmasked=True)}
 

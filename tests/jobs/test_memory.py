@@ -1,3 +1,6 @@
+"""Tests of run state: FileMemory's file, its locking and its YAML, and
+DatabaseMemory's table, for run times, watermarks and key fingerprints.
+"""
 import datetime
 import decimal
 
@@ -329,6 +332,8 @@ def test_a_watermark_written_as_a_float_by_an_older_version_still_reads(tmp_path
 # DatabaseMemory's held connection ----------------------------------------------
 
 def _databaseMemory(tmp_path, name='memory.db'):
+    """A DatabaseMemory on a fresh SQLite file holding the memory table."""
+
     import sqlite3
 
     from bauta.configuration import connectionConfig

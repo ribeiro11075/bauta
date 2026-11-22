@@ -21,6 +21,8 @@ DATABASE = 'sqlite'
 
 @pytest.fixture
 def ordersTables(liveDatabase):
+    """An orders source and target table on SQLite, dropped after."""
+
     suffix = uuid.uuid4().hex[:8]
     source = 'orders_src_{}'.format(suffix)
     target = 'orders_tgt_{}'.format(suffix)
@@ -35,6 +37,8 @@ def ordersTables(liveDatabase):
 
 
 def _incrementalJobsFile(source, target):
+    """A jobs file of one job copying orders incrementally on updated_at."""
+
     raw = {'workers': 1, 'jobs': {'loadOrders': {
         'active': True, 'sourceConnection': 'db', 'targetConnection': 'db', 'insertStrategy': 'upsert', 'chunkSize': 2,
         'targetTableFinal': target, 'watermarkColumn': 'updated_at', 'watermarkInitial': '1970-01-01',

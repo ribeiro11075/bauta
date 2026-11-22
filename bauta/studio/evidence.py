@@ -82,6 +82,9 @@ def manifestOf(session: Session, runId: str) -> Optional[Dict[str, Any]]:
 
 
 def verification(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """What verifyManifest says of a manifest, with the signature checked
+    against the signing key where the environment holds one.
+    """
 
     signingKey = os.environ.get(MANIFEST_KEY_VARIABLE)
     try:
@@ -95,6 +98,7 @@ def verification(manifest: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _configurationNow(project: Project) -> List[Dict[str, str]]:
+    """Each configuration file and its SHA-256, as it is now."""
 
     return [{'file': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in project.document.files]
 
@@ -127,6 +131,8 @@ def bundle(session: Session, project: Project, run: Dict[str, Any], version: str
     files: Dict[str, bytes] = {}
 
     def add(name: str, content: Any) -> None:
+        """Adds a file to the bundle, a value other than text as JSON."""
+
         files[name] = (content if isinstance(content, str) else json.dumps(content, indent=2, default=str) + '\n').encode('utf-8')
 
     add('run.json', run)
@@ -156,6 +162,9 @@ def bundle(session: Session, project: Project, run: Dict[str, Any], version: str
 
 
 def _readme(run: Dict[str, Any], manifest: Optional[Dict[str, Any]], same: Optional[bool], hasCoverage: bool, generatedAt: str, version: str) -> str:
+    """The README of an evidence bundle: what the run did and what each file in
+    the bundle holds.
+    """
 
     counts = ', '.join('{} {}'.format(count, status) for status, count in sorted(run.get('counts', {}).items()))
     lines = [

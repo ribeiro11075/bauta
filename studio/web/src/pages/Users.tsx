@@ -1,3 +1,6 @@
+// The Users page, for admins: every account, how each signs in, its role and
+// state, and adding accounts and setting passwords.
+
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ROLES, type PasswordLogin, type Role, type User } from '../api'
@@ -23,8 +26,10 @@ const ROLE_HELP: Record<Role, string> = {
 }
 const PROVIDER_ROLES_NOTE = 'provider-roles-note'
 
-// How someone can actually sign in: a password they have counts only if the
-// policy lets their role use one.
+/**
+ * How someone can actually sign in: a password they have counts only if the
+ * policy lets their role use one.
+ */
 export function signsInWith(user: User, page: UsersPage): string {
   const passwordUsable = user.passwordSet && (page.passwordLogin === 'all' || (page.passwordLogin === 'admins' && user.role === 'admin'))
   const twoFactorNeeded = page.requireTwoFactor === 'all' || (page.requireTwoFactor === 'admins' && user.role === 'admin')
@@ -34,6 +39,7 @@ export function signsInWith(user: User, page: UsersPage): string {
   return page.sso ? 'SSO, once they first sign in' : 'nothing: set a password'
 }
 
+/** Every account as a table, with the changes an admin can make to each. */
 export function Users() {
   const me = useUser()
   const client = useQueryClient()
@@ -122,14 +128,17 @@ export function Users() {
   )
 }
 
-// An admin setting someone's password: for someone who forgot theirs, since
-// Studio sends no reset emails. They are signed out everywhere.
+/**
+ * An admin setting someone's password: for someone who forgot theirs, since
+ * Studio sends no reset emails. They are signed out everywhere.
+ */
 function SetPassword({ user, onClose }: { user: User | null; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const client = useQueryClient()
   const [password, setPassword] = useState('')
   const [again, setAgain] = useState('')
   const mismatch = again !== '' && again !== password
+  /** Clears the dialog and closes it. */
   const close = () => { setPassword(''); setAgain(''); set.reset(); dialog.current?.close(); onClose() }
   const set = useMutation({
     mutationFn: () => api<User>(`/users/${user?.id}`, { method: 'PATCH', body: { password } }),
@@ -160,6 +169,7 @@ function SetPassword({ user, onClose }: { user: User | null; onClose: () => void
   )
 }
 
+/** Adding an account: with a password, or, where single sign-on is on, for the provider alone. */
 function AddUser({ page }: { page: UsersPage | undefined }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const client = useQueryClient()

@@ -1,6 +1,6 @@
 //! FF1 format-preserving encryption, as specified in NIST SP 800-38G Rev. 1.
 //!
-//! A port of `bauta/fpe.py`, with its step numbers kept so the two
+//! A port of `bauta/masking/fpe.py`, with its step numbers kept so the two
 //! can be read side by side. Only encryption is implemented: masking never
 //! needs to reverse a value, and not shipping the inverse keeps the key from
 //! becoming a way to unmask one.
@@ -10,9 +10,10 @@ use aes::Aes256;
 use num_bigint::BigUint;
 use num_traits::Zero;
 
-/// NIST SP 800-38G Rev. 1 requires radix ** minlen >= 1,000,000.
+// MINIMUM_DOMAIN_SIZE: NIST SP 800-38G Rev. 1 requires radix ** minlen to be
+//   at least this.
+// ROUNDS: the Feistel rounds FF1 specifies.
 pub const MINIMUM_DOMAIN_SIZE: u64 = 1_000_000;
-
 pub const ROUNDS: u8 = 10;
 
 /// The fewest numerals FF1 may encrypt in this radix.
@@ -25,6 +26,7 @@ pub fn minimumLength(radix: u32) -> usize {
     length as usize
 }
 
+/// FF1 under one AES-256 key, for numeral strings of one radix.
 pub struct Ff1 {
     cipher: Aes256,
     pub radix: u32,
@@ -41,6 +43,7 @@ impl Ff1 {
         }
     }
 
+    /// Encrypts one block in place with AES.
     fn block(&self, data: &mut [u8; 16]) {
         self.cipher.encrypt_block(data.into());
     }
@@ -59,6 +62,7 @@ impl Ff1 {
         state
     }
 
+    /// Numerals read as one number in the radix, most significant first.
     fn number(&self, numerals: &[u32]) -> BigUint {
         let mut value = BigUint::zero();
         for numeral in numerals {
@@ -68,6 +72,8 @@ impl Ff1 {
         value
     }
 
+    /// `value` as exactly `length` numerals in the radix, most significant
+    /// first.
     fn numerals(&self, mut value: BigUint, length: usize) -> Vec<u32> {
         let mut out = vec![0u32; length];
         let radix = BigUint::from(self.radix);
@@ -193,6 +199,9 @@ struct Rounds {
 }
 
 impl Rounds {
+    /// What every round of one encryption shares, from the radix, the length
+    /// and the tweak; the numbered comments are the steps of NIST SP 800-38G's
+    /// Algorithm 7.
     fn new(radix: u32, n: usize, tweak: &[u8]) -> Self {
         let t = tweak.len();
         let u = n / 2; // 1
@@ -248,16 +257,18 @@ mod tests {
 
     const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 
+    /// Text in base 36 as numerals, for the NIST vectors.
     fn encode(text: &str) -> Vec<u32> {
         text.bytes().map(|c| ALPHABET.iter().position(|a| *a == c).unwrap() as u32).collect()
     }
 
+    /// Numerals in base 36 as text, for the NIST vectors.
     fn decode(numerals: &[u32]) -> String {
         numerals.iter().map(|n| ALPHABET[*n as usize] as char).collect()
     }
 
     /// NIST's published sample vectors for FF1, the same nine
-    /// `tests/test_fpe.py` checks the Python against.
+    /// `tests/masking/test_fpe.py` checks the Python against.
     #[test]
     fn nist_samples() {
         let key128 = hex_literal(&"2B7E151628AED2A6ABF7158809CF4F3C".repeat(2));
@@ -304,6 +315,7 @@ mod tests {
         assert_eq!(minimumLength(62), 4);
     }
 
+    /// Bytes from hex, for the NIST vectors.
     fn hex_literal(text: &str) -> Vec<u8> {
         (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap()).collect()
     }

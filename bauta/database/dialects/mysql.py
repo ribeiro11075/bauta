@@ -9,19 +9,22 @@ from ...configuration import ConfigurationError, DatabaseConfig, DatabaseType, M
 from .base import ColumnCategory, DatabaseDialect
 
 
-# What the upsert guard evaluates to refuse a row: a scalar subquery of two
-# rows, which MySQL and MariaDB reject in every sql_mode. Of the key column
-# itself, so both of IF's branches are its type: `SELECT 1` beside MariaDB's
-# UUID type was refused as mixing types, failing every upsert into a table
-# keyed by one. See MySQLDialect._onDuplicateKey.
+# UNIQUE_KEY_CLASH: what the upsert guard evaluates to refuse a row: a scalar
+#   subquery of two rows, which MySQL and MariaDB reject in every sql_mode. Of
+#   the key column itself, so both of IF's branches are its type: `SELECT 1`
+#   beside MariaDB's UUID type was refused as mixing types, failing every
+#   upsert into a table keyed by one. See MySQLDialect._onDuplicateKey.
+# NEW_ROW: what a MySQL upsert names the row it would insert, for its update to
+#   read: `AS bauta_new`, where MySQL deprecated VALUES(column) in 8.0.20.
+# MYSQL_ROW_ALIAS_VERSION: the oldest MySQL that names that row so.
 UNIQUE_KEY_CLASH = '(SELECT {0} UNION ALL SELECT {0})'
-# What a MySQL upsert names the row it would insert, for its update to read:
-# `AS bauta_new`, where MySQL deprecated VALUES(column) in 8.0.20.
 NEW_ROW = 'bauta_new'
-# The oldest MySQL that names that row so.
 MYSQL_ROW_ALIAS_VERSION = (8, 0, 19)
 
 class MySQLDialect(DatabaseDialect):
+    """MySQL, through mysql-connector. MariaDBDialect below differs only where
+    the two servers' SQL does.
+    """
 
     databaseType = DatabaseType.MYSQL
 
@@ -32,6 +35,9 @@ class MySQLDialect(DatabaseDialect):
     _TEXT_TYPES = {'TEXT', 'VARCHAR', 'CHAR'}
 
     def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
+        """The login and database, for mysql-connector. Raises TypeError for
+        any other type's settings.
+        """
 
         if not isinstance(settings, (MySQLConnection, MariaDBConnection)):
             raise TypeError("{} settings reached the dialect for MySQL and MariaDB".format(settings.type.value))
@@ -41,6 +47,7 @@ class MySQLDialect(DatabaseDialect):
 
 
     def openConnection(self, settings: DatabaseConfig) -> Any:
+        """A mysql-connector connection."""
 
         import mysql.connector
 
@@ -92,11 +99,13 @@ class MySQLDialect(DatabaseDialect):
 
 
     def readOnlySessionStatement(self) -> Optional[str]:
+        """MySQL's: `SET SESSION TRANSACTION READ ONLY`."""
 
         return 'SET SESSION TRANSACTION READ ONLY'
 
 
     def placeholders(self, count: int) -> List[str]:
+        """mysql-connector's format style: `%s`."""
 
         return count * ['%s']
 
@@ -120,6 +129,7 @@ class MySQLDialect(DatabaseDialect):
 
 
     def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
+        """MySQL's: whether the session has a TLS cipher."""
 
         cursor.execute("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
         row = cursor.fetchone()
@@ -128,6 +138,7 @@ class MySQLDialect(DatabaseDialect):
 
 
     def foreignKeysQuery(self) -> str:
+        """MySQL's, from information_schema.key_column_usage."""
 
         return ("SELECT table_schema, table_name, column_name, referenced_table_schema, referenced_table_name, "
                 "referenced_column_name, constraint_name, DATABASE() "
@@ -137,6 +148,7 @@ class MySQLDialect(DatabaseDialect):
 
 
     def foreignKeyCountsQuery(self) -> str:
+        """MySQL's, leaving out the server's own schemas."""
 
         return ("SELECT constraint_schema, count(*), DATABASE() FROM information_schema.referential_constraints "
                 "WHERE constraint_schema NOT IN ('mysql', 'sys', 'performance_schema', 'information_schema') GROUP BY constraint_schema")
@@ -154,6 +166,7 @@ class MySQLDialect(DatabaseDialect):
 
 
     def primaryKeyQuery(self) -> str:
+        """MySQL's: the columns of the constraint named PRIMARY."""
 
         return ("SELECT column_name FROM information_schema.key_column_usage "
                 "WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {} AND constraint_name = 'PRIMARY' ORDER BY ordinal_position")
@@ -170,6 +183,7 @@ class MySQLDialect(DatabaseDialect):
 
 
     def plainIndexesQuery(self) -> Optional[str]:
+        """MySQL's: the indexes that are neither unique nor the primary key."""
 
         return self._indexesQuery(unique=False)
 
@@ -209,11 +223,13 @@ class MySQLDialect(DatabaseDialect):
 
 
     def tableExistsQuery(self) -> str:
+        """MySQL's, from information_schema."""
 
         return "SELECT count(*) FROM information_schema.tables WHERE table_schema = COALESCE({}, DATABASE()) AND table_name = {}"
 
 
     def listTablesQuery(self) -> str:
+        """MySQL's, from information_schema."""
 
         return ("SELECT table_name FROM information_schema.tables "
                 "WHERE table_schema = COALESCE({}, DATABASE()) AND table_type = 'BASE TABLE' ORDER BY table_name")
@@ -261,6 +277,9 @@ class MySQLDialect(DatabaseDialect):
 
 
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """MySQL's: INSERT ... AS NEW_ROW ON DUPLICATE KEY UPDATE, guarded
+        against a clash on another unique key.
+        """
 
         return 'INSERT INTO {} ({}) VALUES ({}) AS {} {}'.format(table, ', '.join(allColumns), ', '.join(self.placeholders(len(allColumns))), NEW_ROW,
                                                                 self._onDuplicateKey(table, primaryKeyColumns, nonPrimaryKeyColumns))
@@ -293,17 +312,22 @@ class MariaDBDialect(MySQLDialect):
 
 
     def _inserted(self, column: str) -> str:
+        """MariaDB's name for a column of the row an upsert would insert:
+        VALUES(column), since it has no row alias.
+        """
 
         return 'VALUES({})'.format(column)
 
 
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """MariaDB's: as MySQL's, without the row alias."""
 
         return 'INSERT INTO {} ({}) VALUES ({}) {}'.format(table, ', '.join(allColumns), ', '.join(self.placeholders(len(allColumns))),
                                                           self._onDuplicateKey(table, primaryKeyColumns, nonPrimaryKeyColumns))
 
 
     def upsertFromStageQuery(self, targetTable: str, stageTable: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """MariaDB's: INSERT ... SELECT from the stage with ON DUPLICATE KEY UPDATE."""
 
         return 'INSERT INTO {} ({}) SELECT {} FROM {} {}'.format(targetTable, ', '.join(allColumns), ', '.join(allColumns), stageTable,
                                                                 self._onDuplicateKey(targetTable, primaryKeyColumns, nonPrimaryKeyColumns))

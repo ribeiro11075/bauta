@@ -6,7 +6,7 @@ import { api, signingIn } from '../api'
 
 interface SetupDetails { secret: string; uri: string; qr: string }
 
-// A six-digit code, or a recovery code: what an input for either accepts.
+/** A six-digit code, or a recovery code: what an input for either accepts. */
 export function CodeInput({ value, onChange, label = 'Code from your authenticator app', recovery = false }:
   { value: string; onChange: (value: string) => void; label?: string; recovery?: boolean }) {
   return (
@@ -17,7 +17,7 @@ export function CodeInput({ value, onChange, label = 'Code from your authenticat
   )
 }
 
-// Scanning the QR code, or typing the key, then a code to prove the app has it.
+/** Scanning the QR code, or typing the key, then a code to prove the app has it. */
 export function TwoFactorSetup({ onConfirmed }: { onConfirmed: (recoveryCodes: string[]) => void }) {
   const [code, setCode] = useState('')
   const [showKey, setShowKey] = useState(false)
@@ -49,7 +49,7 @@ export function TwoFactorSetup({ onConfirmed }: { onConfirmed: (recoveryCodes: s
   )
 }
 
-// Shown once: each stands in for a code from the app, once, if it is lost.
+/** Shown once: each stands in for a code from the app, once, if it is lost. */
 export function RecoveryCodes({ codes, onDone, doneLabel = 'Done' }: { codes: string[]; onDone: () => void; doneLabel?: string }) {
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState(false)

@@ -38,12 +38,11 @@ except ImportError:  # Airflow 2.4 and later
 
 from bautaTasks import command, shellCommand
 
+# ENVIRONMENT: rendered by Airflow when the task runs, and added to the
+#   worker's own environment (append_env), which is where BAUTA_CONFIG comes
+#   from.
 POOL = 'bauta'
-
 START = pendulum.datetime(2026, 1, 1, tz='UTC')
-
-# Rendered by Airflow when the task runs, and added to the worker's own
-# environment (append_env), which is where BAUTA_CONFIG comes from.
 ENVIRONMENT = {'MASKING_KEY': '{{ var.value.bauta_masking_key }}'}
 
 

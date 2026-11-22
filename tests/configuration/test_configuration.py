@@ -1,3 +1,7 @@
+"""Tests of validating the configuration: connections of every type, jobs and
+their settings, the job graph against connections.yaml, defaults, masking
+policies and discovery rules.
+"""
 import functools
 
 import pytest
@@ -228,6 +232,8 @@ def test_a_password_never_appears_in_the_models_repr():
 
 
 def _watermarkJob(**overrides):
+    """A jobs file of one incremental job on `updated_at`, with `overrides`."""
+
     fields = dict(active=True, sourceConnection='src', targetConnection='tgt', insertStrategy='upsert', chunkSize=100,
                   targetTableFinal='orders', sourceQuery='select id, updated_at from orders where updated_at > {{ watermark }}',
                   watermarkColumn='updated_at', watermarkInitial='1970-01-01')
@@ -335,6 +341,8 @@ def test_timeout_seconds_must_be_positive(timeout):
 
 
 def _validateJob(**overrides):
+    """A jobs file of one job, with `overrides`, validated."""
+
     return Configuration.validateJobConfiguration({'workers': 1, 'jobs': {'job': _job(**overrides)}}, DataJobsFile)
 
 
@@ -373,6 +381,8 @@ MASKING_KEY = 'a-configuration-test-masking-key'
 
 
 def _jobsFile(job, **fileLevel):
+    """A jobs file of `job` as copyCustomers, with `fileLevel` settings beside it."""
+
     settings = {'workers': 1, 'jobs': {'copyCustomers': job}}
     settings.update(fileLevel)
     return settings
@@ -463,6 +473,8 @@ def test_unmasked_cannot_be_declared_beside_a_masking_policy():
 
 
 def _databases(**overrides):
+    """Two SQLite connections, prod and staging, with `overrides` for either."""
+
     settings = {'prod': {'type': 'sqlite', 'path': 'prod.db'}, 'staging': {'type': 'sqlite', 'path': 'staging.db'}}
     for alias, extra in overrides.items():
         settings[alias] = {**settings[alias], **extra}
@@ -655,6 +667,8 @@ def test_partitions_are_refused_for_a_files_or_iceberg_target_before_anything_co
 
 
 def _connections(**aliases):
+    """`aliases` validated as connections.yaml."""
+
     return Configuration.validateConnectionConfiguration(aliases)
 
 

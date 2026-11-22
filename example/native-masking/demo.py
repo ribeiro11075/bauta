@@ -53,26 +53,22 @@ sys.path.append(str(demoDirectory.parents[1]))
 
 from bauta import Configuration, DataJobsFile, FileMemory, RunInProgressError, exclusiveRun, expandEnvironmentVariables, runDataJobs
 
+# DEMO_MASKING_KEY: a throwaway key for a throwaway database. A real key is
+#   random, lives in a secret store, and is never written into a script or a
+#   YAML file.
+# WIDE_COLUMNS: the wide table's 25 masked columns, as jobs-wide.yaml masks
+#   them.
+# TABLES: (table, jobs file, schema)
 DEFAULT_WORKING_DIRECTORY = demoDirectory / 'transaction'
-
 DEMO_CONFIGURATION_DIRECTORY = demoDirectory / 'configuration'
-
 DEFAULT_ROWS = 100_000
 DEFAULT_WIDE_ROWS = 1_000_000
-
-# A throwaway key for a throwaway database. A real key is random, lives in a
-# secret store, and is never written into a script or a YAML file.
 DEMO_MASKING_KEY = 'native-demo-key-not-for-real-use'
-
 SCHEMA = 'CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT, phone TEXT, national_id TEXT, token TEXT, full_name TEXT)'
-
-# The wide table's 25 masked columns, as jobs-wide.yaml masks them.
 WIDE_COLUMNS = [name for group in range(1, 5) for name in (
     'customer_ref_{}'.format(group), 'account_ref_{}'.format(group), 'email_{}'.format(group), 'api_token_{}'.format(group),
     'session_secret_{}'.format(group), 'phone_{}'.format(group))] + ['order_ref']
 WIDE_SCHEMA = 'CREATE TABLE accounts (id INTEGER PRIMARY KEY, {})'.format(', '.join(column + ' TEXT' for column in WIDE_COLUMNS))
-
-# (table, jobs file, schema)
 TABLES = {'narrow': ('customers', 'jobs.yaml', SCHEMA), 'wide': ('accounts', 'jobs-wide.yaml', WIDE_SCHEMA)}
 
 
@@ -89,6 +85,10 @@ def showCommand(arguments: List[Any], environment: Optional[Dict[str, Any]] = No
     """
 
     def shown(value: Any) -> str:
+        """One argument as a reader would type it: a path relative to here,
+        quoted for the shell, in double quotes where that is all it needs.
+        """
+
         text = os.path.relpath(value) if isinstance(value, Path) else str(value)
         if "'" in text and not any(character in text for character in '"$`\\'):
             return '"{}"'.format(text)
@@ -112,6 +112,9 @@ def showCommand(arguments: List[Any], environment: Optional[Dict[str, Any]] = No
 
 
 def buildProduction(path: Path, rows: int) -> None:
+    """Writes a SQLite file of `rows` customers, their values derived from the
+    row number.
+    """
 
     connection = sqlite3.connect(path)
     connection.execute(SCHEMA)
@@ -123,7 +126,7 @@ def buildProduction(path: Path, rows: int) -> None:
     connection.close()
 
 
-# (label, file name, table, masked in Rust, overlapped, masking threads)
+# RUNS: (label, file name, table, masked in Rust, overlapped, masking threads)
 RUNS = (
     ('Python, in turn', 'python-in-turn', 'narrow', False, False, '1'),
     ('Python, overlapped', 'python-overlapped', 'narrow', False, True, '1'),
@@ -143,6 +146,10 @@ def buildWideProduction(path: Path, rows: int) -> None:
     connection.execute(WIDE_SCHEMA)
 
     def row(number: int) -> tuple:
+        """One row of the wide table: four groups of six identifiers, and an
+        order number, derived from `number`.
+        """
+
         values: List[Any] = [number]
         for group in range(1, 5):
             values += ['C{}{:07d}'.format(group, (number * 7) % 200_000), 'A{}{:08d}'.format(group, number),
@@ -207,6 +214,7 @@ def maskWith(name: str, table: str, native: bool, overlapped: bool, threads: str
 
 
 def maskedRows(path: Path, table: str) -> List[Any]:
+    """The masked copy of `table`, sorted, for comparing runs."""
 
     connection = sqlite3.connect(path)
     try:
@@ -263,6 +271,10 @@ def main(workingDirectory: Path = DEFAULT_WORKING_DIRECTORY, rows: int = DEFAULT
 
 
 def _compare(workingDirectory: Path, rows: int, wideRows: int) -> Dict[str, Any]:
+    """Builds the production files, runs each of RUNS against them -- only
+    those in Python where the native masker isn't installed -- and returns each
+    run's timing and whether its rows match every other's.
+    """
 
     shutil.rmtree(workingDirectory, ignore_errors=True)
     workingDirectory.mkdir(parents=True, exist_ok=True)

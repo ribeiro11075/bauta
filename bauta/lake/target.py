@@ -27,22 +27,20 @@ from .columnar import ColumnarTarget, newRunId
 from .formats import Parts, PartSettings, extension
 from .stores import Store
 
+# STAGING_DIRECTORY: under the root, where a run's parts are written before
+#   they are published. Spark, Hive and pyarrow skip a name beginning with an
+#   underscore.
+# SUCCESS_FILE: in each complete snapshot: what the run wrote. Its presence is
+#   what marks the snapshot complete.
+# PUBLISHING_FILE: in a run's staging directory while it appends: the table and
+#   every file it is moving into it, written before the first move and removed
+#   after the last. A run killed in between leaves it, and the next run of the
+#   table takes those files back out; see
+#   FileTarget._takeBackInterruptedAppends.
 logger = logging.getLogger(LOGGER_NAME)
-
-# Under the root, where a run's parts are written before they are published.
-# Spark, Hive and pyarrow skip a name beginning with an underscore.
 STAGING_DIRECTORY = '_bauta_staging'
-
 SNAPSHOT_PREFIX = 'snapshot='
-
-# In each complete snapshot: what the run wrote. Its presence is what marks
-# the snapshot complete.
 SUCCESS_FILE = '_SUCCESS'
-
-# In a run's staging directory while it appends: the table and every file it
-# is moving into it, written before the first move and removed after the
-# last. A run killed in between leaves it, and the next run of the table
-# takes those files back out; see FileTarget._takeBackInterruptedAppends.
 PUBLISHING_FILE = '_PUBLISHING'
 
 
@@ -58,9 +56,14 @@ class FileTarget(ColumnarTarget):
     """
 
     def __init__(self, job: str, jobConfig: DataJobConfig, settings: FilesConnection) -> None:
+        """A target for one job's table of files, writing its parts under a
+        staging directory of its own run. Refuses a readOnly connection;
+        validation says so against connections.yaml, and this asks again for a
+        caller that built the job without it. `_published` lists the files the
+        run has moved into the table, for abort() to take back.
+        """
+
         if settings.readOnly:
-            # Validation says so against connections.yaml; asked again here for
-            # a caller that built the job without it.
             raise ConfigurationError('{} is readOnly, and this would write to it; nothing was written'.format(settings.describeTarget()))
         super().__init__(job, jobConfig, settings.rowGroupSize)
         self.settings = settings
@@ -72,11 +75,11 @@ class FileTarget(ColumnarTarget):
         self.stagingPath = self.store.path(STAGING_DIRECTORY, self.runId)
         self.loadName = self.store.location(self.singleFilePath if jobConfig.singleFile else self.tablePath + '/')
         self._parts: Optional[Parts] = None
-        # The files this run has moved into the table, for abort() to take back.
         self._published: List[str] = []
 
 
     def _prepare(self) -> None:
+        """Takes back an interrupted append's files, then makes the staging directory."""
 
         self._takeBackInterruptedAppends()
         self.store.ensureDirectory(self.stagingPath)
@@ -84,6 +87,7 @@ class FileTarget(ColumnarTarget):
 
 
     def _newParts(self) -> Parts:
+        """The run's parts, written in the staging directory."""
 
         jsonColumns = {column.name for column in self.columns if column.documents}
         rawColumns = {column.name for column in self.columns if column.jsonText}
@@ -93,6 +97,7 @@ class FileTarget(ColumnarTarget):
 
 
     def _writeTable(self, table: Any) -> None:
+        """Writes the rows to the run's parts."""
 
         if self._parts is None:
             self._parts = self._newParts()
@@ -100,6 +105,11 @@ class FileTarget(ColumnarTarget):
 
 
     def finish(self, rowCount: int) -> None:
+        """Publishes what was written: a single file, an append's parts moved
+        into the table, or a new snapshot; then removes the staging directory.
+        An append with no rows publishes nothing, and an overwrite with none
+        publishes an empty snapshot.
+        """
 
         self._flush()
         if self._parts is None:
@@ -184,16 +194,21 @@ class FileTarget(ColumnarTarget):
 
 
     def _publishSingleFile(self, parts: List[Tuple[str, int]]) -> None:
+        """Moves the one part over the table's file: a rename locally, and on
+        S3 a copy that replaces the object when it completes, so a reader gets
+        the old file or the new one.
+        """
 
         (path, rows), = parts
         self.store.ensureDirectory(posixpath.dirname(self.singleFilePath))
-        # A rename over the old file locally, and on S3 a copy that replaces
-        # the object when it completes: a reader gets the old one or the new.
         self.store.move(path, self.singleFilePath)
         logger.info('Replaced {} with {} row(s)'.format(self.loadName, rows))
 
 
     def _publishSnapshot(self, parts: List[Tuple[str, int]], rowCount: int) -> None:
+        """Moves the parts into a new snapshot directory with its success file,
+        then removes the snapshots past keepSnapshots.
+        """
 
         snapshot = posixpath.join(self.tablePath, SNAPSHOT_PREFIX + self.runId)
         published = self._publishInto(snapshot, parts)
@@ -241,6 +256,9 @@ class FileTarget(ColumnarTarget):
 
 
     def _removeStaging(self) -> None:
+        """Removes the staging directory, warning rather than failing a run
+        whose rows are already published.
+        """
 
         try:
             self.store.deleteDirectory(self.stagingPath)

@@ -33,38 +33,36 @@ from .progress import addRows
 from .targets import LoadTarget, PostLoadError, TableTarget
 from .throttle import StageTimes, readLimitFor, timedChunks
 
+# PIPELINE_DEPTH: how many chunks may be masked ahead of the one being written.
+#   One keeps the reader, masker and writer all busy on average, holding three
+#   chunks at once; a second absorbs a slow chunk on either side when masking
+#   and the database take about as long, for one more chunk of memory. More
+#   buys nothing further.
+# MAXIMUM_RETRY_DELAY_SECONDS: caps the doubling backoff, which would otherwise
+#   wait 5.7 hours in all over `retries: 12`.
+# _TAKES_JSON_TEXT: the policies that take a JSON column's text as it is:
+#   `json`, which reads JSON text, `null`, and `keep` with anything else that
+#   passes values through (Strategy.PASSTHROUGH).
+# _OUT_OF_RANGE: what each driver says when a value doesn't fit the column it
+#   is written to. A masked value is the usual cause in a job that masks: `key`
+#   keeps an integer's digit count, which an INT column's range cuts across,
+#   and `number` varies a value that may already be at its column's limit.
+# _STATEMENT_TIMEOUT: what each database says when statementTimeoutSeconds
+#   stops a statement: PostgreSQL, MySQL, MariaDB, oracledb -- DPY-4024 for a
+#   query, and for a PL/SQL call the line below, not DPY-4011 alone, which a
+#   dropped network raises too -- and SQL Server's cost limit. Not retried: the
+#   same query would run as long again, against the same source.
+# PERMANENT_ERRORS: deterministic errors, raised by this package, that a retry
+#   can't fix. Everything else is retried; see "Retries" in
+#   docs/concepts/how-it-works.md.
 logger = logging.getLogger(LOGGER_NAME)
-
-
-# How many chunks may be masked ahead of the one being written. One keeps the
-# reader, masker and writer all busy on average, holding three chunks at once;
-# a second absorbs a slow chunk on either side when masking and the database
-# take about as long, for one more chunk of memory. More buys nothing further.
 PIPELINE_DEPTH = 2
-
-
-# Caps the doubling backoff, which would otherwise wait 5.7 hours in all over
-# `retries: 12`.
 MAXIMUM_RETRY_DELAY_SECONDS = 300.0
-# The policies that take a JSON column's text as it is: `json`, which reads
-# JSON text, `null`, and `keep` with anything else that passes values
-# through (Strategy.PASSTHROUGH).
 _TAKES_JSON_TEXT = frozenset({'json', 'null'})
-# What each driver says when a value doesn't fit the column it is written to.
-# A masked value is the usual cause in a job that masks: `key` keeps an
-# integer's digit count, which an INT column's range cuts across, and `number`
-# varies a value that may already be at its column's limit.
 _OUT_OF_RANGE = re.compile(r'out of range|overflow|too large|ORA-01438|ORA-01426', re.IGNORECASE)
-# What each database says when statementTimeoutSeconds stops a statement:
-# PostgreSQL, MySQL, MariaDB, oracledb -- DPY-4024 for a query, and for a
-# PL/SQL call the line below, not DPY-4011 alone, which a dropped network
-# raises too -- and SQL Server's cost limit. Not retried: the same query
-# would run as long again, against the same source.
 _STATEMENT_TIMEOUT = re.compile(r'canceling statement due to statement timeout|maximum statement execution time exceeded|'
                                 r'max_statement_time exceeded|DPY-4024|socket timed out while recovering from previous socket timeout|'
                                 r'estimated cost of this query .* exceeds the configured threshold')
-# Deterministic errors, raised by this package, that a retry can't fix.
-# Everything else is retried; see "Retries" in docs/concepts/how-it-works.md.
 PERMANENT_ERRORS = (ConfigurationError, TransformError, TransformResolutionError, MaskingError, UnloadableValueError)
 
 
@@ -353,12 +351,17 @@ def _preparer(transform: Transform, masking: Optional[BoundMasking], partition: 
     """
 
     def prepare(chunkIndex: int, chunk: List[Tuple[Any, ...]]) -> List[Any]:
+        """One chunk made ready to write: JSON columns decoded, transformed,
+        masked by its position in the source -- read order, not masking order,
+        which `shuffle` keys on -- and JSON columns encoded again. Timed as
+        masking.
+        """
+
         with _timed(times, 'mask'):
             rows = _decodeJson(chunk, jsonColumns) if jsonColumns else chunk
             rows = transform.apply(rows)
 
             if masking is not None:
-                # By read order, not masking order: `shuffle` keys on it.
                 rows = masking.apply(rows, chunkIndex=chunkIndex * partitions + partition)
                 if jsonColumns:
                     rows = _encodeJson(rows, jsonColumns, masking)
@@ -381,6 +384,11 @@ def _loadChunks(chunks: Iterable[List[Tuple[Any, ...]]], prepare: Callable[[int,
     highWatermark = None
 
     def writeChunk(rows: List[Any], watermark: Any) -> None:
+        """Writes one chunk, counts its rows, and only then raises the high
+        watermark to the chunk's. Raises _PartitionStopped where another slice
+        has failed.
+        """
+
         nonlocal rowCount, highWatermark
 
         if stopped is not None and stopped.is_set():
@@ -496,6 +504,8 @@ def _automaticPredicates(job: str, jobConfig: DataJobConfig, connectionConfigura
     named = jobConfig.partitions.column
 
     def oneStream(why: str) -> List[Slice]:
+        """No slices, so the job reads as one stream, and the reason logged."""
+
         logger.info('partitions: reading {} as one stream: {}'.format(jobConfig.targetTableFinal, why), extra={'job': job})
         return []
 
@@ -612,8 +622,11 @@ def _loadPartitions(job: str, jobConfig: DataJobConfig, connectionConfiguration:
     stopped = threading.Event()
 
     def loadSlice(index: int, piece: Slice) -> Tuple[int, Any]:
-        # Everything a slice uses is its own: its connections, since one
-        # connection serves one thread, and its transform and masking.
+        """Reads, masks and writes one slice with connections, a transform and
+        masking of its own, since one connection serves one thread. Returns its
+        row count and the highest watermark it read.
+        """
+
         with _openSource(sourceSettings) as source, target.openWriter() as writer:
             with _timed(times, 'read'):
                 query, bound = _sliceQuery(source, sourceQuery, parameters, piece)
@@ -774,10 +787,13 @@ def _runDataJob(job: str, jobConfig: DataJobConfig, connectionConfiguration: Dic
     watermark = None
 
     def attempt() -> JobOutcome:
+        """One attempt at the job, from the recorded watermark, or from
+        watermarkInitial for a full refresh so that the query returns every
+        row.
+        """
+
         nonlocal watermark
         if isFullRefresh(jobConfig):
-            # From the start, so the query returns every row; what it reads
-            # up to is recorded below as for any run.
             watermark = jobConfig.watermarkInitial
         elif jobConfig.watermarkColumn:
             watermark = memory.readWatermarks().get(job, jobConfig.watermarkInitial)

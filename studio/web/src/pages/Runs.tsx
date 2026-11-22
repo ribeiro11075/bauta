@@ -1,3 +1,5 @@
+// The runs page: every run in history and those running now, newest first.
+
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
@@ -13,6 +15,7 @@ interface RunsData {
   launched: Launched[]
 }
 
+/** Every run as a table, those running now first. */
 export function Runs() {
   const user = useUser()
   const [status, setStatus] = useState('')

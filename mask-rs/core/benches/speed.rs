@@ -4,6 +4,7 @@ use num_bigint::BigUint;
 use std::time::Instant;
 use bauta_core::KeyedHash;
 
+/// Times the keyed hash and `key`'s permutation, and prints each value's cost.
 fn main() {
     let hash = KeyedHash::new("a-test-key-that-is-long-enough", "bench");
 

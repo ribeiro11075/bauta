@@ -23,6 +23,8 @@ ROWS = 300
 
 @pytest.fixture
 def source(tmp_path):
+    """A SQLite file of ROWS customers."""
+
     path = tmp_path / 'prod.db'
     connection = sqlite3.connect(path)
     try:
@@ -36,11 +38,17 @@ def source(tmp_path):
 
 
 def _lake(tmp_path, **settings):
+    """An Iceberg connection with a SQLite catalog in `tmp_path`, with `settings`."""
+
     return connectionConfig(**{'type': 'iceberg', 'catalog': 'sql', 'uri': 'sqlite:///{}'.format(tmp_path / 'catalog.db'),
                                'warehouse': str(tmp_path / 'warehouse'), 'namespace': 'masked', **settings})
 
 
 def _run(tmp_path, source, lake=None, **overrides):
+    """Runs one job copying customers into the Iceberg connection, with
+    `overrides`.
+    """
+
     settings = {'prod': connectionConfig(type='sqlite', path=str(source)), 'lake': _lake(tmp_path, **(lake or {}))}
     fields = dict(sourceConnection='prod', targetConnection='lake', sourceQuery='select id, email, amount from customers',
                   targetTableFinal='customers', insertStrategy='append', chunkSize=50, unmasked=True)
@@ -49,15 +57,21 @@ def _run(tmp_path, source, lake=None, **overrides):
 
 
 def _table(tmp_path, name='customers'):
+    """The Iceberg table, loaded from the catalog."""
+
     with loadCatalog(_lake(tmp_path)) as catalog:
         return catalog.load_table(('masked', name))
 
 
 def _rows(tmp_path, name='customers'):
+    """The table's rows, by id."""
+
     return sorted(_table(tmp_path, name).scan().to_arrow().to_pylist(), key=lambda row: row['id'])
 
 
 def _dataFiles(tmp_path, name='customers'):
+    """The names of the table's data files."""
+
     return sorted(path.name for path in (tmp_path / 'warehouse' / 'masked' / name / 'data').glob('*.parquet'))
 
 

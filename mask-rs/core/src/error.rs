@@ -1,7 +1,7 @@
 //! What a strategy refuses, and why.
 //!
 //! Every variant carries the message Python raises for the same value, word for
-//! word, because `tests/test_masking.py` asserts on those messages and a job
+//! word, because `tests/masking/test_masking.py` asserts on those messages and a job
 //! that fails today must fail identically here. The PyO3 layer turns these into
 //! `bauta.masking.MaskingError`.
 //!
@@ -11,10 +11,12 @@
 
 use std::fmt;
 
-/// The longest value `key` and `fpe` mask, in characters or digits.
-/// `masking.MAXIMUM_KEY_LENGTH`.
+// MAXIMUM_KEY_LENGTH: the longest value `key` and `fpe` mask, in characters or
+//   digits. `masking.MAXIMUM_KEY_LENGTH`.
 pub const MAXIMUM_KEY_LENGTH: usize = 256;
 
+/// Why a value wasn't masked here: refused, with Python's message, or handed
+/// back to Python.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaskError {
     /// Raise `MaskingError` with this message.
@@ -26,6 +28,7 @@ pub enum MaskError {
 }
 
 impl MaskError {
+    /// `key` or `fpe` refusing a value past MAXIMUM_KEY_LENGTH.
     pub fn tooLong(strategy: &str) -> Self {
         MaskError::Refused(format!(
             "the {strategy} strategy masks identifiers of up to {MAXIMUM_KEY_LENGTH} characters or digits, \
@@ -33,18 +36,22 @@ impl MaskError {
         ))
     }
 
+    /// `key` or `fpe` refusing a bool.
     pub fn notABool(strategy: &str) -> Self {
         MaskError::Refused(format!("the {strategy} strategy cannot mask a bool"))
     }
 
+    /// `key` or `fpe` refusing a value of another type.
     pub fn wrongType(strategy: &str, typeName: &str) -> Self {
         MaskError::Refused(format!("the {strategy} strategy needs an integer or text, got {typeName}"))
     }
 
+    /// `key` or `fpe` refusing a Decimal with a fraction.
     pub fn fractionalDecimal(strategy: &str) -> Self {
         MaskError::Refused(format!("the {strategy} strategy needs a whole number, got a fractional Decimal"))
     }
 
+    /// Strict `fpe` refusing a value too short for FF1.
     pub fn tooShortForFf1(minimumLength: usize, what: &str) -> Self {
         MaskError::Refused(format!(
             "the fpe strategy is strict, and FF1 needs at least {minimumLength} {what} in a value; this one has fewer"
@@ -53,6 +60,7 @@ impl MaskError {
 }
 
 impl fmt::Display for MaskError {
+    /// The message, as Python's MaskingError says it.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MaskError::Refused(message) => formatter.write_str(message),
@@ -61,4 +69,5 @@ impl fmt::Display for MaskError {
     }
 }
 
+/// A mask, or why there isn't one.
 pub type Masked<T> = Result<T, MaskError>;

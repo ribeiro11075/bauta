@@ -13,14 +13,20 @@ from bauta.studio.db import BASELINE_REVISION, MIGRATIONS_DIRECTORY, VERSION_TAB
 
 
 def _url(tmp_path):
+    """A SQLite URL for Studio's database in `tmp_path`."""
+
     return 'sqlite:///{}'.format(tmp_path / 'studio.db')
 
 
 def _head():
+    """The newest migration's revision."""
+
     return ScriptDirectory(str(MIGRATIONS_DIRECTORY)).get_current_head()
 
 
 def _revision(engine):
+    """The revision a database is at."""
+
     with engine.connect() as connection:
         return connection.execute(sa.text('SELECT version_num FROM {}'.format(VERSION_TABLE))).scalar()
 

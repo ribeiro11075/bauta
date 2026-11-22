@@ -13,23 +13,26 @@ from typing import Any, Dict, List, Sequence, Union
 from ..core import MaskingError, Strategy, canonical
 from .common import _asciiDigits, _booleanOption, _inScriptOf, _integerOption, _normalizeOption, _numberOption, _textOption, _typeName, structuredText
 
-# The significant digits `number` computes in. mask-rs/core/src/number.rs
-# repeats the arithmetic at the same precision.
+# _PRECISION: the significant digits `number` computes in.
+#   mask-rs/core/src/number.rs repeats the arithmetic at the same precision.
 _PRECISION = 60
 
 
 class KeepStrategy(Strategy):
-    """Leave the column as it is. The explicit way to say a column was reviewed."""
+    """Leave the column as it is. The explicit way to say a column was reviewed.
+
+    The only PASSTHROUGH strategy, the only one returning what it was given, so
+    BoundMasking carries these columns through untouched. `null` and `constant`
+    ignore their input too, but still have to write a value into every row, so
+    they are masked like any other column.
+    """
 
     NAME = 'keep'
     KEYED = False
-    # The only strategy that returns what it was given, so BoundMasking can
-    # carry these columns through untouched. `null` and `constant` below ignore
-    # their input too, but still have to write a value into every row, so they
-    # are masked like any other column.
     PASSTHROUGH = True
 
     def maskColumn(self, values: Sequence[Any], chunkIndex: int) -> List[Any]:
+        """The column as given."""
 
         return list(values)
 
@@ -41,6 +44,7 @@ class NullStrategy(Strategy):
     KEYED = False
 
     def maskColumn(self, values: Sequence[Any], chunkIndex: int) -> List[Any]:
+        """A NULL for every row, whatever the value, NULL included."""
 
         return [None] * len(values)
 
@@ -54,6 +58,7 @@ class ConstantStrategy(Strategy):
     REQUIRED = ('value',)
 
     def maskColumn(self, values: Sequence[Any], chunkIndex: int) -> List[Any]:
+        """The configured value for every row, NULL included."""
 
         return [self.options['value']] * len(values)
 
@@ -73,6 +78,7 @@ class HashStrategy(Strategy):
                'normalize': _normalizeOption('strip', 'lower')}
 
     def mask(self, value: Any) -> Any:
+        """The value's keyed digest as hex, cut to `length` and after `prefix`."""
 
         length = self.options.get('length', 16)
 
@@ -97,12 +103,17 @@ class EmailStrategy(Strategy):
 
     @classmethod
     def checkOptions(cls, options: Dict[str, Any]) -> None:
+        """Refuses mailDomain alongside keepDomain, which would contradict it."""
 
         if options.get('keepDomain') and 'mailDomain' in options:
             raise ValueError('strategy "email" takes mailDomain or keepDomain, not both')
 
 
     def mask(self, value: Any) -> Any:
+        """A keyed `u...` local part, at the original domain under keepDomain,
+        else at mailDomain. Keyed on the address lower-cased and stripped, as
+        mail servers compare them.
+        """
 
         if not isinstance(value, str):
             text = structuredText(value)
@@ -130,12 +141,15 @@ class DigitsStrategy(Strategy):
     OPTIONS = {'keepLeading': _integerOption(0), 'keepTrailing': _integerOption(0)}
 
     def _maskDigits(self, digits: str) -> str:
+        """ASCII digits replaced by keyed ones, but for the keepLeading and
+        keepTrailing they keep. Raises MaskingError when those would keep every
+        digit, since the value would then be copied unmasked while the manifest
+        said it was masked: '555-0100' under keepLeading 3, keepTrailing 4.
+        """
 
         keepLeading = self.options.get('keepLeading', 0)
         keepTrailing = self.options.get('keepTrailing', 0)
 
-        # Otherwise the value would be returned as it is, while the manifest
-        # said it was masked: '555-0100' under keepLeading 3, keepTrailing 4.
         if digits and len(digits) <= keepLeading + keepTrailing:
             raise MaskingError('the digits strategy would keep every digit of this value: keepLeading {} and keepTrailing {} cover all {} of '
                                'them, so it would be copied unmasked. Lower them, or mask this column another way'.format(
@@ -155,6 +169,11 @@ class DigitsStrategy(Strategy):
 
 
     def mask(self, value: Any) -> Any:
+        """An integer with its digits masked, the same count and sign; text
+        with every decimal digit masked and everything else kept. Digits in any
+        script are keyed as 0-9, so a number masks alike whichever digits wrote
+        it, and are written back in their own script.
+        """
 
         if isinstance(value, bool):
             raise MaskingError('the digits strategy needs text or an integer, got bool')
@@ -212,6 +231,9 @@ class NumberStrategy(Strategy):
 
     @classmethod
     def checkOptions(cls, options: Dict[str, Any]) -> None:
+        """Refuses half a range, an empty one, a range with a variance, and a
+        variance outside (0, 1].
+        """
 
         hasMinimum, hasMaximum = 'min' in options, 'max' in options
 
@@ -262,6 +284,9 @@ class NumberStrategy(Strategy):
 
 
     def mask(self, value: Any) -> Any:
+        """A number of the same type moved by _mask. Raises MaskingError for a
+        non-number, or one needing more than _PRECISION significant digits.
+        """
 
         if isinstance(value, bool) or not isinstance(value, (int, float, decimal.Decimal)):
             raise MaskingError('the number strategy needs a number, got {}'.format(_typeName(value)))
@@ -277,6 +302,10 @@ class NumberStrategy(Strategy):
 
 
     def _mask(self, value: Union[int, float, decimal.Decimal]) -> Any:
+        """The value moved within its range or variance, at its own precision:
+        an integer stays whole, a float or Decimal keeps its decimals unless
+        `decimals` sets them. Infinities and NaN are kept.
+        """
 
         message = canonical(value)
 
@@ -318,6 +347,9 @@ class ShuffleStrategy(Strategy):
     NAME = 'shuffle'
 
     def maskColumn(self, values: Sequence[Any], chunkIndex: int) -> List[Any]:
+        """The chunk's values in a keyed order: the key and the chunk's
+        position in the source decide it, so a rerun shuffles alike.
+        """
 
         shuffled = list(values)
         seed = int.from_bytes(self.keyedHash.digest(str(chunkIndex).encode('ascii'), b'shuffle'), 'big')

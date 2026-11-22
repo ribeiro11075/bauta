@@ -87,6 +87,10 @@ def test_bulk_loads_round_trip_awkward_values(liveDatabase):
 
 @pytest.fixture
 def oddTable(liveDatabase):
+    """A SQL Server table of types pymssql handles in ways of its own, dropped
+    after.
+    """
+
     name = 't_{}'.format(uuid.uuid4().hex[:8])
     liveDatabase.alter('CREATE TABLE {} (id INT NOT NULL PRIMARY KEY, code NVARCHAR(50), exact DECIMAL(38,10), '
                        'moment DATETIME2(6), clock TIME(6))'.format(name))

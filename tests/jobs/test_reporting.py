@@ -14,6 +14,8 @@ from bauta.jobs.runner import RunResult
 
 
 def _result(*outcomes: JobOutcome, interrupted: bool = False) -> RunResult:
+    """A RunResult of `outcomes`."""
+
     return RunResult(outcomes=list(outcomes), interrupted=interrupted)
 
 
@@ -112,6 +114,10 @@ def test_a_record_written_before_stage_timings_renders():
 
 @pytest.fixture
 def manifestTable(tmp_path):
+    """DatabaseManifests on a fresh SQLite file holding the manifest table, and
+    that file's path.
+    """
+
     path = tmp_path / 'manifests.db'
     connection = sqlite3.connect(path)
     connection.execute(DATABASE_MANIFEST_SCHEMA)
@@ -155,6 +161,7 @@ def test_reading_a_manifest_that_is_not_there_is_a_key_error(manifestTable):
 
 
 class _Recorder(http.server.BaseHTTPRequestHandler):
+    """An HTTP handler that records every POST it is sent and answers 200."""
 
     def _record(self):
         body = self.rfile.read(int(self.headers['Content-Length']))
@@ -170,6 +177,8 @@ class _Recorder(http.server.BaseHTTPRequestHandler):
 
 @pytest.fixture
 def webServer():
+    """A local HTTP server recording what it is sent, and its URL."""
+
     server = http.server.HTTPServer(('127.0.0.1', 0), _Recorder)
     server.requests = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -247,6 +256,8 @@ def test_the_notification_text_leads_with_the_outcome():
 # Reading history back from the end ---------------------------------------------
 
 def _writeHistory(path, count, job='loadOrders'):
+    """Writes `count` completed records of `job` to a history file."""
+
     import json
 
     with open(path, 'w') as file:

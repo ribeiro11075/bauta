@@ -21,6 +21,7 @@ KEY_VARIABLE = 'MASKING_KEY'
 
 
 def sourceTables(project: Project, connection: str) -> List[str]:
+    """The tables of a database connection, sorted."""
 
     requireDatabase(project.connections, connection)
     with Database(connectionSettings=project.connections[connection]) as database:
@@ -28,6 +29,9 @@ def sourceTables(project: Project, connection: str) -> List[str]:
 
 
 def _draft(project: Project, request: Dict[str, Any], count: bool) -> Dict[str, Any]:
+    """The subset's jobs as `bauta subset` would draft them, with row counts
+    where `count` asks. Raises EditRefused for a target that is the source.
+    """
 
     from ..generate.discovery import renderJobs
     from ..generate.subset import draftSubset
@@ -70,6 +74,7 @@ def _draft(project: Project, request: Dict[str, Any], count: bool) -> Dict[str, 
 
 
 def _yaml() -> Any:
+    """The round-trip YAML of jobform, for writing the drafted jobs."""
 
     from .jobform import _yaml as yaml
 
@@ -77,6 +82,7 @@ def _yaml() -> Any:
 
 
 def _jobsOf(text: str) -> List[str]:
+    """The names of the jobs in a jobs file's text."""
 
     return [str(name) for name in _yaml().load(text)['jobs']]
 

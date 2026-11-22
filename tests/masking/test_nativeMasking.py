@@ -58,6 +58,10 @@ print('survived')
 # character step where a Feistel half stops fitting 128 bits, MAXIMUM_KEY_LENGTH
 # at 256, and the byte edges where a half outgrows its serialised width.
 def corpus():
+    """Values that exercise every strategy's edges, from a fixed seed: NULLs,
+    booleans, integers at their bounds, and text of many lengths and alphabets.
+    """
+
     random.seed(20260917)
     values = [None, True, False, 0, 1, -1, 9, 10, -10, 99, -99, 100]
 
@@ -466,6 +470,10 @@ def _chunkRows():
 
 
 def _applied(bound, rows):
+    """A bound plan's result on `rows`, or the error it raised, for comparing
+    the native and Python maskers.
+    """
+
     try:
         return ('ok', [exactly(row) for row in bound.apply(rows, chunkIndex=0)])
     except MaskingError as error:

@@ -6,8 +6,8 @@ import argparse
 from ..log import Log
 from .common import UsageError
 
+# STUDIO_MODULES: what the extra installs, checked before anything starts.
 STUDIO_EXTRA = 'pip install "bauta[studio]"'
-# What the extra installs, checked before anything starts.
 STUDIO_MODULES = ['fastapi', 'uvicorn', 'sqlalchemy', 'alembic', 'argon2', 'httpx', 'jwt', 'pyotp', 'segno', 'cryptography']
 
 

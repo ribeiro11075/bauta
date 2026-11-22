@@ -118,6 +118,7 @@ def masker(threads: int) -> str:
 
 
 def _rate(value: Optional[float]) -> str:
+    """A rate with thousands separators, or `-` where there is none."""
 
     return '-' if value is None else '{:,.0f}'.format(value)
 

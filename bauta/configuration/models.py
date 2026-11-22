@@ -18,23 +18,32 @@ from .connections import (_CONNECTION_ADAPTER, CONNECTION_TYPES, anchorPaths, Cl
 from .environment import ConfigurationError
 from .columnTypes import parseColumnType
 
-# A job's rows per batch when it names none. What `discover` and `subset`
-# generate, so a hand-written job behaves like a generated one.
+# DEFAULT_CHUNK_SIZE: a job's rows per batch when it names none. What
+#   `discover` and `subset` generate, so a hand-written job behaves like a
+#   generated one.
+# DEFAULT_WORKERS: worker processes when jobs.yaml names none. One: jobs run in
+#   order, which is what a first configuration wants and what a single-job file
+#   needs.
+# ANCHOR_KEY_PREFIX: top-level keys a file keeps only to hang YAML anchors
+#   from, as docker-compose uses them: `x-defaults: &defaults` above, `<<:
+#   *defaults` in each job. They are dropped before validation rather than read
+#   as configuration.
+# _ICEBERG_NAME: a plain identifier: an Iceberg table's name or namespace, or a
+#   key column.
+# _TARGET_SETTINGS: the settings only some kinds of target take.
+# DEFAULTABLE_JOB_FIELDS: what a file-level `defaults:` block may supply to
+#   every job. The plumbing only: which databases, how rows are written, and
+#   the retry and timeout settings. A job that names any of these itself keeps
+#   its own value.
+# DEFAULTABLE_MASKING_FIELDS: within `masking`, the key alone. A key reference
+#   is not a policy: `columns` stays with its job, so a reviewer can read what
+#   one job does to its data without holding the whole file in their head.
 DEFAULT_CHUNK_SIZE = 5000
-
-# Worker processes when jobs.yaml names none. One: jobs run in order, which is
-# what a first configuration wants and what a single-job file needs.
 DEFAULT_WORKERS = 1
-
-# Top-level keys a file keeps only to hang YAML anchors from, as docker-compose
-# uses them: `x-defaults: &defaults` above, `<<: *defaults` in each job. They
-# are dropped before validation rather than read as configuration.
 ANCHOR_KEY_PREFIX = 'x-'
 WATERMARK_PLACEHOLDER = re.compile(r'\{\{\s*watermark\s*\}\}')
 AUTOMATIC = 'auto'
-# A plain identifier: an Iceberg table's name or namespace, or a key column.
 _ICEBERG_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-# The settings only some kinds of target take.
 _TARGET_SETTINGS = {
     'targetColumnTypes': ('files', 'iceberg'),
     'singleFile': ('files',),
@@ -47,16 +56,10 @@ _TARGET_SETTINGS = {
     'partitions': ('database',),
     }
 _TARGET_NAMES = {'database': 'a database', 'files': 'a files connection', 'iceberg': 'an Iceberg connection'}
-# What a file-level `defaults:` block may supply to every job. The plumbing
-# only: which databases, how rows are written, and the retry and timeout
-# settings. A job that names any of these itself keeps its own value.
 DEFAULTABLE_JOB_FIELDS = frozenset({
     'active', 'refresh', 'sourceConnection', 'targetConnection', 'insertStrategy',
     'chunkSize', 'retries', 'retryDelaySeconds', 'timeoutSeconds', 'partitions',
     })
-# Within `masking`, the key alone. A key reference is not a policy: `columns`
-# stays with its job, so a reviewer can read what one job does to its data
-# without holding the whole file in their head.
 DEFAULTABLE_MASKING_FIELDS = frozenset({'key'})
 DEFAULTS_KEY = 'defaults'
 MASKING_KEY = 'masking'
@@ -87,15 +90,20 @@ def watermarkPlaceholders(query: str) -> int:
 
 
 class InsertStrategy(str, Enum):
+    """How a job writes its rows. A database table takes `swap` and `upsert`,
+    a files table `append` and `overwrite`, and an Iceberg table all three of
+    `append`, `overwrite` and `upsert`. `append` adds new files beside the
+    ones already there; `overwrite` publishes a whole new snapshot.
+    """
+
     SWAP = 'swap'
     UPSERT = 'upsert'
-    # A files connection's two: a run adds new files beside the ones already
-    # there, or publishes a whole new snapshot of the table.
     APPEND = 'append'
     OVERWRITE = 'overwrite'
 
 
-# The strategies that write files, and the only ones a files connection takes.
+# FILE_STRATEGIES: the strategies that write files, and the only ones a files
+#   connection takes.
 FILE_STRATEGIES = frozenset({InsertStrategy.APPEND, InsertStrategy.OVERWRITE})
 
 
@@ -113,10 +121,9 @@ class BaseJobConfig(BaseModel):
     `masking` block that was quietly ignored would copy the source unmasked.
     """
 
+    # active: a job written down is a job meant to run; `active: false` is the
+    #   case worth saying out loud.
     model_config = ConfigDict(extra='forbid')
-
-    # A job written down is a job meant to run; `active: false` is the case
-    # worth saying out loud.
     active: bool = True
     refresh: Optional[int] = None
     predecessors: CleanedStringList = Field(default_factory=list)
@@ -162,6 +169,9 @@ class MaskingConfig(BaseModel):
     @field_validator('key')
     @classmethod
     def _requireStrongKey(cls, key: SecretStr) -> SecretStr:
+        """Refuses a key too short or too repetitive, and warns of one weaker
+        than recommended.
+        """
 
         validateKey(key.get_secret_value())
         warnIfWeakKey(key.get_secret_value())
@@ -172,6 +182,7 @@ class MaskingConfig(BaseModel):
     @field_validator('columns')
     @classmethod
     def _validateColumns(cls, columns: Dict[str, Any]) -> Dict[str, Any]:
+        """Each column's policy validated, a failure naming its column."""
 
         return _eachColumn(columns, validateColumnPolicy)
 
@@ -179,6 +190,7 @@ class MaskingConfig(BaseModel):
     @field_validator('defaultStrategy')
     @classmethod
     def _validateDefaultStrategy(cls, policy: Any) -> Any:
+        """The default policy validated, where there is one."""
 
         return None if policy is None else validateColumnPolicy(policy)
 
@@ -202,6 +214,9 @@ class PartitionsConfig(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def _fromShorthand(cls, value: Any) -> Any:
+        """`partitions: auto` as the mapping it stands for; a mapping must name
+        its column.
+        """
 
         if value == AUTOMATIC:
             return {'count': AUTOMATIC, 'column': None}
@@ -245,6 +260,27 @@ def _names(table: str) -> Tuple[str, str]:
 
 
 class DataJobConfig(BaseJobConfig):
+    """One job in jobs.yaml: where its rows are read from, how they are masked
+    and transformed, and where and how they are written. What a setting means
+    is in docs/reference/jobs.md; the validators below check what one job can
+    know alone, and targetProblems what depends on its target connection.
+    """
+
+    # unmasked: the explicit way to say a job was reviewed and copies as it
+    #   stands, as `keep` says it of a column. Without it, `audit` reports
+    #   every unmasked job, since copying unmasked is a choice a reviewer has
+    #   to see.
+    # targetColumnTypes, singleFile: a file target's alone. Column -> type, for
+    #   a column whose values don't settle its type, or settle it as something
+    #   else; see configuration.columnTypes. singleFile writes an overwrite
+    #   job's table as one file, <targetTableFinal>.parquet, replaced whole
+    #   each run.
+    # targetKey: an Iceberg target's alone: the columns an upsert matches rows
+    #   by, and the identifier fields of a table the job creates. An existing
+    #   table's own identifier fields serve without it.
+    # partitions: a database target's alone: the job's rows read, masked and
+    #   written as several slices at once. See PartitionsConfig. `auto` is
+    #   ignored for a files or Iceberg target, so it can sit under `defaults`.
     sourceConnection: str
     sourceQuery: str
     targetColumns: CleanedStringList = Field(default_factory=list)
@@ -260,32 +296,24 @@ class DataJobConfig(BaseJobConfig):
     retryDelaySeconds: float = 5.0
     timeoutSeconds: Optional[float] = Field(default=None, gt=0)
     masking: Optional[MaskingConfig] = None
-    # The explicit way to say a job was reviewed and copies as it stands, as
-    # `keep` says it of a column. Without it, `audit` reports every unmasked
-    # job, since copying unmasked is a choice a reviewer has to see.
     unmasked: bool = False
     preTargetAdhocQueries: CleanedStringList = Field(default_factory=list)
     postTargetAdhocQueries: CleanedStringList = Field(default_factory=list)
-    # A file target's alone. Column -> type, for a column whose values don't
-    # settle its type, or settle it as something else; see
-    # configuration.columnTypes. singleFile writes an overwrite job's table as
-    # one file, <targetTableFinal>.parquet, replaced whole each run.
     targetColumnTypes: CleanedMapping = Field(default_factory=dict)
     singleFile: bool = False
-    # An Iceberg target's alone: the columns an upsert matches rows by, and
-    # the identifier fields of a table the job creates. An existing table's
-    # own identifier fields serve without it.
     targetKey: CleanedStringList = Field(default_factory=list)
-    # A database target's alone: the job's rows read, masked and written as
-    # several slices at once. See PartitionsConfig. `auto` is ignored for a
-    # files or Iceberg target, so it can sit under `defaults`.
     partitions: Optional[PartitionsConfig] = None
 
     @field_validator('targetColumnTypes')
     @classmethod
     def _parseColumnTypes(cls, declared: Dict[str, Any]) -> Dict[str, Any]:
+        """Each declared column type parsed, so a misspelled type fails here
+        rather than at the first write.
+        """
 
         def checked(text: Any) -> Any:
+            """The type's text, once it parses. Raises ValueError."""
+
             if not isinstance(text, str):
                 raise ValueError('a type is text, such as int64 or decimal(18,2), got {!r}'.format(text))
             parseColumnType(text)
@@ -363,6 +391,7 @@ class DataJobConfig(BaseJobConfig):
 
     @model_validator(mode='after')
     def _requireNonNegativeRetries(self) -> 'DataJobConfig':
+        """Refuses negative retries and a negative retry delay."""
 
         if self.retries < 0:
             raise ValueError('retries cannot be negative')
@@ -419,7 +448,7 @@ class DataJobConfig(BaseJobConfig):
 
     @model_validator(mode='after')
     def _rejectWatermarkWithSwap(self) -> 'DataJobConfig':
-        """A watermark needs upsert, or append for files: a swap or an
+        """A watermark needs upsert, or append for a files or Iceberg table: a swap or an
         overwrite would replace the target with only the rows that changed.
         """
 
@@ -529,6 +558,9 @@ _STRATEGIES = {
 
 
 def targetKind(connection: Any) -> str:
+    """`files`, `iceberg` or `database`: the kind of target a connection is, as
+    _TARGET_SETTINGS names them.
+    """
 
     if isinstance(connection, FilesConnection):
         return 'files'
@@ -616,16 +648,17 @@ def partitionLimitProblems(job: DataJobConfig, connections: Mapping[str, Connect
 class NameRuleConfig(BaseModel):
     """A discovery.yaml rule on column names."""
 
+    # policy: a strategy name alone, or a mapping with a `strategy`, as in
+    #   jobs.yaml.
     model_config = ConfigDict(extra='forbid')
-
     words: List[Annotated[str, Field(min_length=1)]] = Field(min_length=1)
-    # A strategy name alone, or a mapping with a `strategy`, as in jobs.yaml.
     policy: Dict[str, Any]
     reason: Optional[str] = Field(default=None, min_length=1)
 
     @field_validator('words')
     @classmethod
     def _wordsHaveLetters(cls, words: List[str]) -> List[str]:
+        """Refuses a word with no letter or digit, which no column name could match."""
 
         empty = [word for word in words if not re.search(r'[A-Za-z0-9]', word)]
         if empty:
@@ -636,6 +669,7 @@ class NameRuleConfig(BaseModel):
     @field_validator('policy', mode='before')
     @classmethod
     def _policyIsValid(cls, policy: Any) -> Dict[str, Any]:
+        """The rule's policy validated, as a column's in jobs.yaml is."""
 
         return validateColumnPolicy(policy)
 
@@ -645,16 +679,17 @@ class ValueRuleConfig(BaseModel):
     value must match.
     """
 
+    # policy: a strategy name alone, or a mapping with a `strategy`, as in
+    #   jobs.yaml.
     model_config = ConfigDict(extra='forbid')
-
     pattern: str = Field(min_length=1)
-    # A strategy name alone, or a mapping with a `strategy`, as in jobs.yaml.
     policy: Dict[str, Any]
     reason: Optional[str] = Field(default=None, min_length=1)
 
     @field_validator('pattern')
     @classmethod
     def _patternCompiles(cls, pattern: str) -> str:
+        """Refuses a pattern that isn't a valid regular expression."""
 
         try:
             re.compile(pattern)
@@ -666,6 +701,7 @@ class ValueRuleConfig(BaseModel):
     @field_validator('policy', mode='before')
     @classmethod
     def _policyIsValid(cls, policy: Any) -> Dict[str, Any]:
+        """The rule's policy validated, as a column's in jobs.yaml is."""
 
         return validateColumnPolicy(policy)
 
@@ -686,6 +722,7 @@ class DiscoveryRulesFile(BaseModel):
     @field_validator('exclude')
     @classmethod
     def _excludeNamesBuiltins(cls, exclude: List[str]) -> List[str]:
+        """Refuses an `exclude` entry that names no built-in rule."""
 
         from ..generate.builtinDiscovery import RULE_NAMES
 
@@ -707,7 +744,7 @@ class TableLocation(BaseModel):
     table: Optional[str] = Field(default=None, min_length=1)
 
 
-# A file, relative to the jobs file, or a table.
+# StorageLocation: a file, relative to the jobs file, or a table.
 StorageLocation = Union[Annotated[str, Field(min_length=1)], TableLocation]
 
 
@@ -764,28 +801,28 @@ class DataJobsFile(BaseModel):
     DEFAULTABLE_JOB_FIELDS.
     """
 
+    # memory, history, manifest: where the CLI keeps run state, records history
+    #   and writes the masking manifest; command-line flags override each. See
+    #   cli._resolveLocation.
+    # maskingThreads: threads the native masker spreads each job's chunks over:
+    #   one by default, a number up to the cores available, or `auto`, which
+    #   shares half the cores as each job starts with the jobs running
+    #   alongside it. See masking.maskingThreadsFor and runner._runCycle.
+    # requireNative: whether a run with masked jobs stops before it starts,
+    #   rather than masking in Python: true when the native masker isn't in use
+    #   for any reason, false never, and by default (None) only when it is
+    #   installed but another version. See masking.requireNativeProblem.
+    # acknowledged: tables no job copies, on purpose: connection alias -> table
+    #   -> why. What `bauta coverage` reads, so a table left out is a decision
+    #   on the page rather than something nobody noticed.
     model_config = ConfigDict(extra='forbid')
-
     workers: int = Field(default=DEFAULT_WORKERS, ge=1)
     cycleSleepSeconds: float = 0.5
-    # Where the CLI keeps run state, records history and writes the masking
-    # manifest; command-line flags override each. See cli._resolveLocation.
     memory: Optional[StorageLocation] = None
     history: Optional[StorageLocation] = None
     manifest: Optional[StorageLocation] = None
-    # Threads the native masker spreads each job's chunks over: one by default,
-    # a number up to the cores available, or `auto`, which shares half the cores
-    # as each job starts with the jobs running alongside it. See
-    # masking.maskingThreadsFor and runner._runCycle.
     maskingThreads: Union[Literal['auto'], Annotated[int, Field(ge=1)]] = 1
-    # Whether a run with masked jobs stops before it starts, rather than masking
-    # in Python: true when the native masker isn't in use for any reason, false
-    # never, and by default (None) only when it is installed but another
-    # version. See masking.requireNativeProblem.
     requireNative: Optional[bool] = None
-    # Tables no job copies, on purpose: connection alias -> table -> why. What
-    # `bauta coverage` reads, so a table left out is a decision on the page
-    # rather than something nobody noticed.
     acknowledged: Dict[str, Dict[str, Annotated[str, Field(min_length=1)]]] = Field(default_factory=dict)
     jobs: Dict[str, DataJobConfig]
 
@@ -832,6 +869,10 @@ def findCycle(predecessors: Mapping[str, Sequence[str]]) -> Optional[List[str]]:
     path: List[str] = []
 
     def visit(job: str) -> Optional[List[str]]:
+        """A cycle through `job`, as the jobs on it, or None: a depth-first
+        walk that marks jobs on the current path 1 and finished ones 2.
+        """
+
         state[job] = 1
         path.append(job)
         for predecessor in predecessors[job]:
@@ -863,6 +904,10 @@ class Configuration:
 
     @staticmethod
     def _validate(schema: Type[T], rawConfiguration: Any, sourceDescription: str) -> T:
+        """`rawConfiguration` validated against `schema`. Raises
+        ConfigurationError naming `sourceDescription`, never pydantic's own
+        error, which quotes the input.
+        """
 
         try:
             return schema.model_validate(rawConfiguration)
@@ -936,6 +981,7 @@ class Configuration:
 
     @staticmethod
     def validateJobConfiguration(rawConfiguration: Any, schema: Type[T]) -> T:
+        """`rawConfiguration` validated against `schema`, a job model."""
 
         return Configuration._validate(schema, rawConfiguration, schema.__name__)
 

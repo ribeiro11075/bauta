@@ -17,11 +17,17 @@ DEFAULT_PORT = 8710
 
 
 def _settings(arguments: argparse.Namespace) -> Settings:
+    """Studio's settings, from the arguments and the environment."""
 
     return Settings.fromEnvironment(configDirectory=arguments.config, dataDirectory=arguments.data)
 
 
 def serve(arguments: argparse.Namespace) -> int:
+    """`bauta studio serve`: makes the data directory, warns where there is no
+    account yet, or single sign-on is on with no admin who can sign in without
+    it, checks the identity provider, and serves Studio in one process, which
+    tracks the runs it starts.
+    """
 
     import uvicorn
 
@@ -98,6 +104,10 @@ def _askPassword(email: str) -> Optional[str]:
 
 
 def createUser(arguments: argparse.Namespace) -> int:
+    """`bauta studio create-user`: adds an account with the role given, asking
+    for its password unless `--sso-only`. Returns 2 for a bad role, a refused
+    password or an email that already has an account.
+    """
 
     from .auth import record
     from .db import ROLES, Database, User

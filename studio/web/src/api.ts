@@ -12,10 +12,16 @@ export class ApiError extends Error {
   }
 }
 
+/** Whether an error's detail is the configuration failing to load. */
 export function isConfigurationProblem(detail: unknown): detail is { configuration: string } {
   return typeof detail === 'object' && detail !== null && 'configuration' in detail
 }
 
+/**
+ * One request to Studio's API, as JSON, with the header every change needs.
+ * Throws ApiError with the server's detail, or with the status alone for an
+ * answer that isn't Studio's, as a proxy gives when Studio is down.
+ */
 export async function api<T>(path: string, options: { method?: string; body?: unknown; query?: Record<string, string> } = {}): Promise<T> {
   const url = new URL('/api' + path, window.location.origin)
   for (const [name, value] of Object.entries(options.query ?? {})) url.searchParams.set(name, value)
@@ -70,12 +76,14 @@ export interface SignInOptions {
   passwordLogin: PasswordLogin
 }
 
+/** What the sign-in page offers, read from /auth/me's refusal. */
 export function signInOptions(error: unknown): SignInOptions {
   const detail = error instanceof ApiError && typeof error.detail === 'object' && error.detail !== null
     ? error.detail as Partial<SignInOptions> : {}
   return { hasUsers: detail.hasUsers !== false, sso: detail.sso ?? null, passwordLogin: detail.passwordLogin ?? 'all' }
 }
 
+/** Whether `user` holds `role` or one above it. */
 export function can(user: User, role: Role): boolean {
   return ROLES.indexOf(user.role) >= ROLES.indexOf(role)
 }

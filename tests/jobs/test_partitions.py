@@ -87,11 +87,18 @@ def test_a_bound_that_is_no_number_is_refused_by_its_type_never_its_value(value)
 
 
 class _RecordingMasking:
+    """Stands in for a bound plan, recording the chunk index each chunk is
+    masked with and changing nothing.
+    """
 
     def __init__(self):
+        """Nothing recorded yet."""
+
         self.chunkIndexes = []
 
     def apply(self, rows, chunkIndex=None):
+        """Records `chunkIndex`, and returns the rows as they are."""
+
         self.chunkIndexes.append(chunkIndex)
         return rows
 
@@ -120,6 +127,10 @@ POLICY = {'id': {'strategy': 'key', 'domain': 'customer'}, 'email': 'email', 'ph
 
 @pytest.fixture
 def connections(tmp_path):
+    """`prod`, a SQLite file holding ROWS of customers, and `copy`, one with
+    empty target and stage tables.
+    """
+
     settings = {alias: connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / '{}.db'.format(alias))) for alias in ('prod', 'copy')}
 
     with Database(connectionSettings=settings['prod'], create=True) as database:
@@ -134,6 +145,10 @@ def connections(tmp_path):
 
 
 def _job(**overrides):
+    """A swap job copying customers from `prod` to `copy` in four partitions,
+    masked by POLICY, with `overrides`; one set to None is left out.
+    """
+
     fields = dict(active=True, sourceConnection='prod', sourceQuery='SELECT id, email, phone, ref FROM customers', targetConnection='copy',
                   targetTableFinal='customers', targetTableStage='customers_stage', insertStrategy='swap', chunkSize=17,
                   masking={'key': KEY, 'columns': POLICY}, partitions={'column': 'id', 'count': 4})
@@ -143,6 +158,8 @@ def _job(**overrides):
 
 
 def _rows(settings, query):
+    """The rows `query` returns on a connection."""
+
     with Database(connectionSettings=settings) as database:
         return database.query(query)
 

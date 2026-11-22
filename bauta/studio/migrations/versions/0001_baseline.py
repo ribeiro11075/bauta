@@ -12,6 +12,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    """Creates every table Studio keeps."""
 
     op.create_table(
         'studio_user',
@@ -98,6 +99,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drops every table Studio keeps, children first."""
 
     for table in ('studio_manifest', 'studio_setting', 'studio_check', 'studio_launched_run', 'studio_activity', 'studio_session', 'studio_sso_identity',
                   'studio_recovery_code', 'studio_user'):

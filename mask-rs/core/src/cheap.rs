@@ -18,6 +18,8 @@ fn isPythonSpace(byte: u8) -> bool {
     matches!(byte, b'\t' | b'\n' | 0x0b | 0x0c | b'\r' | 0x1c | 0x1d | 0x1e | 0x1f | b' ')
 }
 
+/// `text` without Python's whitespace at either end, as `str.strip()` leaves
+/// it.
 fn pythonStrip(text: &str) -> &str {
     let bytes = text.as_bytes();
     let start = bytes.iter().position(|byte| !isPythonSpace(*byte)).unwrap_or(bytes.len());
@@ -26,6 +28,7 @@ fn pythonStrip(text: &str) -> &str {
     &text[start..end]
 }
 
+// HEX: the digits `hash` writes its hex with, by nibble.
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
 /// `hash`: an opaque hex token, `prefix` then `length` hex characters.
@@ -99,6 +102,9 @@ fn maskDigitRun(hash: &KeyedHash, digits: &[u8], keepLeading: usize, keepTrailin
     Ok(masked)
 }
 
+/// `digits` on text: every ASCII digit masked, but for the kept leading and
+/// trailing ones, and everything else kept. Non-ASCII text goes back to Python,
+/// which normalises digits across scripts.
 pub fn maskDigitsText(hash: &KeyedHash, value: &str, keepLeading: usize, keepTrailing: usize) -> Masked<String> {
     if !value.is_ascii() {
         return Err(MaskError::Unsupported);
@@ -120,6 +126,8 @@ pub fn maskDigitsText(hash: &KeyedHash, value: &str, keepLeading: usize, keepTra
     Ok(String::from_utf8(masked).expect("ASCII in, ASCII out"))
 }
 
+/// `digits` on an integer: the same digit count and sign, a leading zero
+/// replaced so the count holds.
 pub fn maskDigitsInteger(hash: &KeyedHash, value: &BigInt, keepLeading: usize, keepTrailing: usize) -> Masked<BigInt> {
     let negative = value.sign() == Sign::Minus;
     let text = value.magnitude().to_str_radix(10);

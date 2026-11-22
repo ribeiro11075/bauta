@@ -24,16 +24,18 @@ from .formats import PartSettings, extension
 from .stores import Store, requirePyarrow
 from .target import SNAPSHOT_PREFIX, SUCCESS_FILE
 
-# Run on the DuckDB answering a query, before it reads anything: with it, it
-# can reach only the tables given to it, and DuckDB won't turn it back on. A
-# sourceQuery could otherwise read any file bauta's account can with
-# read_csv('/etc/passwd'), or write one.
+# LOCKDOWN_STATEMENT: run on the DuckDB answering a query, before it reads
+#   anything: with it, it can reach only the tables given to it, and DuckDB
+#   won't turn it back on. A sourceQuery could otherwise read any file bauta's
+#   account can with read_csv('/etc/passwd'), or write one.
+# FILES_READ_AT_ONCE: how many of a table's files have their columns read at
+#   once.
 LOCKDOWN_STATEMENT = 'SET enable_external_access = false'
-# How many of a table's files have their columns read at once.
 FILES_READ_AT_ONCE = 16
 
 
 def requireDuckDB() -> None:
+    """Raises a ConfigurationError, saying how to install it, where DuckDB isn't."""
 
     try:
         import duckdb  # noqa: F401 -- imported to be there
@@ -48,11 +50,14 @@ class _TablesDialect(DuckDBDialect):
     """
 
     def __init__(self, datasets: Dict[str, Any]) -> None:
+        """The dialect for a FileSource, with the datasets the query reads by name."""
+
         super().__init__()
         self.datasets = datasets
 
 
     def streamingCursor(self, connection: Connection, chunkSize: int) -> Any:
+        """As DuckDB's, with every dataset registered on the cursor."""
 
         cursor = super().streamingCursor(connection, chunkSize)
         for table, dataset in self.datasets.items():
@@ -67,6 +72,10 @@ class FileSource(Database):
     """
 
     def __init__(self, settings: FilesConnection) -> None:
+        """A DuckDB in memory over the connection's files, locked down before
+        it reads anything, so a query reaches only the tables it is given.
+        """
+
         requirePyarrow()
         requireDuckDB()
         self.files = settings
@@ -79,6 +88,7 @@ class FileSource(Database):
 
 
     def stream(self, query: str, chunkSize: int, parameters: Optional[Sequence[Any]] = None) -> Tuple[List[str], RowStream]:
+        """Opens the tables the query names as datasets, then streams it."""
 
         self._openTables(query)
 
@@ -97,6 +107,10 @@ class FileSource(Database):
 
 
     def _dataset(self, table: str) -> Any:
+        """A table's files as one Arrow dataset, its Hive partition columns
+        included. Raises ConfigurationError for a path a table can't have, and
+        for files that disagree on a column.
+        """
 
         import pyarrow
         import pyarrow.dataset
@@ -139,6 +153,7 @@ class FileSource(Database):
 
 
     def _format(self, files: List[str]) -> Any:
+        """The Arrow file format the connection's files are read as."""
 
         import pyarrow.dataset
 
@@ -198,6 +213,7 @@ class FileSource(Database):
 
 
     def _isFile(self, path: str) -> bool:
+        """Whether `path` is a file, rather than a directory or nothing."""
 
         import pyarrow.fs
 

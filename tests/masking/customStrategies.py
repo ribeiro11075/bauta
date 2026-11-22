@@ -23,4 +23,6 @@ class Verbatim(Strategy):
 
 
 class NotAStrategy:
+    """A class that isn't a Strategy, for the error naming one."""
+
     pass

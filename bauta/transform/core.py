@@ -1,3 +1,10 @@
+"""Per-column transforms: a function applied to every value of one column,
+before masking, named in a job's sourceQueryColumnTransforms as
+`module.path:function`, with arguments after the value in parentheses.
+
+resolveTransformer turns a reference into a callable, checking it can be called
+as written; Transform applies a job's transforms to each chunk.
+"""
 from __future__ import annotations
 
 import ast
@@ -6,9 +13,8 @@ import inspect
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-# function_name, optionally followed by an argument list: truncate(50)
+# _CALL: function_name, optionally followed by an argument list: truncate(50)
 _CALL = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\((.*)\))?\s*$', re.DOTALL)
-
 Transformer = Callable[[Any], Any]
 
 
@@ -65,6 +71,8 @@ def _withArguments(function: Transformer, reference: str, arguments: Tuple[Any, 
     """`function` with its extra arguments fixed, still taking one value."""
 
     def transformer(value: Any) -> Any:
+        """The function called with the value, then the reference's arguments."""
+
         return function(value, *arguments, **keywords)
 
     transformer.__name__ = reference.partition(':')[2].strip()
@@ -116,12 +124,15 @@ class Transform:
 
     def __init__(self, columns: List[str], columnTransforms: Dict[str, List[Transformer]],
                   data: Optional[List[Tuple[Any, ...]]] = None) -> None:
+        """A transform of rows whose columns are `columns`. Only the columns
+        that have a transformer are walked, once per chunk; each transformer
+        reads and writes its own column alone, so leaving the others out
+        changes no result.
+        """
+
         self.columns = columns
         self.columnTransforms = columnTransforms
         self.data = data if data is not None else []
-        # Only the columns that actually have a transformer: the rest would be
-        # walked for nothing, once per chunk. Each transformer reads and writes
-        # its own column alone, so leaving the others out changes no result.
         self._transformsByIndex = [(index, self.columnTransforms[column]) for index, column in enumerate(self.columns)
                                    if self.columnTransforms.get(column)]
 

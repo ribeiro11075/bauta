@@ -14,15 +14,13 @@ from ..log.scrubbing import describeError
 from ..masking import changesValues, keyFingerprint, maskingImplementation, policyFor, splitMaskingIdentity
 from .memory import MemoryBackend
 
+# LISTED_JOBS: how many job names a message lists for one change before it
+#   counts the rest.
+# ADDING_STRATEGIES: the insert strategies that keep a target's rows from one
+#   run to the next, so a new key's masks land beside the old one's. swap and
+#   overwrite replace the whole target, and need no check.
 logger = logging.getLogger(LOGGER_NAME)
-
-
-# How many job names a message lists for one change before it counts the rest.
 LISTED_JOBS = 10
-
-# The insert strategies that keep a target's rows from one run to the next, so
-# a new key's masks land beside the old one's. swap and overwrite replace the
-# whole target, and need no check.
 ADDING_STRATEGIES = frozenset({InsertStrategy.UPSERT, InsertStrategy.APPEND})
 
 

@@ -1,3 +1,7 @@
+// The subset builder: a slice of a source that keeps every relationship,
+// previewed with its row counts, then written into a jobs file as the jobs
+// that copy it.
+
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
@@ -19,6 +23,7 @@ interface Preview {
   createMissing: string | null
 }
 
+/** The builder's form, its preview and what was added. */
 export function Subset() {
   const client = useQueryClient()
   const choices = useQuery({ queryKey: ['form-choices'], queryFn: () => api<Choices>('/form-choices') })
@@ -30,6 +35,7 @@ export function Subset() {
     queryFn: () => api<{ tables: string[] }>('/subset/tables', { query: { connection: request.connection } }),
     enabled: !!request.connection,
   })
+  /** The request as the API takes it, with `extra` fields. */
   const body = (extra: Record<string, unknown> = {}) => ({
     ...request, ignore: request.ignore.split(/[\s,]+/).filter(Boolean), ...extra,
   })
@@ -39,6 +45,7 @@ export function Subset() {
     mutationFn: () => api<Written & { jobs: string[] }>('/subset/apply', { method: 'POST', body: body({ file: file || choices.data?.files[0] }) }),
     onSuccess: (result) => { setAdded(result); client.invalidateQueries({ predicate: (query) => query.queryKey[0] !== 'form-choices' }) },
   })
+  /** Changes one field of the request, clearing a preview of the old one. */
   const set = (name: string, value: unknown) => { setRequest({ ...request, [name]: value }); preview.reset() }
   const ready = request.connection && request.target && request.root && request.where.trim()
   const result = preview.data

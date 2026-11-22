@@ -30,6 +30,10 @@ AWKWARD = 'a"b\'c) (\nline2 ' + SECRET
 
 @pytest.fixture(params=sorted(SERVERS))
 def tables(request):
+    """Tables on each server whose loads fail with a value in the driver's
+    message; skipped where the server isn't reachable.
+    """
+
     driver, settings = SERVERS[request.param]
 
     try:
@@ -51,6 +55,8 @@ def tables(request):
 
 
 def _failure(database, load):
+    """The error `load` raised, the transaction rolled back."""
+
     try:
         load()
     except Exception as error:

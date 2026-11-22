@@ -40,6 +40,8 @@ PUBLIC_URL = 'https://studio.example.com'
 
 
 def _newKey(keyId):
+    """A new RSA signing key, and its public half as a JWK named `keyId`."""
+
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key()))
     public.update({'kid': keyId, 'use': 'sig', 'alg': 'RS256'})
@@ -52,6 +54,10 @@ class Provider:
     """
 
     def __init__(self):
+        """A provider with one signing key published, no codes issued yet, and
+        every request recorded.
+        """
+
         self.key, self.jwk = _newKey('one')
         self.published = [self.jwk]
         self.codes = {}
@@ -63,9 +69,15 @@ class Provider:
         self.requests = []
 
     def transport(self):
+        """An HTTP transport that answers every request from this provider."""
+
         return httpx.MockTransport(self.handle)
 
     def handle(self, request):
+        """Answers one request as an OpenID Connect provider would: discovery,
+        keys, the token endpoint and userinfo; refusing every one while `down`.
+        """
+
         self.requests.append(request)
         if self.down:
             raise httpx.ConnectError('connection refused', request=request)
@@ -97,6 +109,11 @@ class Provider:
         return code, query['state']
 
     def token(self, request):
+        """The token endpoint: checks the client's credentials and the PKCE
+        verifier, then answers with an ID token for the code's claims, signed
+        with the key.
+        """
+
         expected = 'Basic ' + base64.b64encode('{}:{}'.format(urllib.parse.quote(CLIENT_ID, safe=''),
                                                               urllib.parse.quote(CLIENT_SECRET, safe='')).encode()).decode()
         if request.headers.get('Authorization') != expected:
@@ -122,6 +139,8 @@ class Provider:
 
 @pytest.fixture
 def provider():
+    """A fake identity provider."""
+
     return Provider()
 
 
@@ -149,6 +168,8 @@ def ssoApp(settings, provider):
 
 
 def _person(sub='ann-at-idp', email='ann@example.com', **claims):
+    """The claims of a person with a verified email, with `claims` added."""
+
     return {'sub': sub, 'email': email, 'email_verified': True, 'name': 'Ann', **claims}
 
 
@@ -164,16 +185,22 @@ def _signIn(application, provider, claims, client=None):
 
 
 def _failure(landing):
+    """The error code a refused sign-in redirects to the sign-in page with."""
+
     assert landing.status_code == 303 and landing.headers['location'].startswith('/'), landing.text
     return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(landing.headers['location']).query)).get('sso_error')
 
 
 def _user(application, email):
+    """The account with `email`, or None."""
+
     with application.state.database.open() as session:
         return session.scalar(select(User).where(User.email == email))
 
 
 def _actions(application):
+    """Every activity log entry, as (action, target, detail), oldest first."""
+
     with application.state.database.open() as session:
         return [(entry.action, entry.target, entry.detail) for entry in session.scalars(select(Activity).order_by(Activity.id))]
 
@@ -600,6 +627,8 @@ def test_no_token_secret_or_code_reaches_the_activity_log_or_studios_answers(sso
 # What the review found -------------------------------------------------------
 
 def _admin(application):
+    """A client signed in as the admin with a password."""
+
     admin = TestClient(application, headers={'X-Bauta-Studio': '1'})
     assert admin.post('/api/auth/login', json={'email': 'admin@example.com', 'password': PASSWORD}).status_code == 200
     return admin

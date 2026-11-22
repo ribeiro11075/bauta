@@ -20,12 +20,18 @@ class _Clock:
     """
 
     def __init__(self, monkeypatch):
+        """Puts the throttle on a clock of its own, starting at 1000 seconds,
+        that only sleeping moves.
+        """
+
         self.now = 1000.0
         self.slept = []
         monkeypatch.setattr(throttle.time, 'monotonic', lambda: self.now)
         monkeypatch.setattr(throttle.time, 'sleep', self.sleep)
 
     def sleep(self, seconds):
+        """Records the sleep, and moves the clock on by it."""
+
         self.slept.append(seconds)
         self.now += seconds
 
@@ -129,6 +135,10 @@ def test_a_lake_takes_no_read_limit(tmp_path):
 
 @pytest.fixture
 def sqliteJob(tmp_path):
+    """Connections holding a SQLite file with a fifty-row `src` table and an
+    empty `tgt`.
+    """
+
     path = tmp_path / 'demo.db'
     connection = sqlite3.connect(path)
     connection.execute('CREATE TABLE src (id INT PRIMARY KEY, name TEXT)')

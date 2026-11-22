@@ -16,6 +16,10 @@ ENVIRONMENT = ('NATIVE_DEMO_PRODUCTION_PATH', 'NATIVE_DEMO_STAGING_PATH', 'BAUTA
 
 @pytest.fixture(scope='module')
 def demoRun(tmp_path_factory):
+    """The native masking demo's result and working directory, run once for the
+    module with its environment restored after.
+    """
+
     PREVIOUS.update({name: os.environ.get(name) for name in ENVIRONMENT})
     workingDirectory = tmp_path_factory.mktemp('native_masking_demo')
 

@@ -9,21 +9,21 @@ from ...configuration import IDENTIFIER, DatabaseType
 
 
 
-# How each database quotes an identifier, where it isn't with double quotes.
+# _IDENTIFIER_QUOTES: how each database quotes an identifier, where it isn't
+#   with double quotes.
+# _UNQUOTED_CASE: how a database folds an unquoted identifier, where it doesn't
+#   keep it as written. The others compare identifiers case-insensitively
+#   anyway.
+# _QUOTE_PAIRS: every quoting style the dialects use, for reading a name
+#   written in any of them. No database allows these characters in a name
+#   written without quotes, so a name carrying one was quoted.
+# IDENTIFIER_LIMITS: the longest name each database keeps, and whether it
+#   counts bytes or characters. A longer name isn't refused: it is silently cut
+#   to the limit, so two names alike up to it become one table. SQLite and
+#   DuckDB have none.
 _IDENTIFIER_QUOTES = {DatabaseType.MYSQL: ('`', '`'), DatabaseType.MARIADB: ('`', '`'), DatabaseType.MSSQL: ('[', ']')}
-
-# How a database folds an unquoted identifier, where it doesn't keep it as
-# written. The others compare identifiers case-insensitively anyway.
 _UNQUOTED_CASE = {DatabaseType.ORACLE: str.upper, DatabaseType.POSTGRESQL: str.lower}
-
-# Every quoting style the dialects use, for reading a name written in any of
-# them. No database allows these characters in a name written without quotes,
-# so a name carrying one was quoted.
 _QUOTE_PAIRS = dict([('"', '"')] + list(_IDENTIFIER_QUOTES.values()))
-
-# The longest name each database keeps, and whether it counts bytes or
-# characters. A longer name isn't refused: it is silently cut to the limit, so
-# two names alike up to it become one table. SQLite and DuckDB have none.
 IDENTIFIER_LIMITS = {
     DatabaseType.POSTGRESQL: (63, 'bytes'),
     DatabaseType.MYSQL: (64, 'characters'),
@@ -94,6 +94,7 @@ def unqualifiedName(table: str) -> str:
 
 
 def _isQuoted(databaseType: DatabaseType, name: str) -> bool:
+    """Whether `name` is written in this database's identifier quotes."""
 
     opening, closing = _IDENTIFIER_QUOTES.get(databaseType, ('"', '"'))
 
@@ -146,10 +147,11 @@ def catalogTableName(databaseType: DatabaseType, table: str) -> Tuple[Optional[s
 
 
 def _quotedParts(databaseType: DatabaseType, table: str, quote: Callable[[DatabaseType, str], str]) -> str:
+    """`table`'s parts quoted by `quote`, but for a part already written in
+    quotes, which is spelled exactly as it means to be and only re-quoted.
+    """
 
     schema, name = splitTableName(table)
-    # A part written in quotes is spelled exactly as it means to be, whichever
-    # quoting the caller asked for; only a bare part is the caller's to fold.
     parts = [quoteIdentifier(databaseType, bareName(part)) if _isQuoted(databaseType, part) else quote(databaseType, part)
              for part in ([schema, name] if schema else [name])]
 

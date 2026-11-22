@@ -28,20 +28,28 @@ AZURITE_KEY = 'Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1
 
 
 def _s3():
+    """A filesystem on the local S3 emulator."""
+
     return pyarrow.fs.S3FileSystem(access_key='test', secret_key='test', region='us-east-1', endpoint_override='http://127.0.0.1:5055',
                                    allow_bucket_creation=True)
 
 
 def _gcs():
+    """A filesystem on the local Google Cloud Storage emulator."""
+
     return pyarrow.fs.GcsFileSystem(anonymous=True, scheme='http', endpoint_override='127.0.0.1:4443', project_id='bauta')
 
 
 def _azure():
+    """A filesystem on the local Azurite emulator."""
+
     return pyarrow.fs.AzureFileSystem(account_name='devstoreaccount1', account_key=AZURITE_KEY, blob_storage_authority='127.0.0.1:10000',
                                       blob_storage_scheme='http', dfs_storage_authority='127.0.0.1:10000', dfs_storage_scheme='http')
 
 
 def _bucket(filesystem, name):
+    """Creates a bucket, skipping the test where its storage isn't running."""
+
     try:
         filesystem.create_dir(name)
     except Exception as error:
@@ -49,6 +57,10 @@ def _bucket(filesystem, name):
 
 
 def _sql(tmp_path, scheme, settings, filesystem):
+    """A SQL catalog's settings, its warehouse in a new bucket of the given
+    storage, and that storage's filesystem.
+    """
+
     bucket = 'bauta-{}'.format(uuid.uuid4().hex[:12])
     _bucket(filesystem, bucket)
     return {'catalog': 'sql', 'uri': 'sqlite:///{}'.format(tmp_path / 'catalog.db'), 'warehouse': '{}{}/warehouse'.format(scheme, bucket),
@@ -56,6 +68,10 @@ def _sql(tmp_path, scheme, settings, filesystem):
 
 
 def _glue(tmp_path):
+    """A Glue catalog's settings on the local emulator, its warehouse in a new
+    S3 bucket, and the S3 filesystem.
+    """
+
     bucket = 'bauta-{}'.format(uuid.uuid4().hex[:12])
     _bucket(_s3(), bucket)
     return {'catalog': 'glue', 'warehouse': 's3://{}/warehouse'.format(bucket), **S3,
@@ -63,6 +79,10 @@ def _glue(tmp_path):
 
 
 def _rest(tmp_path):
+    """A REST catalog's settings on the local server, and the S3 filesystem;
+    skipped where the server isn't running.
+    """
+
     filesystem = _s3()
     try:
         if filesystem.get_file_info('iceberg-rest').type == pyarrow.fs.FileType.NotFound:
@@ -88,12 +108,18 @@ CATALOGS = {
 
 @pytest.fixture(params=sorted(CATALOGS))
 def lake(request, tmp_path):
+    """An Iceberg connection in a namespace of its own, once for each catalog,
+    and the filesystem its warehouse is on.
+    """
+
     settings, filesystem = CATALOGS[request.param](tmp_path)
     return connectionConfig(type='iceberg', namespace='masked_{}'.format(uuid.uuid4().hex[:8]), **settings), filesystem
 
 
 @pytest.fixture
 def source(tmp_path):
+    """A SQLite file of ROWS customers."""
+
     path = tmp_path / 'prod.db'
     connection = sqlite3.connect(path)
     try:
@@ -106,6 +132,8 @@ def source(tmp_path):
 
 
 def _run(lake, source, **overrides):
+    """Runs one job appending customers to the Iceberg table, with `overrides`."""
+
     settings, _ = lake
     fields = dict(sourceConnection='prod', targetConnection='lake', sourceQuery='select id, email from customers', targetTableFinal='customers',
                   insertStrategy='append', chunkSize=50, unmasked=True)
@@ -114,12 +142,16 @@ def _run(lake, source, **overrides):
 
 
 def _table(lake):
+    """The Iceberg table, loaded from the catalog."""
+
     settings, _ = lake
     with loadCatalog(settings) as catalog:
         return catalog.load_table((settings.namespace, 'customers'))
 
 
 def _ids(lake):
+    """The ids the table holds, sorted."""
+
     return sorted(_table(lake).scan().to_arrow().column('id').to_pylist())
 
 

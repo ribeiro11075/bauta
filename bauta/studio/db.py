@@ -17,20 +17,23 @@ from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
+# ROLES: each role can do everything the ones before it can.
+# VERSION_TABLE: Alembic's record of how far a database has been migrated,
+#   named as Studio's tables are: the database may be shared with something
+#   else using Alembic.
+# BASELINE_REVISION: the revision that creates the tables as 0.2.7 did, without
+#   Alembic.
 VIEWER = 'viewer'
 OPERATOR = 'operator'
 ADMIN = 'admin'
-# Each role can do everything the ones before it can.
 ROLES = [VIEWER, OPERATOR, ADMIN]
 MIGRATIONS_DIRECTORY = Path(__file__).parent / 'migrations'
-# Alembic's record of how far a database has been migrated, named as Studio's
-# tables are: the database may be shared with something else using Alembic.
 VERSION_TABLE = 'studio_alembic_version'
-# The revision that creates the tables as 0.2.7 did, without Alembic.
 BASELINE_REVISION = '0001'
 
 
 def utcnow() -> datetime.datetime:
+    """The time now, in UTC."""
 
     return datetime.datetime.now(datetime.timezone.utc)
 
@@ -50,25 +53,31 @@ def iso(value: Optional[datetime.datetime]) -> Optional[str]:
 
 
 class Base(DeclarativeBase):
+    """The declarative base of Studio's tables."""
+
     pass
 
 
 class User(Base):
-    __tablename__ = 'studio_user'
+    """A Studio account: its email, role, password hash, single sign-on
+    identity and two-factor sign-in.
+    """
 
+    # passwordHash: None for someone who signs in only through the identity
+    #   provider.
+    # totpSecret, totpPendingSecret, totpLastStep: two-factor sign-in with an
+    #   authenticator app: its secret, encrypted (see twofactor.py), once
+    #   confirmed with a code; one being set up until then; and the last
+    #   30-second step a code was taken for, so no code is taken twice.
+    __tablename__ = 'studio_user'
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200), default='')
-    # None for someone who signs in only through the identity provider.
     passwordHash: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     role: Mapped[str] = mapped_column(String(16), default=VIEWER)
     active: Mapped[bool] = mapped_column(default=True)
     createdAt: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     lastLoginAt: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    # Two-factor sign-in with an authenticator app: its secret, encrypted
-    # (see twofactor.py), once confirmed with a code; one being set up until
-    # then; and the last 30-second step a code was taken for, so no code is
-    # taken twice.
     totpSecret: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     totpPendingSecret: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     totpLastStep: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -77,11 +86,13 @@ class User(Base):
                                                                 passive_deletes=True)
 
     def can(self, role: str) -> bool:
+        """Whether the account is active and holds `role` or one above it."""
 
         return self.active and ROLES.index(self.role) >= ROLES.index(role)
 
 
     def asDict(self) -> Dict[str, Any]:
+        """The account as the API gives it, never its password hash or secrets."""
 
         return {'id': self.id, 'email': self.email, 'name': self.name, 'role': self.role, 'active': self.active,
                 'createdAt': iso(self.createdAt), 'lastLoginAt': iso(self.lastLoginAt), 'sso': self.ssoIdentity is not None,
@@ -117,6 +128,9 @@ class SsoIdentity(Base):
 
     @classmethod
     def of(cls, issuer: str, subject: str) -> 'SsoIdentity':
+        """An identity for the provider's issuer and subject, the subject kept
+        only as its hash.
+        """
 
         issuer, subjectHash = cls.key(issuer, subject)
 
@@ -166,6 +180,7 @@ class Activity(Base):
     detail: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     def asDict(self) -> Dict[str, Any]:
+        """The activity log entry as the API gives it."""
 
         return {'id': self.id, 'at': iso(self.at), 'email': self.email, 'action': self.action, 'target': self.target, 'detail': self.detail}
 
@@ -190,6 +205,7 @@ class LaunchedRun(Base):
     logPath: Mapped[str] = mapped_column(Text, default='')
 
     def asDict(self) -> Dict[str, Any]:
+        """The launched run as the API gives it."""
 
         return {'id': self.id, 'email': self.email, 'startedAt': iso(self.startedAt), 'finishedAt': iso(self.finishedAt), 'jobs': self.jobs,
                 'options': self.options,
@@ -210,6 +226,7 @@ class Check(Base):
     result: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     def asDict(self) -> Dict[str, Any]:
+        """The check as the API gives it: its kind, when, by whom, and its result."""
 
         return {'id': self.id, 'kind': self.kind, 'at': iso(self.at), 'by': self.email, **self.result}
 
@@ -236,6 +253,9 @@ class ArchivedManifest(Base):
 
 
 def makeEngine(url: str) -> Engine:
+    """An engine for Studio's database, foreign keys enforced on SQLite,
+    migrated to the latest revision.
+    """
 
     engine = create_engine(url, connect_args={'check_same_thread': False} if url.startswith('sqlite') else {})
     if url.startswith('sqlite'):
@@ -272,17 +292,23 @@ class Database:
     """Studio's database: a session per request, closed after it."""
 
     def __init__(self, url: str) -> None:
+        """Studio's database at `url`, migrated, with sessions that keep their
+        objects readable after a commit.
+        """
+
         self.engine = makeEngine(url)
         self._sessions = sessionmaker(self.engine, expire_on_commit=False)
 
 
     def session(self) -> Iterator[Session]:
+        """A session for one request, closed after it."""
 
         with self._sessions() as session:
             yield session
 
 
     def open(self) -> Session:
+        """A session the caller closes, as a `with` block does."""
 
         return self._sessions()
 

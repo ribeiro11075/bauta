@@ -20,6 +20,8 @@
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use std::time::Instant;
 
+/// Times SHA-256 with ring over 64 MiB and AES-256 with the aes crate over five
+/// million blocks, the backends in use, and prints their rates.
 fn main() {
     let buffer = vec![0x78u8; 64 * 1024 * 1024];
     ring::digest::digest(&ring::digest::SHA256, &buffer);

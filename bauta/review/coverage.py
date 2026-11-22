@@ -23,16 +23,16 @@ from .queryTables import tablesRead
 from ..configuration import DataJobConfig
 from ..generate.discovery import BUILTIN_RULES, DiscoveryRules, personalDataHint
 
-# What a table can be. Only UNCOVERED fails: the others are all decisions
-# somebody made and can be shown to have made.
+# MASKED, COPIED, ACKNOWLEDGED, UNCOVERED: what a table can be. Only UNCOVERED
+#   fails: the others are all decisions somebody made and can be shown to have
+#   made.
+# STATE_ORDER: the states in the order a report reads best: what is wrong
+#   first.
 MASKED = 'masked'
 COPIED = 'copied'
 ACKNOWLEDGED = 'acknowledged'
 UNCOVERED = 'uncovered'
-
-# In the order a report reads best: what is wrong first.
 STATE_ORDER = (UNCOVERED, COPIED, MASKED, ACKNOWLEDGED)
-
 STATE_LABELS = {
     MASKED: 'copied and masked',
     COPIED: 'copied as it stands',
@@ -42,6 +42,9 @@ STATE_LABELS = {
 
 
 def _reads(query: str, table: str) -> bool:
+    """Whether a query reads `table`: from its FROM lists where it can be read
+    without parsing SQL, else by the table's name appearing in it.
+    """
 
     tables = tablesRead(query)
     if tables is None:

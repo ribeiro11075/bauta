@@ -15,6 +15,10 @@ GONE_PID = 2 ** 22 + 12345
 
 
 def _progress(**changes):
+    """A RunProgress partway through a cycle: one job failed with a long error,
+    one running, one not started; `changes` override its fields.
+    """
+
     fields = dict(runId='run-1', startedAt=1_800_000_000.0, jobs=['first', 'second', 'third'], running={'second': 1_800_000_010.0},
                   outcomes=[JobOutcome(job='first', status=JobStatus.FAILED, error='OperationalError: ' + 'x' * 5000, startedAt=1_800_000_000.0,
                                        finishedAt=1_800_000_005.0)])
@@ -104,6 +108,8 @@ def test_a_reader_says_which_runs_are_alive_gone_or_elsewhere(tmp_path):
 
 @pytest.fixture
 def database(tmp_path):
+    """A SQLite file with a five-row `src` table and an empty `tgt`."""
+
     connection = sqlite3.connect(str(tmp_path / 'demo.db'))
     connection.execute('CREATE TABLE src (id INT PRIMARY KEY, name TEXT)')
     connection.execute('CREATE TABLE tgt (id INT PRIMARY KEY, name TEXT)')

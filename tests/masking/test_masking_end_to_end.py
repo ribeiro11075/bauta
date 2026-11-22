@@ -34,6 +34,8 @@ ORDER_POLICY = {
 
 @pytest.fixture
 def databases(tmp_path):
+    """Two SQLite files, `prod` with tables to mask and `staging` to copy them to."""
+
     settings = {
         'prod': connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'prod.db')),
         'staging': connectionConfig(type=DatabaseType.SQLITE, path=str(tmp_path / 'staging.db')),
@@ -53,6 +55,8 @@ def databases(tmp_path):
 
 
 def job(table, policy, **overrides):
+    """A job's settings copying `table` from prod to staging, masked by `policy`."""
+
     definition = {
         'active': True, 'sourceConnection': 'prod', 'sourceQuery': 'SELECT * FROM {}'.format(table), 'targetConnection': 'staging',
         'targetTableFinal': table, 'insertStrategy': 'upsert', 'chunkSize': 7, 'masking': {'key': KEY, 'columns': policy},
@@ -62,6 +66,8 @@ def job(table, policy, **overrides):
 
 
 def run(databases, tmp_path, jobs):
+    """Runs `jobs` once, logging to a file, and returns the jobs file and result."""
+
     jobsFile = Configuration.validateJobConfiguration({'workers': 2, 'jobs': jobs}, DataJobsFile)
     result = runDataJobs(jobsFile=jobsFile, connectionConfiguration=databases, logFile=tmp_path / 'jobs.log',
                          memory=FileMemory(memoryFile=tmp_path / 'memory.yaml'))
@@ -69,6 +75,8 @@ def run(databases, tmp_path, jobs):
 
 
 def rows(settings, query):
+    """The rows `query` returns on a connection."""
+
     with Database(connectionSettings=settings) as database:
         return database.query(query)
 

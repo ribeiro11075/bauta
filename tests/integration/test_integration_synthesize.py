@@ -23,6 +23,8 @@ TYPES = {
 
 @pytest.fixture(params=sorted(SERVERS))
 def server(request):
+    """Each server's name and a connection to it."""
+
     settings = serverSettings(request.param)
     database = Database(connectionSettings=settings)
 

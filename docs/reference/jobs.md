@@ -23,7 +23,7 @@ jobs:
 | `memory` | optional, `memory.yaml` | Where `run` keeps run state: last runs, watermarks and key fingerprints. A file, or a [table](#tables). `--memory FILE` or `--memory-connection ALIAS` overrides it. See [run state](../guides/run-on-a-schedule.md#run-state). |
 | `history` | optional | Where `run` records each job's outcome after every cycle, for `bauta history`. A JSON-lines file, or a [table](#tables). Not recorded when unset. `--history FILE` or `--history-connection ALIAS` overrides it. See [run history](../guides/watch-what-ran.md#run-history). |
 | `manifest` | optional | Where `run` writes its [masking manifest](../guides/keep-a-manifest.md#what-it-records), for `bauta verify-manifest`. A file, replaced each run, or a [table](#tables), which keeps every run's. Not written when unset. `--manifest FILE` or `--manifest-connection ALIAS` overrides it. |
-| `requireNative` | optional | Whether a run with masked jobs stops before it starts when the [native masker](../guides/make-it-faster.md#the-native-masker) isn't in use, rather than masking in Python, about ten times slower. Unset, it stops where the extension is installed but another version than `bauta`'s, which an upgrade leaves behind, and goes on where it was never installed or `BAUTA_NATIVE=0` turns it off. `true` stops in every case, for a scheduled run with a window to keep; `false` never stops. `validate` checks it too. `BAUTA_REQUIRE_NATIVE=1` or `=0` overrides it. |
+| `requireNative` | optional | Whether a run with masked jobs stops before it starts when the [native masker](../guides/make-it-faster.md#the-native-masker) isn't in use, rather than mask in Python, about ten times slower. Unset, it stops only where the extension is installed at another version than `bauta`'s; `true` stops in every case, for a run with a window to keep; `false` never stops. `BAUTA_REQUIRE_NATIVE=1` or `=0` overrides it. |
 | `maskingThreads` | optional, `1` | Threads the [native masker](../guides/make-it-faster.md#the-native-masker) masks each job with: `1`, a number up to the cores available, or `auto` to divide half the cores between the jobs running. Results are the same for any count. `BAUTA_MASKING_THREADS` overrides it. See [masking threads](../guides/make-it-faster.md#masking-threads). |
 | `defaults` | optional | Settings every job takes unless it names its own. See [defaults](#defaults). |
 | `include` | optional | More files of `jobs` and `acknowledged`, as paths or glob patterns relative to this one. See [splitting the jobs across files](configuration.md#splitting-the-jobs-across-files). |
@@ -36,7 +36,7 @@ Any other field is an error, so a misspelled setting stops `validate` rather tha
 
 ### `acknowledged`
 
-A table nobody wrote a job for is invisible to `audit`, which checks the jobs that exist. `bauta coverage` lists a source database's tables instead and fails on any that no job covers — so leaving one out has to be said out loud, with the reason:
+`bauta coverage` fails on any source table no job covers, so a table left out on purpose is declared here, with the reason:
 
 ```yaml
 acknowledged:
@@ -45,7 +45,7 @@ acknowledged:
     employees: HR data, out of scope for this copy
 ```
 
-A reason is required, since the point is the recorded decision rather than the silence. `coverage` also reports a table declared here that the database no longer has, so a stale declaration doesn't quietly cover a table that was dropped and recreated under another name.
+A reason is required: the point is the recorded decision. `coverage` also reports a declared table the database no longer has.
 
 ### `defaults`
 
@@ -60,9 +60,7 @@ What every job would otherwise repeat. A job that names any of these itself keep
 | `partitions` | As in [load](#load). `auto` is the one to set here: it decides per job, and reads as one stream any job it can't slice. |
 | `masking.key` | The key a masked job uses when it gives none of its own. |
 
-`defaults` may set nothing else. A **masking policy stays with its job**: `columns` names what happens to each column, and a reviewer should be able to read that in one place without holding the whole file in their head. `masking.key` is a reference to a secret, not a policy, so it may be shared.
-
-A job with no `masking` block of its own does not grow one from `defaults`. An unmasked job stays visibly unmasked.
+`defaults` may set nothing else. A **masking policy stays with its job**, so a reviewer reads what happens to each column in one place; `masking.key` is a reference to a secret, not a policy, so it may be shared. A job with no `masking` block doesn't grow one from `defaults`: an unmasked job stays visibly unmasked.
 
 ```yaml
 defaults:
@@ -96,7 +94,7 @@ history:
   table: etl.run_history
 ```
 
-`table` defaults to `bauta_memory`, `bauta_history` or `bauta_manifest`, and `--memory-table`, `--history-table` or `--manifest-table` overrides it. The alias must be in `connections.yaml`, and the table must exist first: [operations.md](tables.md) has their definitions.
+`table` defaults to `bauta_memory`, `bauta_history` or `bauta_manifest`, and `--memory-table`, `--history-table` or `--manifest-table` overrides it. The alias must be in `connections.yaml`, and the table must exist first: [tables](tables.md) has their definitions.
 
 ## Scheduling
 
@@ -116,10 +114,10 @@ history:
 | `sourceConnection` | required | An alias from `connections.yaml`. |
 | `sourceQuery` | required | The query to extract with. |
 | `chunkSize` | required, at least 1 | Rows per batch. Extracts stream, so this is the **memory dial**: peak memory is about `chunkSize` × row width however large the source is — four times that where the [native masker](../guides/make-it-faster.md#the-native-masker) overlaps reading, masking and writing. |
-| `watermarkColumn` | optional | Makes the job incremental. See [incremental loads](../concepts/how-it-works.md#incremental-loads). Refused by `validate` on a column the masking policy masks, by name or through `defaultStrategy`: the watermark is read before masking and kept in run state, logs and `bauta jobs`, so it would leak the unmasked value. |
+| `watermarkColumn` | optional | Makes the job incremental; see [incremental loads](../concepts/how-it-works.md#incremental-loads). It can't be a column the policy masks: the watermark is kept, unmasked, in run state and logs. |
 | `watermarkInitial` | required with `watermarkColumn` | The value bound on the first run, before anything is stored. Bound as the type YAML read: write a timestamp unquoted, or PostgreSQL and Oracle refuse the [lookback](../concepts/how-it-works.md#why-the-lookback-window) arithmetic around it. |
 
-A job with `watermarkColumn` must also put a `{{ watermark }}` placeholder in `sourceQuery` and use `insertStrategy: upsert`, or `append` into a files connection. Validation enforces all three. The placeholder may appear more than once -- `created > {{ watermark }} OR updated > {{ watermark }}` -- and the watermark is bound at each; one inside a comment or a string literal is left as it is, and doesn't count. `watermarkColumn` matches the query's column ignoring case where only one does, since Oracle returns an unquoted name in capitals.
+A job with `watermarkColumn` must also put a `{{ watermark }}` placeholder in `sourceQuery`, and use `upsert` (or `append` into a files or Iceberg table); validation checks both. The placeholder may appear more than once, and one inside a comment or string literal doesn't count. `watermarkColumn` matches the query's column ignoring case.
 
 ## Transform
 
@@ -140,9 +138,9 @@ sourceQueryColumnTransforms:
   - "bauta.transform.builtinTransforms:parseDate('%d/%m/%Y')"
 ```
 
-Quote a reference whose arguments contain `: `, `#` or a leading quote, as YAML would otherwise read them. `validate` checks that each reference imports and that its arguments fit the function, so a missing or misspelled argument fails there rather than on the first row. Only literals are accepted, so a reference can't run code.
+Quote a reference whose arguments contain `: `, `#` or a leading quote, for YAML's sake. `validate` checks each reference imports and its arguments fit; only literals are accepted, so a reference can't run code.
 
-These ship with the package, in `bauta.transform.builtinTransforms`. Every one passes NULL through unchanged, except `defaultIfNull`, and raises on a value it can't convert rather than guessing.
+These ship in `bauta.transform.builtinTransforms`. Each passes NULL through (but `defaultIfNull`) and raises on a value it can't convert rather than guessing.
 
 | Transform | Result |
 | --- | --- |
@@ -180,30 +178,30 @@ Transforms apply to **`sourceQuery`'s own result columns**, not the target's. Na
 | Field | Required or default | Meaning |
 | --- | --- | --- |
 | `targetConnection` | required | An alias from `connections.yaml`. |
-| `targetTableFinal` | required | The table to load: `table`, or `schema.table` for one outside the connection's current schema. For a files connection, the table's directory under `root`, such as `crm/customers`: no absolute path, no `..`, and no part beginning with `_` or `.`, which engines reading a directory tree skip, and bauta keeps for its staging. |
+| `targetTableFinal` | required | The table to load: `table`, or `schema.table`. For a files connection, its directory under `root`, such as `crm/customers`: no absolute path, no `..`, and no part beginning with `_` or `.`. |
 | `insertStrategy` | required | `swap` or `upsert` into a database; `append` or `overwrite` into a files connection; `append`, `overwrite` or `upsert` into Iceberg — below. |
-| `targetTableStage` | required for `swap` | A staging table with the same shape, emptied before each load, so it must be a different table from `targetTableFinal` (compared ignoring case). For `swap`, it must be in the same schema as `targetTableFinal`. |
+| `targetTableStage` | required for `swap` | A staging table of the same shape, emptied before each load, so it must differ from `targetTableFinal`; for `swap`, in the same schema. |
 | `targetColumns` | optional | Target column names matching `sourceQuery`'s SELECT list **by position**. |
 | `preTargetAdhocQueries` | optional | SQL run on the target before any write, the stage load included. |
 | `postTargetAdhocQueries` | optional | SQL run on the target after the load. |
 | `targetColumnTypes` | optional; files and Iceberg only | Column → type, for a column whose values don't settle its type, or settle it as something else: `string`, `binary`, `bool`, `int8` to `int64`, `uint8` to `uint64`, `float32`, `float64`, `decimal(precision,scale)` up to 38 digits, `date`, `time`, `timestamp` (without a time zone) or `timestamptz` (an instant, written in UTC). See [column types](../concepts/how-it-works.md#column-types). |
 | `targetKey` | optional; Iceberg only | The columns an `upsert` matches rows by, which a table bauta creates is given as its identifier fields. An existing table's own identifier fields serve without it; given both, they must agree. |
-| `singleFile` | optional, `false`; files only | Write an `overwrite` job's table as one file, `<targetTableFinal>.parquet`, replaced whole each run, rather than a directory of parts. For small tables and handoffs to something that wants one file. |
-| `partitions` | optional; a database only, but `auto` anywhere | `{column: id, count: 8}`: read, mask and write the job as `count` slices at once, each a range of the `column` the query returns -- a number, or any other value the database orders, such as a UUID key -- each with connections of its own. At least 2, and no more than the `maxConcurrentJobs` of either connection; refused for DuckDB. The job succeeds only if every slice does. **`count: auto`** chooses the count as the job starts, and **`partitions: auto`** the column too: the target's primary key. Either reads as one stream a job it can't slice, and is never refused. See [partitions](../concepts/how-it-works.md#partitions) and [choosing automatically](../guides/make-it-faster.md#partitions-auto). |
+| `singleFile` | optional, `false`; files only | Write an `overwrite` job's table as one file, `<targetTableFinal>.parquet`, replaced whole each run. For small tables and one-file handoffs. |
+| `partitions` | optional; a database only, but `auto` anywhere | `{column: id, count: 8}`: read, mask and write the job as `count` slices at once, each a range of `column`, each with its own connections. At least 2, at most either connection's `maxConcurrentJobs`; refused for DuckDB. **`count: auto`** chooses the count, and **`partitions: auto`** the column too (the target's primary key), reading as one stream a job they can't slice. See [partitions](../concepts/how-it-works.md#partitions) and [choosing automatically](../guides/make-it-faster.md#partitions-auto). |
 
-`targetTableStage`, the adhoc queries and `partitions` are for a table in a database; `targetColumnTypes` for files and Iceberg; `singleFile` for files; `targetKey` for Iceberg. Each given to another kind of target is an error.
+A setting given to the wrong kind of target is an error.
 
 - **`swap`** loads `targetTableStage`, then swaps it with `targetTableFinal` by renaming the two. The target is replaced wholesale. See [how the swap works](../concepts/how-it-works.md#how-a-swap-works) for what renaming means for views and on Oracle.
 - **`append`** (files) adds the run's parts to the table's directory, beside those already there. With a watermark it is an incremental export, and like any append-only table it can hold a row twice: see [duplicates](../concepts/how-it-works.md#appends-and-duplicate-rows).
 - **`overwrite`** (files) publishes the whole table as a new snapshot, `snapshot=<run>/` in the table's directory, and keeps the newest `keepSnapshots`. Readers pick the newest complete one; see [reading a snapshot](../concepts/how-it-works.md#reading-an-overwrite-jobs-table).
 - **Into Iceberg**, `append` adds the run's rows and `overwrite` replaces the table's, each in one commit, and `upsert` merges them by `targetKey` or the table's identifier fields, a commit per row group. See [Iceberg tables](../concepts/how-it-works.md#iceberg-tables).
-- **`upsert`** inserts or updates by the target's declared primary key — from `targetTableStage` if set, otherwise straight from the extract. UNIQUE constraints aren't part of the match. A target without a primary key fails the job before anything is written; `bauta run --dry-run` checks for one too.
+- **`upsert`** inserts or updates by the target's declared primary key (not its UNIQUE constraints), from `targetTableStage` if set, else straight from the extract. A target without a primary key fails before anything is written.
 
 ## Mask
 
 | Field | Required or default | Meaning |
 | --- | --- | --- |
-| `masking` | optional | Masks rows between the extract and the load. Its fields are `key`, `columns` and `defaultStrategy`, all documented in [masking.md](../guides/mask-a-table.md#a-masked-job). |
+| `masking` | optional | Masks rows between the extract and the load. Its fields are `key`, `columns` and `defaultStrategy`, all documented in [a masked job](../guides/mask-a-table.md#a-masked-job). |
 | `unmasked` | optional, `false` | Says this job copies its rows as they stand, and that somebody decided so. Cannot be set beside `masking`. |
 
 ```yaml
@@ -215,7 +213,7 @@ masking:
     customerId: { strategy: key, domain: customer }
 ```
 
-Masking runs after transforms, on `sourceQuery`'s result columns. **Every column the query returns must be listed**, or the job fails before writing anything. See [masking.md](../guides/mask-a-table.md) for the strategies, domains and the key.
+Masking runs after transforms, on `sourceQuery`'s result columns. **Every column the query returns must be listed**, or the job fails before writing anything. See [mask a table](../guides/mask-a-table.md) for the strategies, domains and the key.
 
 ### Copying without masking
 
@@ -224,7 +222,7 @@ A job with no `masking` block copies every column as it stands, which `bauta aud
 - a column whose name suggests personal data is an **error**, naming the columns and why;
 - otherwise it is a **warning**.
 
-`unmasked: true` says the job was reviewed and copies as it stands, the way `keep` says it of a single column. The warning then goes, the audit report shows the job as `not masked, declared with \`unmasked\``, and a column that still looks like personal data is reported as a warning rather than an error.
+`unmasked: true` says the job was reviewed, as `keep` says it of a column: the warning goes, and a column that still looks personal becomes a warning rather than an error.
 
 ## Load details
 
@@ -232,6 +230,4 @@ A job with no `masking` block copies every column as it stands, which `bauta aud
 
 **`targetColumns` is purely positional.** Left unset, `sourceQuery` must select every column of `targetTableFinal` in that table's own order. Real column names in the wrong order load data into the wrong columns *without any error*, since both sides are valid; a wrong count fails at the database.
 
-**Column names are quoted** in the statements a load writes, so a reserved word such as `rank` or `order` works as a column. Each name is first matched to the target's own spelling, ignoring case, so `targetColumns: [job]` still finds Oracle's `JOB`; a name the table doesn't have fails the job before anything is written, and so does one that matches two columns differing only in case, until it's spelled exactly.
-
-**Table names are quoted too**, so `targetTableFinal: group` loads into a table named for a reserved word. A name written plainly means what it means without quotes, so `orders` finds Oracle's `ORDERS` and PostgreSQL's `orders`; to name a table those two would fold differently — Oracle's lower-case `"orders"`, PostgreSQL's `"Orders"` — write it in quotes, in that database's own style (`"..."`, or `` `...` `` on MySQL and MariaDB, `[...]` on SQL Server), and that spelling is kept as it is. A schema is quoted apart from the table, so `sales.group` stays two names. The same holds for `targetTableStage`, for the tables `clear` empties, and for the names `schema`, `subset` and `discover` write into what they generate. `sourceQuery` and the adhoc queries are yours, and are written into SQL as given.
+**Column and table names are quoted** in the statements bauta writes, so reserved words (`rank`, `group`) work. A name written plainly means what it means unquoted (`orders` finds Oracle's `ORDERS` and PostgreSQL's `orders`); a name written in the database's own quotes keeps that exact spelling. Column names are matched to the target's spelling ignoring case, and a name it lacks fails before anything is written. See [how names are written](../concepts/how-it-works.md#how-names-are-written). `sourceQuery` and the adhoc queries are written into SQL as given.

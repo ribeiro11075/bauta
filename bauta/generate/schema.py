@@ -13,49 +13,53 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Se
 from ..configuration import DatabaseType
 from ..database.dialects import ColumnDefinition, ForeignKey, bareName, quoteFolded, quoteFoldedTable, quoteIdentifier, splitTableName, tooLongName
 
+# _DUCKDB_UNSIGNED: DuckDB's unsigned integers that the next signed type up
+#   holds.
+# KEY_TEXT_LENGTH: where a key column can't be an unbounded type -- MySQL can't
+#   index TEXT, SQL Server can't index NVARCHAR(MAX), Oracle can't index a CLOB
+#   -- it gets this bounded length instead.
+# ORACLE_TIME_LENGTH: Oracle keeps a TIME as text. MySQL's driver returns a
+#   TIME as a timedelta, whose text runs to '-35 days, 1:00:01.999999' at the
+#   type's limits.
+# UNSIGNED_BIGINT_DIGITS: the digits of an unsigned 64-bit integer: MySQL's
+#   BIGINT UNSIGNED and DuckDB's UBIGINT reach 18446744073709551615.
+# INTEGER_DIGITS: the digits each target's integer types take. SQLite gives all
+#   three the same 64-bit affinity whatever they are called, and Oracle renders
+#   them as NUMBER(n), which holds every value of that many digits.
+# KEY_COLLATIONS: the collation a key column needs on the databases whose
+#   default compares text loosely, where two keys the source keeps apart would
+#   otherwise become one row: `a` and `A`, `ss` and the German sharp s, and on
+#   MySQL and MariaDB `a` and `a ` too. SQL Server compares trailing spaces
+#   loosely whatever the collation, so there it refuses the second key instead
+#   of merging it.
+# _COLLATED_KINDS: the kinds a collation applies to.
+# _UNINDEXABLE: the column types each target refuses in an index: large
+#   objects, and text or binary without a length.
+# DEFAULT_STAGE_SUFFIX: the suffix a stage table takes when nothing else names
+#   it: `orders_stage`.
 INTEGER_BOOLEAN_NOTE = 'the source stores this as an integer, so it stays one'
-# DuckDB's unsigned integers that the next signed type up holds.
 _DUCKDB_UNSIGNED = {'utinyint': 'smallint', 'usmallint': 'integer', 'uinteger': 'bigint'}
-# Where a key column can't be an unbounded type -- MySQL can't index TEXT,
-# SQL Server can't index NVARCHAR(MAX), Oracle can't index a CLOB -- it gets
-# this bounded length instead.
 KEY_TEXT_LENGTH = 255
-# Oracle keeps a TIME as text. MySQL's driver returns a TIME as a timedelta,
-# whose text runs to '-35 days, 1:00:01.999999' at the type's limits.
 ORACLE_TIME_LENGTH = 32
 SQLITE_INTEGER_DIGITS = 19
-# The digits of an unsigned 64-bit integer: MySQL's BIGINT UNSIGNED and
-# DuckDB's UBIGINT reach 18446744073709551615.
 UNSIGNED_BIGINT_DIGITS = 20
-# The digits each target's integer types take. SQLite gives all three the same
-# 64-bit affinity whatever they are called, and Oracle renders them as
-# NUMBER(n), which holds every value of that many digits.
 INTEGER_DIGITS = {'smallint': 4, 'integer': 9, 'bigint': 18}
 _TARGET_INTEGER_DIGITS = {
     DatabaseType.ORACLE: {'smallint': 5, 'integer': 10, 'bigint': 19},
     DatabaseType.SQLITE: {'smallint': 19, 'integer': 19, 'bigint': 19},
     }
-# The collation a key column needs on the databases whose default compares
-# text loosely, where two keys the source keeps apart would otherwise become
-# one row: `a` and `A`, `ss` and the German sharp s, and on MySQL and MariaDB
-# `a` and `a ` too. SQL Server compares trailing spaces loosely whatever the
-# collation, so there it refuses the second key instead of merging it.
 KEY_COLLATIONS = {
     DatabaseType.MYSQL: 'utf8mb4_0900_bin',
     DatabaseType.MARIADB: 'utf8mb4_nopad_bin',
     DatabaseType.MSSQL: 'Latin1_General_BIN2',
     }
-# The kinds a collation applies to.
 _COLLATED_KINDS = ('text', 'fixedText', 'uuid')
-# The column types each target refuses in an index: large objects, and text
-# or binary without a length.
 _UNINDEXABLE = {
     DatabaseType.MYSQL: re.compile(r'TEXT|BLOB|JSON', re.IGNORECASE),
     DatabaseType.MARIADB: re.compile(r'TEXT|BLOB|JSON', re.IGNORECASE),
     DatabaseType.ORACLE: re.compile(r'\b[NB]?CLOB\b|\bBLOB\b|\bLONG\b', re.IGNORECASE),
     DatabaseType.MSSQL: re.compile(r'\(MAX\)|\bN?TEXT\b|\bIMAGE\b|\bXML\b', re.IGNORECASE),
     }
-# The suffix a stage table takes when nothing else names it: `orders_stage`.
 DEFAULT_STAGE_SUFFIX = '_stage'
 
 
@@ -75,24 +79,25 @@ class PortableType(NamedTuple):
     narrower type can be noted.
     """
 
+    # native: the source's own type, for a target of the same kind, where the
+    #   portable kind is a stand-in: a PostgreSQL array, `integer[]`, is text
+    #   anywhere else. `note` then says what other targets get.
     kind: str
     length: Optional[int] = None
     precision: Optional[int] = None
     scale: Optional[int] = None
     note: Optional[str] = None
-    # The source's own type, for a target of the same kind, where the
-    # portable kind is a stand-in: a PostgreSQL array, `integer[]`, is text
-    # anywhere else. `note` then says what other targets get.
     native: Optional[str] = None
 
 
 class TableDefinition(NamedTuple):
+    """A source table as `schema` reads it from the catalog."""
 
+    # indexes: (name, columns) of each plain index; see Database.getIndexes.
     name: str
     columns: List[ColumnDefinition]
     primaryKey: List[str]
     foreignKeys: List[ForeignKey]
-    # (name, columns) of each plain index; see Database.getIndexes.
     indexes: Sequence[Tuple[str, Tuple[str, ...]]] = ()
 
 
@@ -108,6 +113,9 @@ class Statement(NamedTuple):
 
 
 def _integerForPrecision(precision: Optional[int]) -> PortableType:
+    """The smallest integer type holding every value of `precision` digits, or
+    a decimal past 18; bigint where no precision is given.
+    """
 
     if precision is None:
         return PortableType('bigint', note='unconstrained integer; mapped to a 64-bit integer')
@@ -160,9 +168,11 @@ def portableType(sourceType: DatabaseType, column: ColumnDefinition) -> Portable
 
 
 def _oracleType(base: str, column: ColumnDefinition) -> PortableType:
+    """An Oracle column's portable type. INTEGER is stored as NUMBER with scale
+    0 and no precision, so a NUMBER of scale 0 is an integer.
+    """
 
     if base == 'number':
-        # INTEGER is stored as NUMBER with scale 0 and no precision.
         if column.scale == 0:
             return _integerForPrecision(column.precision)
         if column.precision is None:
@@ -277,8 +287,11 @@ def _sharedType(sourceType: DatabaseType, base: str, unsigned: bool, column: Col
     return PortableType('text', note='unrecognized type {}; mapped to text'.format(column.dataType))
 
 
-# The information_schema names whose kind is all there is to say of them, for
-# _sharedType. The groups don't overlap, so the order is only for reading.
+# _SHARED_KINDS: the information_schema names whose kind is all there is to say
+#   of them, for _sharedType. The groups don't overlap, so the order is only
+#   for reading.
+# _UNSIGNED: what each of MySQL's and MariaDB's unsigned integers is copied as:
+#   the smallest type holding its whole range.
 _SHARED_KINDS = {name: kind for names, kind in (
     (('tinyint', 'smallint', 'int2'), 'smallint'),
     (('int', 'integer', 'mediumint', 'int4', 'serial'), 'integer'),
@@ -292,10 +305,6 @@ _SHARED_KINDS = {name: kind for names, kind in (
     (('uuid', 'uniqueidentifier'), 'uuid'),
     (('json', 'jsonb'), 'json'),
     ) for name in names}
-
-
-# What each of MySQL's and MariaDB's unsigned integers is copied as: the
-# smallest type holding its whole range.
 _UNSIGNED = {
     'tinyint': PortableType('smallint'),
     'smallint': PortableType('integer'),
@@ -345,6 +354,10 @@ def renderType(targetType: DatabaseType, portable: PortableType, isKey: bool) ->
 
 
 def _renderedType(targetType: DatabaseType, portable: PortableType, isKey: bool) -> Tuple[str, Optional[str]]:
+    """A portable type as the target database writes it, and a note where the
+    mapping changes something a reader should know: a key's unbounded text
+    bounded to KEY_TEXT_LENGTH, a type the target lacks, a range it can't hold.
+    """
 
     kind, length, precision, scale = portable.kind, portable.length, portable.precision, portable.scale
     note = None
@@ -559,6 +572,12 @@ def _uniqueConstraints(tables: Sequence[TableDefinition], created: Dict[str, str
 
 def _createTable(sourceType: DatabaseType, targetType: DatabaseType, table: TableDefinition, name: str,
                  includeForeignKeys: bool, created: Dict[str, str], unique: Sequence[Tuple[str, ...]], taken: Set[str]) -> Statement:
+    """The CREATE TABLE for one table on the target: its columns, primary key,
+    unique constraints and, where asked and the referenced table is being
+    created too, foreign keys, with notes on whatever changed in the mapping.
+    `created` maps each table being created to its name on the target, and
+    `taken` holds the constraint names already used.
+    """
 
     keyColumns = {column.upper() for column in table.primaryKey}
     for foreignKey in table.foreignKeys:
@@ -576,9 +595,15 @@ def _createTable(sourceType: DatabaseType, targetType: DatabaseType, table: Tabl
     # it keeps the catalog's spelling: "Order" became order, PostgreSQL to
     # PostgreSQL, and the copy no longer matched production's columns.
     def columnName(name: str) -> str:
+        """A column's name on the target: as the catalog spells it between two
+        of the same database, else folded as the target folds a bare name.
+        """
+
         return quoteIdentifier(targetType, name) if sourceType == targetType else quoteFolded(targetType, name)
 
     def quoted(names: Iterable[str]) -> str:
+        """Column names on the target, joined with commas."""
+
         return ', '.join(columnName(name) for name in names)
 
     for column in table.columns:
@@ -635,6 +660,8 @@ def _createIndexes(sourceType: DatabaseType, targetType: DatabaseType, table: Ta
         return []
 
     def columnName(name: str) -> str:
+        """A column's name on the target, as _createTable names it."""
+
         return quoteIdentifier(targetType, name) if sourceType == targetType else quoteFolded(targetType, name)
 
     covered = {tuple(column.upper() for column in table.primaryKey)} | {tuple(column.upper() for column in group) for group in unique}

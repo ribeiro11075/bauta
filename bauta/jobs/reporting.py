@@ -23,13 +23,21 @@ from ..database import Database
 from .memory import exclusiveLock
 from .runner import RunResult, newRunId
 
+# STAGE_FIELDS: each stage a job's time is split into, as history names it: see
+#   throttle.StageTimes. Only a completed job has them.
+# TAIL_BLOCK_BYTES: how much of the history file is read at a time when reading
+#   it backwards.
+# _STAGE_COLUMNS: not in a table made by 0.2.4 or earlier: written and read
+#   only where the table has them.
+# DATABASE_MANIFEST_SCHEMA: one row per piece of a manifest's JSON, which is
+#   ASCII (json.dumps escapes the rest), so VARCHAR holds it on every dialect
+#   where a single large-text column would need a different type on each.
+# NOTIFY_ATTEMPTS: sent twice at most, a few seconds apart. A failure alert is
+#   sent when something has already gone wrong, often on a network having a bad
+#   moment, and one dropped request lost it.
 HTTP_TIMEOUT_SECONDS = 10
-
 ERROR_TEXT_LIMIT = 2000
-# Each stage a job's time is split into, as history names it: see
-# throttle.StageTimes. Only a completed job has them.
 STAGE_FIELDS = {'read': 'readSeconds', 'mask': 'maskSeconds', 'write': 'writeSeconds', 'throttled': 'throttledSeconds'}
-# How much of the history file is read at a time when reading it backwards.
 TAIL_BLOCK_BYTES = 64 * 1024
 DATABASE_HISTORY_SCHEMA = """CREATE TABLE bauta_history (
     run_id VARCHAR(36) NOT NULL,
@@ -47,12 +55,7 @@ DATABASE_HISTORY_SCHEMA = """CREATE TABLE bauta_history (
     PRIMARY KEY (run_id, job)
     )"""
 _HISTORY_COLUMNS = ['run_id', 'job', 'status', 'row_count', 'attempts', 'started_at', 'finished_at', 'error']
-# Not in a table made by 0.2.4 or earlier: written and read
-# only where the table has them.
 _STAGE_COLUMNS = ['read_seconds', 'mask_seconds', 'write_seconds', 'throttled_seconds']
-# One row per piece of a manifest's JSON, which is ASCII (json.dumps escapes
-# the rest), so VARCHAR holds it on every dialect where a single large-text
-# column would need a different type on each.
 DATABASE_MANIFEST_SCHEMA = """CREATE TABLE bauta_manifest (
     run_id VARCHAR(36) NOT NULL,
     part INT NOT NULL,
@@ -61,14 +64,12 @@ DATABASE_MANIFEST_SCHEMA = """CREATE TABLE bauta_manifest (
     PRIMARY KEY (run_id, part)
     )"""
 MANIFEST_PART_LENGTH = 2000
-# Sent twice at most, a few seconds apart. A failure alert is sent when
-# something has already gone wrong, often on a network having a bad moment,
-# and one dropped request lost it.
 NOTIFY_ATTEMPTS = 2
 NOTIFY_RETRY_DELAY_SECONDS = 3.0
 
 
 def _timestamp(seconds: float) -> Optional[str]:
+    """A Unix time as ISO 8601 in UTC, or None for none."""
 
     if not seconds:
         return None
@@ -77,6 +78,7 @@ def _timestamp(seconds: float) -> Optional[str]:
 
 
 def _stageFields(stages: Optional[Mapping[str, float]]) -> Dict[str, Optional[float]]:
+    """A job's stage times as history's fields, None for a stage it didn't record."""
 
     return {field: (stages or {}).get(stage) for stage, field in STAGE_FIELDS.items()}
 
@@ -141,11 +143,18 @@ class FileHistory(RunHistory):
     """History as JSON lines, one per job outcome, appended under a lock."""
 
     def __init__(self, historyFile: Union[str, Path]) -> None:
+        """History appended to `historyFile`, one JSON object a line, under a
+        `.lock` file beside it.
+        """
+
         self.historyFile = Path(historyFile)
         self._lockFile = self.historyFile.with_name(self.historyFile.name + '.lock')
 
 
     def append(self, result: RunResult, runId: str) -> None:
+        """Appends one record per job of the cycle, synced to disk before the
+        lock is let go.
+        """
 
         lines = ''.join(json.dumps(record, default=str) + '\n' for record in historyRecords(result, runId))
         if not lines:
@@ -190,6 +199,8 @@ class DatabaseHistory(RunHistory):
     """
 
     def __init__(self, connectionSettings: ConnectionConfig, table: str = 'bauta_history') -> None:
+        """History kept in `table` on a connection."""
+
         self.connectionSettings = connectionSettings
         self.table = table
 
@@ -206,6 +217,9 @@ class DatabaseHistory(RunHistory):
 
 
     def append(self, result: RunResult, runId: str) -> None:
+        """Inserts one row per job of the cycle, its stage times where the
+        table has their columns.
+        """
 
         if not result.outcomes:
             return
@@ -220,12 +234,15 @@ class DatabaseHistory(RunHistory):
 
 
     def read(self, limit: int = 20, job: Optional[str] = None) -> List[Dict[str, Any]]:
+        """The latest `limit` records, newest first, of every job or of `job`,
+        as FileHistory.read gives them. The table is quoted as a load writes
+        it; the columns are bare, since the catalog's spelling of them is what
+        a server folds an unquoted name to. NUMERIC comes back as a Decimal on
+        some drivers, which JSON can't write, so numbers are converted.
+        """
 
         with Database(connectionSettings=self.connectionSettings) as database:
             columns = self._columns(database)
-            # The table quoted as a load already writes it; the columns bare,
-            # since the catalog's own spelling of them is what a server folds
-            # an unquoted name to.
             query = 'SELECT {} FROM {}'.format(', '.join(columns), database.statementName(self.table))
             parameters = None
             if job is not None:
@@ -242,7 +259,6 @@ class DatabaseHistory(RunHistory):
             runId, name, status, rowCount, attempts, startedAt, finishedAt, error = row[:len(_HISTORY_COLUMNS)]
             stages = dict(zip(STAGE_FIELDS.values(), row[len(_HISTORY_COLUMNS):]))
             started, finished = float(startedAt or 0), float(finishedAt or 0)
-            # NUMERIC comes back as Decimal on some drivers, which JSON can't write.
             records.append({'runId': runId, 'job': name, 'status': status, 'rowCount': int(rowCount or 0), 'attempts': int(attempts or 0),
                             'startedAt': _timestamp(started), 'finishedAt': _timestamp(finished),
                             'durationSeconds': round(max(0.0, finished - started), 3) if started and finished else 0.0, 'error': error,
@@ -294,11 +310,17 @@ class DatabaseManifests:
     """
 
     def __init__(self, connectionSettings: ConnectionConfig, table: str = 'bauta_manifest') -> None:
+        """Manifests kept in `table` on a connection."""
+
         self.connectionSettings = connectionSettings
         self.table = table
 
 
     def write(self, manifest: Mapping[str, Any], runId: str) -> None:
+        """Stores the manifest as JSON, in parts of MANIFEST_PART_LENGTH
+        characters, inserted as one chunk and so in one transaction: whole, or
+        not at all.
+        """
 
         text = json.dumps(manifest, indent=2)
         writtenAt = datetime.datetime.now(datetime.timezone.utc).timestamp()
@@ -306,7 +328,6 @@ class DatabaseManifests:
                 for number, start in enumerate(range(0, len(text), MANIFEST_PART_LENGTH))]
 
         with Database(connectionSettings=self.connectionSettings) as database:
-            # One chunk, so one transaction: a manifest is stored whole or not at all.
             database.insert(table=self.table, data=rows, chunkSize=len(rows), columns=['run_id', 'part', 'written_at', 'content'])
 
 

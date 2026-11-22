@@ -1,8 +1,11 @@
+// The activity page: everything done through Studio, by whom.
+
 import { useQuery } from '@tanstack/react-query'
 import { api, type Activity } from '../api'
 import { Failure, Loading, PageHead } from '../components/ui'
 import { whenExactly } from '../format'
 
+/** The activity log as a table, an edit's diff folded away under it. */
 export function ActivityPage() {
   const activity = useQuery({ queryKey: ['activity'], queryFn: () => api<{ activity: Activity[] }>('/activity') })
 

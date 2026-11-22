@@ -12,9 +12,8 @@ from ...configuration import DatabaseConfig, DatabaseType, OracleConnection
 from ...log import LOGGER_NAME
 from .base import ColumnCategory, DatabaseDialect, _mergeUpdateInsertClause, _renameInThreeSteps, _renameSteps, _renameStatement, settingsOf
 
-# The condition Oracle stores for a NOT NULL column.
+# _NOT_NULL_CHECK: the condition Oracle stores for a NOT NULL column.
 _NOT_NULL_CHECK = re.compile(r'^\s*"?[^"\s]+"?\s+IS\s+NOT\s+NULL\s*$', re.IGNORECASE)
-
 logger = logging.getLogger(LOGGER_NAME)
 
 
@@ -64,27 +63,29 @@ def _oracleValues(cursor: Cursor, metadata: Any) -> Any:
 
 
 class OracleDialect(DatabaseDialect):
+    """Oracle, through python-oracledb in thin mode, so no client libraries are
+    needed. Upserts are MERGE statements, and a swap's renames commit one by
+    one.
+    """
 
+    # ATOMIC_SWAP: each rename commits on its own; see swap.
+    # REFUSED_FLOATS: a NUMBER's; BINARY_DOUBLE and BINARY_FLOAT hold both. See
+    #   bindTypes.
+    # SESSION_FORMATS: ISO 8601 for implicit text-date conversions, so ISO text
+    #   from other databases, or a watermarkInitial, loads into a DATE. See
+    #   "Moving values between drivers" in docs/concepts/how-it-works.md.
     databaseType = DatabaseType.ORACLE
-
-    # Each rename commits on its own; see swap.
     ATOMIC_SWAP = False
-
-    # A NUMBER's; BINARY_DOUBLE and BINARY_FLOAT hold both. See bindTypes.
     REFUSED_FLOATS = frozenset({'nan', 'inf'})
-
     _NUMBER_TYPE_NAMES = {'DB_TYPE_NUMBER', 'DB_TYPE_BINARY_INTEGER', 'DB_TYPE_BINARY_FLOAT', 'DB_TYPE_BINARY_DOUBLE'}
     _DATE_TYPE_NAMES = {'DB_TYPE_DATE', 'DB_TYPE_TIMESTAMP', 'DB_TYPE_TIMESTAMP_TZ', 'DB_TYPE_TIMESTAMP_LTZ'}
     _TEXT_TYPE_NAMES = {'DB_TYPE_VARCHAR', 'DB_TYPE_CHAR', 'DB_TYPE_NVARCHAR', 'DB_TYPE_NCHAR', 'DB_TYPE_CLOB', 'DB_TYPE_NCLOB', 'DB_TYPE_LONG'}
-
-    # ISO 8601 for implicit text-date conversions, so ISO text from other
-    # databases, or a watermarkInitial, loads into a DATE. See "Moving values
-    # between drivers" in docs/concepts/how-it-works.md.
     SESSION_FORMATS = ("ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS' "
                        "NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF' "
                        "NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'")
 
     def openConnection(self, settings: DatabaseConfig) -> Any:
+        """A python-oracledb connection, in thin mode."""
 
         import oracledb
 
@@ -92,6 +93,10 @@ class OracleDialect(DatabaseDialect):
 
 
     def prepareSession(self, connection: Connection, settings: DatabaseConfig) -> Any:
+        """Oracle's: values read and bound through this module's type handlers,
+        ISO 8601 for implicit date conversions (SESSION_FORMATS), and
+        currentSchema where one is set.
+        """
 
         native(connection).outputtypehandler = _oracleValues
         native(connection).inputtypehandler = _oracleDatetimesAsTimestamps
@@ -106,6 +111,7 @@ class OracleDialect(DatabaseDialect):
 
 
     def _ownConnectArguments(self, settings: DatabaseConfig, password: Optional[str]) -> Dict[str, Any]:
+        """The login, host and service name or SID, for python-oracledb."""
 
         settings = settingsOf(settings, OracleConnection)
 
@@ -126,14 +132,19 @@ class OracleDialect(DatabaseDialect):
 
 
     def placeholders(self, count: int) -> List[str]:
+        """python-oracledb's numeric style: `:1`, `:2`, ..."""
 
         return [':{}'.format(i + 1) for i in range(count)]
 
 
-    # The columns a float must bind to as itself rather than as a NUMBER.
+    # _BINARY_FLOATING_TYPES: the columns a float must bind to as itself rather
+    #   than as a NUMBER.
     _BINARY_FLOATING_TYPES = ('DB_TYPE_BINARY_DOUBLE', 'DB_TYPE_BINARY_FLOAT')
 
     def holdsNonFinite(self, columnType: Any) -> bool:
+        """Oracle's: a BINARY_DOUBLE or BINARY_FLOAT column holds NaN and the
+        infinities; a NUMBER doesn't.
+        """
 
         return getattr(columnType, 'name', None) in self._BINARY_FLOATING_TYPES
 
@@ -200,10 +211,11 @@ class OracleDialect(DatabaseDialect):
                 "WHERE c.constraint_type = 'R' AND u.oracle_maintained = 'N' GROUP BY c.owner")
 
 
-    # all_* views filtered to the bound schema or the session's current one,
-    # which user_* views wouldn't follow after ALTER SESSION SET CURRENT_SCHEMA.
-    # The bound names arrive folded, so a table quoted in a job -- the only way
-    # to name a lower-case one on Oracle -- is looked up as it is spelled.
+    # OWNER: all_* views filtered to the bound schema or the session's current
+    #   one, which user_* views wouldn't follow after ALTER SESSION SET
+    #   CURRENT_SCHEMA. The bound names arrive folded, so a table quoted in a
+    #   job -- the only way to name a lower-case one on Oracle -- is looked up
+    #   as it is spelled.
     OWNER = "COALESCE({}, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'))"
 
     def columnsQuery(self) -> str:
@@ -223,6 +235,7 @@ class OracleDialect(DatabaseDialect):
 
 
     def isEncrypted(self, cursor: Cursor) -> Optional[bool]:
+        """Oracle's: whether the session's network protocol is TCPS."""
 
         cursor.execute("SELECT SYS_CONTEXT('USERENV', 'NETWORK_PROTOCOL') FROM dual")
         protocol = cursor.fetchone()[0]
@@ -231,6 +244,7 @@ class OracleDialect(DatabaseDialect):
 
 
     def primaryKeyQuery(self) -> str:
+        """Oracle's, from all_constraints, for the OWNER schema."""
 
         return ("SELECT cols.column_name FROM all_constraints cons "
                 "JOIN all_cons_columns cols ON cols.owner = cons.owner AND cols.constraint_name = cons.constraint_name "
@@ -238,6 +252,9 @@ class OracleDialect(DatabaseDialect):
 
 
     def checkConstraintsQuery(self) -> Optional[str]:
+        """Oracle's: the search conditions of the table's check constraints,
+        NOT NULL ones among them, which the caller leaves out.
+        """
 
         return ("SELECT search_condition_vc FROM all_constraints WHERE constraint_type = 'C' AND owner = " + self.OWNER + " AND table_name = {} "
                 "ORDER BY constraint_name")
@@ -254,11 +271,13 @@ class OracleDialect(DatabaseDialect):
 
 
     def plainIndexesQuery(self) -> Optional[str]:
+        """Oracle's: the indexes that are neither unique nor the primary key."""
 
         return self._indexesQuery(unique=False)
 
 
     def tableGrantsQuery(self) -> Optional[str]:
+        """Oracle's, from all_tab_privs, leaving out the owner's own."""
 
         return ("SELECT privilege, grantee, grantable FROM all_tab_privs WHERE table_schema = " + self.OWNER + " AND table_name = {} "
                 "AND type = 'TABLE' AND grantee <> table_schema ORDER BY grantee, privilege")
@@ -287,6 +306,7 @@ class OracleDialect(DatabaseDialect):
 
 
     def tableExistsQuery(self) -> str:
+        """Oracle's, from all_tables, for the OWNER schema."""
 
         return "SELECT count(*) FROM all_tables WHERE owner = " + self.OWNER + " AND table_name = {}"
 
@@ -306,6 +326,7 @@ class OracleDialect(DatabaseDialect):
 
 
     def upsertQuery(self, table: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """Oracle's: a MERGE of one row, bound as a SELECT from dual."""
 
         bindColumns = ', '.join('{} {}'.format(placeholder, column) for placeholder, column in zip(self.placeholders(len(allColumns)), allColumns))
         mergeClause = _mergeUpdateInsertClause('target', 'source', allColumns, primaryKeyColumns, nonPrimaryKeyColumns)
@@ -314,6 +335,7 @@ class OracleDialect(DatabaseDialect):
 
 
     def upsertFromStageQuery(self, targetTable: str, stageTable: str, allColumns: List[str], primaryKeyColumns: List[str], nonPrimaryKeyColumns: List[str]) -> str:
+        """Oracle's: a MERGE of every row in the stage."""
 
         mergeClause = _mergeUpdateInsertClause('target', 'source', allColumns, primaryKeyColumns, nonPrimaryKeyColumns)
 

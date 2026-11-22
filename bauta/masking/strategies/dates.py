@@ -12,10 +12,13 @@ from ..core import MASK_CACHE_SIZE, KeyedHash, MaskingError, Strategy, canonical
 from .common import _integerOption, _textOption, _typeName
 
 
+# _CALENDAR_ENDS, _CALENDAR_INSIDE: the first and last days Python's calendar
+#   holds, by ordinal, and the days between them.
+# _ISO_TEXT: ISO 8601 text as it is usually written: a date, then perhaps a
+#   time to the hour, minute, second or fraction of one, then perhaps Z or an
+#   offset.
 _CALENDAR_ENDS = frozenset({datetime.date.min.toordinal(), datetime.date.max.toordinal()})
 _CALENDAR_INSIDE = range(datetime.date.min.toordinal() + 1, datetime.date.max.toordinal())
-# ISO 8601 text as it is usually written: a date, then perhaps a time to the
-# hour, minute, second or fraction of one, then perhaps Z or an offset.
 _ISO_TEXT = re.compile(r'(\d{4}-\d{2}-\d{2})(?:[T ](\d{2})(?::(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?)?(Z|[+-]\d{2}(?::?\d{2})?)?)?')
 
 
@@ -42,13 +45,15 @@ class DateShiftStrategy(Strategy):
     CONTEXT_OPTION = 'shiftBy'
 
     def __init__(self, keyedHash: KeyedHash, options: Mapping[str, Any]) -> None:
+        """Adds two caches of shifts already derived: _offsets by the day's
+        ordinal, _subjectOffsets by the shiftBy value. Strategy's own cache
+        can't hold them, since dates and timestamps are not among the types it
+        remembers (equal values can differ in time zone), yet a shift depends
+        on nothing but the day or the subject.
+        """
+
         super().__init__(keyedHash, options)
-        # Shifts already derived, by the day's ordinal. Strategy's own cache
-        # can't hold these: a date and a timestamp are not among the types it
-        # remembers (equal values can differ in time zone), yet the shift
-        # itself depends on nothing but the day.
         self._offsets: Dict[int, datetime.timedelta] = {}
-        # And by the shiftBy value, for the same reason.
         self._subjectOffsets: Dict[Tuple[type, Any], datetime.timedelta] = {}
 
 
@@ -136,16 +141,29 @@ class DateShiftStrategy(Strategy):
 
 
     def maskColumnWith(self, values: Sequence[Any], context: Sequence[Any], chunkIndex: int) -> List[Any]:
+        """The column shifted by each row's shiftBy value rather than its own
+        day, so all of one subject's dates move together.
+        """
 
         return [None if value is None else self._maskShifted(value, subject) for value, subject in zip(values, context)]
 
 
     def mask(self, value: Any) -> Any:
+        """The value shifted by its own day's offset."""
 
         return self._maskShifted(value, None)
 
 
     def _maskShifted(self, value: Any, subject: Any) -> Any:
+        """A date, timestamp or ISO 8601 text moved by the offset for
+        `subject`, or for its own day when that is None, and returned in the
+        form it came in.
+
+        Text holding a plain ISO date has only its date rewritten: the shift is
+        whole days, so the time, its fraction of a second and its zone stay as
+        written, `.5` and `Z` included, where isoformat would write `.500000`
+        and `+00:00`.
+        """
 
         if isinstance(value, datetime.date):
             return self._shift(value, subject)
@@ -156,10 +174,6 @@ class DateShiftStrategy(Strategy):
         text = value.strip()
         day = _isoDay(text)
         if day is not None:
-            # The shift is whole days, so only the date changes: the time,
-            # its fraction of a second and its zone stay as they were
-            # written, `.5` and `Z` included, where Python's isoformat wrote
-            # `.500000` and `+00:00` back.
             return self._shift(day, subject).isoformat() + text[10:]
 
         try:

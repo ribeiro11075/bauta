@@ -19,16 +19,19 @@ from typing import Any, Callable, Dict, Tuple
 
 from ..masking.strategies import luhnValid
 
+# MAC: colon or hyphen separated (08:00:2b:01:02:03), or Cisco's dotted form
+#   (0800.2b01.0203).
+# NAME_RULES: (name, words any of which must be in the column name, policy,
+#   reason). Column names are matched split on underscores and camelCase and
+#   joined whole, so `first_name` and `FIRSTNAME` both match `firstname`.
+# PERSONAL_TABLE_WORDS: words in a table's name that say its rows are people,
+#   so a bare `name` column in it is a person's name.
 EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$')
 PHONE = re.compile(r'^\+?[\d\s().-]{7,}$')
 NATIONAL_ID = re.compile(r'^\d{3}-\d{2}-\d{4}$')
 CARD = re.compile(r'^[\d -]{13,23}$')
-# Colon or hyphen separated (08:00:2b:01:02:03), or Cisco's dotted form (0800.2b01.0203).
 MAC = re.compile(r'^(?:[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})$')
 UUID_TEXT = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
-# (name, words any of which must be in the column name, policy, reason).
-# Column names are matched split on underscores and camelCase and joined
-# whole, so `first_name` and `FIRSTNAME` both match `firstname`.
 NAME_RULES: Tuple[Tuple[str, Tuple[str, ...], Dict[str, Any], str], ...] = (
     ('email', ('email', 'emailaddress', 'mail'), {'strategy': 'email'}, 'name suggests an email address'),
     ('credential', ('password', 'passwd', 'pwd', 'secret', 'token', 'apikey', 'salt'), {'strategy': 'hash'}, 'name suggests a credential'),
@@ -72,14 +75,15 @@ NAME_RULES: Tuple[Tuple[str, Tuple[str, ...], Dict[str, Any], str], ...] = (
     ('freeText', ('note', 'notes', 'comment', 'comments', 'description', 'remarks', 'memo', 'bio', 'message', 'body', 'freetext'),
      {'strategy': 'null'}, 'name suggests free text, which can hold PII anywhere; redact keeps the text but only removes identifiers with a known shape'),
     )
-# Words in a table's name that say its rows are people, so a bare `name`
-# column in it is a person's name.
 PERSONAL_TABLE_WORDS = frozenset({'customer', 'customers', 'user', 'users', 'person', 'people', 'employee', 'employees', 'contact',
                                   'contacts', 'member', 'members', 'patient', 'patients', 'client', 'clients', 'account', 'accounts',
                                   'student', 'students', 'applicant', 'applicants', 'guest', 'guests'})
 
 
 def isCard(text: str) -> bool:
+    """Whether text is shaped like a card number: 13 to 19 digits, spaced or
+    dashed or not, passing the Luhn check.
+    """
 
     digits = re.sub(r'\D', '', text)
 
@@ -87,6 +91,7 @@ def isCard(text: str) -> bool:
 
 
 def isIsoDate(text: str) -> bool:
+    """Whether text reads as an ISO 8601 date or timestamp."""
 
     try:
         datetime.datetime.fromisoformat(text.strip())
@@ -110,12 +115,16 @@ def isIpAddress(text: str) -> bool:
 
 
 def isPhone(text: str) -> bool:
+    """Whether text is shaped like a phone number: at least 7 digits, with the
+    punctuation phone numbers are written with, and not digits alone, which
+    would make every id a phone number.
+    """
 
     return bool(PHONE.match(text)) and len(re.sub(r'\D', '', text)) >= 7 and not text.isdigit()
 
 
-# (name, test on one stripped text value, policy, reason). A column matches when
-# enough of its sampled text values pass.
+# VALUE_RULES: (name, test on one stripped text value, policy, reason). A
+#   column matches when enough of its sampled text values pass.
 VALUE_RULES: Tuple[Tuple[str, Callable[[str], bool], Dict[str, Any], str], ...] = (
     ('email', lambda text: bool(EMAIL.match(text)), {'strategy': 'email'}, 'sampled values look like email addresses'),
     ('nationalId', lambda text: bool(NATIONAL_ID.match(text)), {'strategy': 'key', 'charset': 'digits'},
@@ -130,6 +139,4 @@ VALUE_RULES: Tuple[Tuple[str, Callable[[str], bool], Dict[str, Any], str], ...] 
     ('date', isIsoDate, {'strategy': 'keep'}, 'sampled values are dates -- review whether they identify anyone'),
     ('phone', isPhone, {'strategy': 'digits'}, 'sampled values look like phone numbers'),
     )
-
-
 RULE_NAMES = frozenset({rule[0] for rule in NAME_RULES} | {rule[0] for rule in VALUE_RULES})

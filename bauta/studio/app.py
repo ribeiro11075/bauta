@@ -31,13 +31,13 @@ from .settings import Settings
 from .sso import OidcClient
 from .twofactor import SecretBox
 
+# ARCHIVE_SECONDS: how often the manifest `run` last wrote is looked at, to
+#   keep it by run.
+# UNEXPECTED_ERROR: all a browser is told of a failure nothing expected: what
+#   went wrong is in Studio's log, with its message scrubbed.
 STATIC_DIRECTORY = Path(__file__).parent / 'static'
-# How often the manifest `run` last wrote is looked at, to keep it by run.
 ARCHIVE_SECONDS = 10.0
-# All a browser is told of a failure nothing expected: what went wrong is in
-# Studio's log, with its message scrubbed.
 UNEXPECTED_ERROR = 'something went wrong on the server; its log says what'
-
 logger = logging.getLogger(__name__)
 
 
@@ -57,35 +57,52 @@ def _archiveLoop(settings: Settings, database: Database, launcher: Launcher, sto
 
 
 def _addErrorHandlers(app: FastAPI) -> None:
+    """How the errors Studio's routes raise become answers: each as JSON with
+    its detail, at its own status.
+    """
 
     @app.exception_handler(HTTPException)
     def httpError(request: Request, error: HTTPException) -> JSONResponse:
+        """An HTTPException as JSON, with its status and headers."""
+
         return JSONResponse(status_code=error.status_code, content={'detail': error.detail}, headers=error.headers)
 
     @app.exception_handler(configfiles.EditConflict)
     def editConflict(request: Request, error: configfiles.EditConflict) -> JSONResponse:
+        """An edit of a file changed since it was read: 409."""
+
         return JSONResponse(status_code=409, content={'detail': str(error)})
 
     @app.exception_handler(configfiles.EditRefused)
     def editRefused(request: Request, error: configfiles.EditRefused) -> JSONResponse:
+        """An edit that would make the configuration invalid: 422."""
+
         return JSONResponse(status_code=422, content={'detail': str(error)})
 
     @app.exception_handler(UsageError)
     def usageError(request: Request, error: UsageError) -> JSONResponse:
+        """A request the configuration can't answer: 400."""
+
         return JSONResponse(status_code=400, content={'detail': str(error)})
 
 
 def _addMiddleware(app: FastAPI) -> None:
+    """Adds the middleware every request goes through."""
 
     @app.middleware('http')
     async def guarded(request: Request, callNext: Any) -> Response:
+        """The request answered, with a failure nothing expected logged
+        scrubbed and answered as UNEXPECTED_ERROR, never with its message; and
+        the security headers on every response, `no-store` on the API's.
+        Answered here rather than by an exception handler, since Starlette
+        re-raises after those for the server to log, and uvicorn would write
+        the driver's message as it stands.
+        """
+
         response: Response
         try:
             response = await callNext(request)
         except Exception as error:
-            # Answered here, not by an exception handler: Starlette re-raises
-            # after those, for the server to log, and uvicorn would write the
-            # driver's message as it stands, values and all.
             logger.error('{} {} failed:\n{}'.format(request.method, request.url.path, scrubWithin(traceback.format_exc(), error)))
             response = JSONResponse(status_code=500, content={'detail': UNEXPECTED_ERROR})
         response.headers.setdefault('X-Content-Type-Options', 'nosniff')
@@ -99,10 +116,15 @@ def _addMiddleware(app: FastAPI) -> None:
 
 
 def _addWebApp(app: FastAPI) -> None:
+    """Serves the built web app for every path the API doesn't."""
 
     @app.get('/{path:path}', include_in_schema=False)
     def webApp(path: str) -> Response:
-        # The built app's files, and its index for every route it handles.
+        """The built app's file at `path`, if there is one inside the static
+        directory, else its index, for every route the app handles in the
+        browser.
+        """
+
         if path.startswith('api/'):
             raise HTTPException(status_code=404, detail='no such endpoint')
         candidate = (STATIC_DIRECTORY / path).resolve()
@@ -126,6 +148,8 @@ def createApp(settings: Settings, ssoTransport: Optional[httpx.BaseTransport] = 
     endExpiredSessions(database)
 
     def sessions() -> Any:
+        """A database session per request, closed after it."""
+
         yield from database.session()
 
     context = Context(settings=settings, database=database, launcher=launcher, throttle=LoginThrottle(), sessions=sessions,
@@ -136,6 +160,11 @@ def createApp(settings: Settings, ssoTransport: Optional[httpx.BaseTransport] = 
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
+        """Starts the threads that keep manifests and run the scheduled checks,
+        and stops them, and the identity provider's client, as Studio shuts
+        down.
+        """
+
         stop = threading.Event()
         threading.Thread(target=_archiveLoop, args=(settings, database, launcher, stop), name='studio-manifests', daemon=True).start()
         threading.Thread(target=checks.scheduleLoop, args=(database, lambda: workspace.loadProject(settings), stop), name='studio-checks',

@@ -18,24 +18,22 @@ Each type takes only the settings that apply to it. A setting that belongs to an
 | --- | --- | --- | --- |
 | `type` | all | required | `postgresql`, `mysql`, `mariadb`, `mssql`, `oracle`, `sqlite` or `duckdb`, `files` for tables of files in a directory or a cloud bucket, or `iceberg` for Iceberg tables; see [files](#files) and [Iceberg](#iceberg) for their settings |
 | `database` | postgresql, mysql, mariadb, mssql | required | The database name. |
-| `path` | sqlite, duckdb | required | The database file, or `:memory:`. A relative path is relative to `connections.yaml`, not to where the command starts. The file must exist, except for a job's target and `schema --apply`, which create it: a misspelled source path is an error rather than an empty database. SQLite connections enforce declared foreign keys, as every other database does; SQLite itself leaves them off unless asked. See [DuckDB](#duckdb) for what differs there. |
+| `path` | sqlite, duckdb | required | The database file, or `:memory:`, relative to `connections.yaml`. It must exist, except for a job's target and `schema --apply`, which create it, so a misspelled source path is an error rather than an empty database. SQLite connections enforce declared foreign keys. See [DuckDB](#duckdb) for what differs there. |
 | `host`, `user` | the five server types | required | |
 | `password` | the five server types | required, unless `passwordCommand` is set | Held as a secret, so it never appears in a log line or a traceback. |
-| `passwordCommand` | the five server types | optional | A command whose output is the password, run at every connection. A string is split as a shell would split it, without a shell; `validate` rejects one that names no program or has an unterminated quote. For credentials that expire; see [passwords that expire](#passwords-that-expire). |
+| `passwordCommand` | the five server types | optional | A command whose output is the password, run at every connection, for credentials that expire; see [passwords that expire](#passwords-that-expire). |
 | `port` | the five server types | optional | The driver's standard port when omitted. |
 | `serviceName` / `sid` | oracle | exactly one | Oracle is reached by service name or SID; it has no `database`. |
-| `currentSchema` | postgresql, oracle, duckdb | optional | The schema unqualified table names, and every key and column lookup, resolve in. PostgreSQL sets `search_path` to this schema alone; Oracle sets `CURRENT_SCHEMA`; DuckDB sets `schema`. On the other databases, qualify names as `schema.table` instead. |
-| `maxConcurrentJobs` | all | optional, no limit | The most jobs that may use this connection at once, however many `workers` there are. A job that would pass it waits for one on this connection to finish, while jobs on other connections start. For a server that can take only so many loads at a time. Always 1 for `duckdb`; a higher value is refused. |
-| `maxRowsReadPerSecond` | the seven databases | optional, no limit | The most rows a second jobs may read from this database, all of them together: every job, and every partition of each, shares it. For a production source a copy mustn't load more than so much. See [limiting what a job reads](../guides/make-it-faster.md#limiting-what-a-job-reads). |
+| `currentSchema` | postgresql, oracle, duckdb | optional | The schema unqualified table names resolve in (PostgreSQL's `search_path`, alone; Oracle's `CURRENT_SCHEMA`; DuckDB's `schema`). Elsewhere, qualify names as `schema.table`. |
+| `maxConcurrentJobs` | all | optional, no limit | The most jobs that may use this connection at once, whatever `workers` allows; a job past it waits while jobs on other connections start. Always 1 for `duckdb`. |
+| `maxRowsReadPerSecond` | the seven databases | optional, no limit | The most rows a second all jobs together may read from this database, every partition included. See [limiting what a job reads](../guides/make-it-faster.md#limiting-what-a-job-reads). |
 | `requireMasking` | all | optional, `false` | No job may read from or write to this connection without a masking policy. See [requiring masking](#requiring-masking). |
 | `readOnly` | databases | optional, `false` | Nothing is written here: a job loading into it, or run state, history or a manifest kept in it, is refused, as is every write a command would make. See [read-only connections](#read-only-connections). |
-| `statementTimeoutSeconds` | server databases | optional | The longest one statement may run before the server stops it, so a query that runs away on production can't run for hours. Measured differently by each database; see [statement timeout](#statement-timeout). |
+| `statementTimeoutSeconds` | server databases | optional | The longest one statement may run before the server stops it; measured differently by each database ([statement timeout](#statement-timeout)). |
 | `requireEncryption` | server databases | optional, `false` | Every session must be one the server reports as encrypted, or it is closed before a statement runs. See [requiring encryption](#requiring-encryption). |
 | `options` | the seven databases | optional | Extra keyword arguments for the driver's `connect()`, for anything the settings above don't cover; for `duckdb`, DuckDB's own settings, such as `memory_limit` and `threads`. See below. |
 
-Any other setting is an error, so a misspelled one stops `validate` rather than leaving the connection to behave in some way nobody configured.
-
-Before 0.1.9 this file was `database.yaml`, a job named its connections with `sourceDatabase` and `targetDatabase`, SQLite named its file with `database`, and Oracle required a `database` it never used. The old names are refused as unknown settings.
+Any other setting is an error, so a misspelled one stops `validate`. (Before 0.1.9 this file was `database.yaml`; its old setting names are refused as unknown.)
 
 ## DuckDB
 
@@ -46,12 +44,12 @@ analytics:
   options: {memory_limit: 4GB}
 ```
 
-Install it with `pip install "bauta[duckdb]"`, which brings pyarrow for fast loads. DuckDB is a source or target like any other database, with four differences, each stopped with an error that says so rather than left to fail part-way:
+Install it with `pip install "bauta[duckdb]"`. DuckDB works like any other database, with four differences, each refused with an error rather than left to fail part-way:
 
-- **One job at a time per file.** DuckDB lets one process open a file, and every job runs in a process of its own, so the run starts one job at a time on a DuckDB connection (its `maxConcurrentJobs` is always 1). `workers` still runs jobs on other connections alongside. Two aliases for one file are refused, since each would count its jobs apart. Anything else holding the file open -- another run, a program reading it -- makes a job wait up to a minute, then fail saying why.
-- **No run state in DuckDB.** The run holds its run-state connection for as long as it lasts, so `memory` can't be a DuckDB table. `history` and `manifest` can, since each is written once a cycle ends.
-- **No files outside the database.** DuckDB's SQL can read any file the process can (`read_text('/etc/passwd')`), write one (`COPY ... TO`), attach another database or load an extension, so a query in the jobs files -- one an admin edited in Studio, say -- could reach the machine as bauta's account. Each connection is opened with that turned off: such a query fails with a permission error. Set `options: {enable_external_access: true}` on a connection whose queries are meant to read files, such as Parquet beside the database; a [files connection](#files) reads tables of files without it.
-- **No swap of a table in a foreign key, or with an index.** DuckDB won't rename a table with an index or one another references, and renaming one that references another corrupts its catalog. A `swap` job whose target or stage is either fails before renaming anything; use `upsert` for it. A primary key is fine. `clear` empties such tables one transaction per table, since DuckDB checks a foreign key against what is committed: a clear stopped part-way leaves the tables it reached empty, and running it again finishes it.
+- **One job at a time per file**, since DuckDB lets one process open a file and every job runs in its own (`maxConcurrentJobs` is always 1; jobs on other connections still run alongside). Two aliases for one file are refused. Anything else holding the file open makes a job wait up to a minute, then fail saying why.
+- **No run state in DuckDB**: the run holds that connection open throughout. `history` and `manifest` can be DuckDB tables.
+- **No files outside the database.** DuckDB's SQL could otherwise read or write any file the process can, attach databases or load extensions, so a query in the jobs files could reach the machine as bauta's account. That is turned off on every connection; set `options: {enable_external_access: true}` where queries are meant to read files. A [files connection](#files) reads tables of files without it.
+- **No swap of a table with an index or in a foreign key** (a primary key is fine): such a `swap` job fails before renaming anything; use `upsert`. `clear` empties such tables one transaction each, so a clear stopped part-way is finished by running it again.
 
 ## Files
 
@@ -63,23 +61,23 @@ lake:
   requireMasking: true
 ```
 
-A directory -- on this machine, or in Amazon S3, Google Cloud Storage or Azure Blob Storage -- of tables of files, for a data lake or a handoff. Install it with `pip install "bauta[files]"`, which brings pyarrow and DuckDB; the clouds need nothing more. `discover`, `subset`, `schema`, `synthesize`, `coverage` and `clear` work with databases and refuse it, and so does keeping run state, history or a manifest in it. A job writing to it takes `insertStrategy: append` or `overwrite` ([load](jobs.md#load)); [files as a target](../concepts/how-it-works.md#files-as-a-target) describes what a run leaves where. A job can also name it as `sourceConnection`, and read its tables with SQL: see [files as a source](../concepts/how-it-works.md#files-as-a-source).
+A directory of tables of files, on this machine or in S3, Google Cloud Storage or Azure, for a data lake or a handoff. Install it with `pip install "bauta[files]"`. A job writing to it takes `insertStrategy: append` or `overwrite` ([load](jobs.md#load); [what a run leaves where](../concepts/how-it-works.md#files-as-a-target)); a job reading it queries its tables with SQL ([files as a source](../concepts/how-it-works.md#files-as-a-source)). Commands that need a catalog (`discover`, `subset`, `schema`, `synthesize`, `coverage`, `clear`) refuse it, and run state, history and manifests can't be kept in it.
 
 | Setting | Required or default | Meaning |
 | --- | --- | --- |
-| `root` | required | Where the tables go: a directory, created if missing, and relative to `connections.yaml` if the path is; `s3://bucket[/prefix]`; `gs://bucket[/prefix]`; or on Azure `az://container[/prefix]` with `accountName`, or `abfss://container@account.dfs.core.windows.net[/prefix]` as Databricks and Synapse write it. A bucket or container must exist. Each job's `targetTableFinal` is a path under the root. Any other URL is refused rather than read as a directory. |
+| `root` | required | A directory (created if missing, relative to `connections.yaml`), `s3://bucket[/prefix]`, `gs://bucket[/prefix]`, or on Azure `az://container[/prefix]` with `accountName` or `abfss://container@account.dfs.core.windows.net[/prefix]`. A bucket or container must exist. Each job's `targetTableFinal` is a path under it. |
 | `format` | `parquet` | `parquet`, `csv` or `ndjson` (JSON Lines: one JSON object per line). See [formats](../concepts/how-it-works.md#formats) for how each type is spelled in the two text formats. |
 | `compression` | `zstd` for Parquet, `gzip` for text | Parquet: `zstd`, `snappy` (for older readers), `gzip` or `none`. CSV and JSON Lines: `gzip` or `none`, the whole file compressed, and named `.gz` so readers know. |
 | `delimiter` | `,` | CSV's alone: one character, not a quote or a line break. |
-| `fileSize` | `256MB` | Where a part is closed and the next begun, measured as written, compressed. Bytes, or text such as `256MB` or `256MiB`. Snowflake loads best from files of 100 to 250 MB compressed, and Athena and Spark read one file per worker. At most `5GiB` on S3, and `256MiB` on Azure with pyarrow before 19, which publish a part by copying it in one request. |
+| `fileSize` | `256MB` | Where a part is closed and the next begun, compressed: bytes, or `256MB`, `256MiB`. Snowflake loads best from 100 to 250 MB files. At most `5GiB` on S3, and `256MiB` on Azure with pyarrow before 19. |
 | `rowGroupSize` | `128MB` | How much of a table is held in memory, before compression, and written at once: one Parquet row group. Larger compresses better and lets engines skip more; smaller holds less. |
 | `keepSnapshots` | `2` | How many complete snapshots of an `overwrite` job's table stay, the newest included. |
 | `readOnly` | `false` | Jobs may read it, and any job writing to it is refused. Mark a production bucket so. |
 | `endpoint` | any cloud | Another service speaking the same API -- MinIO or Cloudflare R2 for S3, an emulator for the others -- as a URL, `https://...` or `http://...`. |
 
-`requireMasking` and `maxConcurrentJobs` apply as to any connection. Two connections may share a root, to write some tables as Parquet and others as CSV. A setting of one cloud given with another's root is an error naming the cloud it belongs to.
+`requireMasking` and `maxConcurrentJobs` apply as to any connection. Two connections may share a root, to write some tables in one format and some in another.
 
-**Credentials.** In each cloud, without settings that give them, bauta finds credentials as that cloud's command-line tool would. Prefer that: nothing to rotate in a file, and the machine's or the pod's own identity where it has one.
+**Credentials.** Without settings, bauta finds credentials as each cloud's command-line tool would. Prefer that: nothing to rotate, and the machine's or pod's own identity where it has one.
 
 | Cloud | Found without settings | Settings, each optional |
 | --- | --- | --- |
@@ -89,7 +87,7 @@ A directory -- on this machine, or in Amazon S3, Google Cloud Storage or Azure B
 
 Secrets -- `secretAccessKey`, `sessionToken`, `accountKey`, `sasToken`, `clientSecret` -- are held as `password` is, never in a log line; give them as `${VARIABLES}`.
 
-**What the credentials need**, on the root's prefix: to write, read (a part is published by copying it), delete and list objects -- on S3 `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:ListBucket` and `s3:AbortMultipartUpload`; on GCS the role `roles/storage.objectAdmin`; on Azure `Storage Blob Data Contributor`. `bauta run --dry-run` writes, lists and deletes an object under the root to check. On S3, give the bucket a lifecycle rule aborting incomplete multipart uploads after a day or so: a process killed mid-upload leaves parts that S3 bills for and nothing lists.
+**What the credentials need** on the root's prefix: write, read, delete and list (on S3 `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:ListBucket`, `s3:AbortMultipartUpload`; on GCS `roles/storage.objectAdmin`; on Azure `Storage Blob Data Contributor`). `bauta run --dry-run` checks by writing, listing and deleting an object. On S3, add a lifecycle rule aborting incomplete multipart uploads after a day: a process killed mid-upload leaves parts S3 bills for.
 
 ## Iceberg
 
@@ -102,7 +100,7 @@ lake:
   requireMasking: true
 ```
 
-Iceberg tables, found through a catalog, which Athena, Snowflake, Databricks, BigQuery, Trino and Spark all read: a run's rows land as one commit, so a reader sees all of a run or none of it, and `upsert` works as it does against a database. Install it with `pip install "bauta[iceberg]"`, which brings pyiceberg and pyarrow. Like a files connection it is a target only. A job writing to it names `namespace.table`, or `table` in the connection's `namespace`, as its `targetTableFinal`, and takes `insertStrategy: append`, `overwrite` or `upsert` ([load](jobs.md#load)); [Iceberg tables](../concepts/how-it-works.md#iceberg-tables) says what a run does.
+Iceberg tables, found through a catalog, which Athena, Snowflake, Databricks, BigQuery, Trino and Spark all read. A run lands as one commit, and `upsert` works as against a database. Install it with `pip install "bauta[iceberg]"`. It is a target only: a job names `namespace.table` (or `table` in the connection's `namespace`) as its `targetTableFinal`, with `insertStrategy: append`, `overwrite` or `upsert` ([load](jobs.md#load); [Iceberg tables](../concepts/how-it-works.md#iceberg-tables)).
 
 | Setting | Required or default | Meaning |
 | --- | --- | --- |
@@ -138,9 +136,9 @@ copyCountries: targetConnection "staging" is configured with requireMasking, and
 policy. Add one naming every column sourceQuery returns -- `keep` for the ones that need no masking
 ```
 
-A policy whose `defaultStrategy` copies values as they are -- `keep`, or a custom strategy that passes them through -- is refused the same way: it covers every column it doesn't name, one production adds later included, without anyone deciding about it. Name each column, with `keep` for the ones that need no masking, or give `defaultStrategy` one that masks.
+A `defaultStrategy` that copies values as they are (`keep`, or a custom passthrough) is refused the same way, since it would cover columns production adds later without anyone deciding. Name each column instead, or give `defaultStrategy` one that masks.
 
-Set it on a target to say that the copy can only ever hold masked data, and on a source to say that nothing reads from it unmasked. Nothing overrides it: a job's own [`unmasked: true`](jobs.md#copying-without-masking) records a decision about that job, but `requireMasking` is the database's, and it wins.
+Set it on a target to say the copy can only ever hold masked data, and on a source to say nothing reads it unmasked. Nothing overrides it, not even a job's own [`unmasked: true`](jobs.md#copying-without-masking).
 
 ## Passwords that expire
 
@@ -208,9 +206,9 @@ production:
   readOnly: true
 ```
 
-Mark production `readOnly`, so a job, a command or an alias pointed the wrong way can't write to it. `validate` and `run` refuse a job whose `targetConnection` is read-only. Every write bauta makes goes through one place that refuses on a read-only connection, whichever command makes it: a job's load, swap or `preTargetAdhocQueries`, `clear`, `schema --apply`, `synthesize`, and run state, history or a manifest kept in a table there. Reading -- jobs' queries, `discover`, `subset`, `audit --connect`, `coverage`, `bench` -- is unaffected.
+Mark production `readOnly`, so nothing pointed the wrong way can write to it. `validate` and `run` refuse a job loading into it, and every write bauta makes (a load, swap, adhoc query, `clear`, `schema --apply`, `synthesize`, or run state, history or a manifest kept there) is refused. Reading is unaffected.
 
-The database refuses writes too, where it can: PostgreSQL (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`), MySQL and MariaDB (`SET SESSION TRANSACTION READ ONLY`) and SQLite (`PRAGMA query_only`) make the session read-only, and DuckDB opens the file read-only, so a `sourceQuery` can't write to it either. Oracle and SQL Server can't, so there it rests on bauta's own refusal: give the login itself no write privileges as well.
+Where the database can, it refuses writes too: PostgreSQL, MySQL, MariaDB and SQLite make the session read-only and DuckDB opens the file read-only, so even a `sourceQuery` can't write. Oracle and SQL Server can't, so give the login no write privileges as well.
 
 ### Statement timeout
 
@@ -224,7 +222,7 @@ production:
   statementTimeoutSeconds: 600
 ```
 
-Every session on the connection gets it, jobs' and commands' alike. A job stopped by it fails without being retried, since the same query would run as long again. What is limited differs, so set it with your database's in mind:
+Every session on the connection gets it. A job stopped by it fails without a retry, since the query would run as long again. What is limited differs by database:
 
 | Database | What runs past it is stopped |
 | --- | --- |
@@ -244,4 +242,4 @@ production:
   options: { sslmode: verify-full, sslrootcert: /etc/ssl/prod-ca.pem }
 ```
 
-With `requireEncryption`, every session bauta opens on the connection -- a job's, `discover`'s, `audit --connect`'s, run state's -- asks the server whether it is encrypted as it connects, and a session the server says isn't is closed before anything is read or written, failing with a message naming the connection. A server that can't say is refused too: SQL Server answers only to a login with `VIEW SERVER STATE`. It checks what the server reports, not what `options` asked for, so it also catches a server that stopped offering TLS. Whether the certificate was checked is still up to `options`, as the table above says: `sslmode: require` encrypts, and passes, without checking it.
+With `requireEncryption`, every session bauta opens asks the server, as it connects, whether it is encrypted, and one that isn't, or whose server can't say (SQL Server answers only a login with `VIEW SERVER STATE`), is closed before anything is read or written. It checks what the server reports, not what `options` asked, so it also catches a server that stopped offering TLS. Whether the certificate is checked is still up to `options`: `sslmode: require` passes without checking it.

@@ -7,7 +7,7 @@ Every mask is derived from the key, a **domain**, and the value itself:
 mask = strategy( HMAC(key, domain, value) )
 ```
 
-The same value in the same domain always masks the same way, in every table and on every run. So joins survive masking as long as both sides share a domain and a strategy:
+The same value in the same domain masks the same way in every table and on every run, so a join survives masking when both sides share a domain and a strategy:
 
 ```yaml
 # customers
@@ -16,8 +16,8 @@ id:          { strategy: key, domain: customer }
 customer_id: { strategy: key, domain: customer }
 ```
 
-The domain defaults to the column's lower-cased name, so `email` in two tables already agrees without any configuration. Set `domain` explicitly whenever the two sides of a relationship have different names.
+The domain defaults to the column's lower-cased name, so `email` in two tables agrees already; set `domain` where the two sides are named differently.
 
-Masking is also reproducible. Masks don't depend on row order or a random seed, so a re-run or next week's incremental load produces the same values. The one exception is `shuffle`, which depends on how rows fall into chunks.
+Masks depend on nothing but the value, key and domain, not row order or a seed, so a rerun or next week's incremental load gives the same values. `shuffle`, which depends on how rows fall into chunks, is the exception.
 
-Numbers are keyed on their decimal text. An id read as an `int` from one database, as a `Decimal` from another, or as `'42'` from a text column therefore masks the same way under `hash`. `key` is stricter, since its output keeps the input's type: pick one type per domain.
+Numbers are keyed on their decimal text, so an id read as an `int`, a `Decimal` or `'42'` masks alike under `hash`. `key` keeps its input's type, so keep one type per domain, or give it [`normalize: [integer]`](../reference/strategies.md#values-held-more-than-one-way-normalize).

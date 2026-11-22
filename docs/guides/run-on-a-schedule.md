@@ -1,7 +1,7 @@
 # Run on a schedule
 
 
-Running `bauta` unattended: where its state lives, and how to know what it did. For the reasoning behind single runs, retries and stopping, see [design.md](../concepts/how-it-works.md).
+Running `bauta` unattended: where its state lives, and what to do after a failure. For why it runs once and exits, see [how it works](../concepts/how-it-works.md).
 
 
 ## A deployment, put together
@@ -21,14 +21,12 @@ manifest:
 0 3 * * 0     bauta run --config /etc/etl --full-refresh --log-format json --log /var/log/etl/etl.log --quiet
 ```
 
-The second line is a weekly [full refresh](../concepts/how-it-works.md#deletes): incremental jobs reload their whole source and swap it in, so rows deleted in production leave the copy within a week. It shares the run lock, so a 15-minute run that starts while it's going exits with status 1 rather than overlapping it.
-
-With `BAUTA_NOTIFY_URL` set in the environment, a failed run also posts to the team's channel. `bauta history --config /etc/etl` answers what happened overnight, and `bauta verify-manifest --config /etc/etl` checks the latest manifest.
+The second line is a weekly [full refresh](../concepts/how-it-works.md#deletes), so rows deleted in production leave the copy within a week; a 15-minute run starting during it exits with status 1 rather than overlap. With `BAUTA_NOTIFY_URL` set, a failed run posts to the team's channel; `bauta history` says what happened overnight, and `bauta verify-manifest` checks the latest manifest.
 
 
 ## Run state
 
-`run` keeps each job's last run time, watermark and masking-key fingerprint between invocations. Losing it doesn't break anything, but it costs: every incremental job re-extracts from `watermarkInitial`, and `refresh` windows start over.
+`run` keeps each job's last run time, watermark and key fingerprint between invocations. Losing it breaks nothing, but every incremental job re-extracts from `watermarkInitial` and `refresh` windows start over.
 
 | Where | Set with | Use when |
 | --- | --- | --- |
@@ -36,20 +34,20 @@ With `BAUTA_NOTIFY_URL` set in the environment, a failed run also posts to the t
 | A table | `memory: {connection: ALIAS}` in `jobs.yaml` | Nothing persists: containers without a volume, several machines. |
 | Another file, or a table, for one run | `--memory FILE`, `--memory-connection ALIAS` | It should live somewhere else this time, such as a mounted volume. |
 
-Watermarks in a table are stored as text with a type beside them, and read back as the same type: dates, timestamps, times, integers, floats, decimals, and bytes such as SQL Server's `rowversion`. See [tables](../reference/tables.md) for its definition.
+In a table, a watermark is stored as text with its type, and read back as that type, bytes such as SQL Server's `rowversion` included. See [tables](../reference/tables.md) for the definition.
 
-**Overlapping runs.** `run` holds a lock beside the memory file (`memory.yaml.run.lock`) for as long as it runs, and a second run that finds it held exits with status 1. A `run --job` locks only the jobs it runs, so runs of different jobs go side by side, as an [orchestrator's task per job](run-from-an-orchestrator.md) does, while the same job never runs twice at once and a run of every job waits for none. With run state in a table, the lock is `memory.run.lock` where the memory file would have been, so it only separates runs on one machine. Across machines, let the scheduler do it: a Kubernetes CronJob with `concurrencyPolicy: Forbid`, or Airflow's `max_active_runs=1`.
+**Overlapping runs.** `run` holds a lock beside the memory file (`memory.yaml.run.lock`) while it runs, and a second run finding it held exits with status 1. A `run --job` locks only its own jobs, so runs of different jobs go side by side, as an [orchestrator's task per job](run-from-an-orchestrator.md) does, while the same job never runs twice at once. With run state in a table, the lock is a local file, so it only separates runs on one machine; across machines, let the scheduler do it (a CronJob's `concurrencyPolicy: Forbid`, Airflow's `max_active_runs=1`).
 
 
 ## After a failed cycle
 
-A job that fails doesn't take its dependents with it: they are skipped, so nothing loads rows whose parents are missing, and every skip is recorded with its cause.
+A failed job's dependents are skipped, so nothing loads rows whose parents are missing, and each skip is recorded with its cause.
 
 ```
 Cycle finished: 14 completed, 1 failed, 1 skipped, 1374 row(s) moved
 ```
 
-**`refresh` is the resume mechanism**, and the reason a plain `bauta run` is the right thing to do next. A job that completed is inside its `refresh` window and is skipped; the job that failed is not, so it runs again, and its dependents follow once it succeeds. Nothing re-copies what already arrived.
+**`refresh` is the resume mechanism**, so a plain `bauta run` is the right next step: completed jobs are inside their window and skipped, while the failed one runs again and its dependents follow.
 
 | What you want | Command |
 | --- | --- |
@@ -57,21 +55,21 @@ Cycle finished: 14 completed, 1 failed, 1 skipped, 1374 row(s) moved
 | Re-run everything, ignoring `refresh` | `bauta run --force` |
 | Re-run one job and nothing else | `bauta run --job NAME` (its predecessors don't run; `run` warns about each) |
 
-Without `refresh` set, a plain `run` re-runs every job, which is correct but does more work than it needs to. `bauta history` shows what happened, and a failed job's error is recorded with it.
+Without `refresh`, a plain `run` reruns every job: correct, but more work than needed.
 
 
 ## One production, several environments
 
-The same `jobs.yaml` can fill dev, staging and UAT from one production database. Two ways, which combine:
+One `jobs.yaml` can fill dev, staging and UAT from one production, two ways that combine.
 
-**A database file per environment.** `--connections` names it, so the jobs never change:
+**A connections file per environment**, named by `--connections`, so the jobs never change:
 
 ```
 bauta run --connections environments/staging.yaml
 bauta run --connections environments/uat.yaml
 ```
 
-**An alias from the environment.** `${NAME}` expands anywhere in `jobs.yaml`, including in `targetConnection`, and the alias is checked offline:
+**An alias from the environment**: `${NAME}` expands anywhere in `jobs.yaml`, `targetConnection` included, and the alias is checked offline:
 
 ```yaml
 defaults:
@@ -85,4 +83,4 @@ Invalid job graph:
 maskCountries: targetConnection "nosuchalias" is not a known connection alias
 ```
 
-Give each environment its own masking key, and its copies cannot be joined to each other's — which is usually what you want, since a UAT copy and a staging copy of the same customer should not be recognisably the same person. Give them the same key where a tester needs to follow a record across environments. Either way, [`requireMasking`](../reference/connections.md#requiring-masking) on each target says that none of them can ever receive unmasked rows.
+Give each environment its own masking key, so their copies can't be joined to each other's, unless a tester needs to follow a record across them. Either way, [`requireMasking`](../reference/connections.md#requiring-masking) on each target says none can ever receive unmasked rows.

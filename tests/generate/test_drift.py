@@ -36,6 +36,8 @@ jobs:
 
 
 def added(*columns):
+    """Suggestions hashing each of `columns`."""
+
     return [Suggestion(column, {'strategy': 'hash'}, 'a reason') for column in columns]
 
 
@@ -76,6 +78,8 @@ def test_a_job_the_file_does_not_hold_is_refused():
 
 @pytest.fixture
 def source(tmp_path):
+    """A SQLite file with customers and orders, one row each."""
+
     connection = sqlite3.connect(str(tmp_path / 'prod.db'))
     connection.executescript('''
         CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT, notes TEXT);
@@ -91,6 +95,8 @@ def source(tmp_path):
 
 
 def job(query, columns, **masking):
+    """A masked job reading `query`, its policy `columns`."""
+
     raw = {'workers': 1, 'jobs': {'j': {'sourceConnection': 'prod', 'targetConnection': 'copy', 'insertStrategy': 'upsert',
                                         'sourceQuery': query, 'targetTableFinal': 't',
                                         'masking': {'key': 'a-drift-test-masking-key', 'columns': columns, **masking}}}}
@@ -121,6 +127,8 @@ def test_a_default_strategy_already_covers_every_new_column(source):
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch, source):
+    """A configuration directory whose masked jobs are in an included file."""
+
     configuration = tmp_path / 'configuration'
     (configuration / 'jobs.d').mkdir(parents=True)
     (configuration / 'connections.yaml').write_text('prod:\n  type: sqlite\n  path: ../prod.db\ncopy:\n  type: sqlite\n  path: ../copy.db\n')

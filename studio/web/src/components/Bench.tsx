@@ -1,3 +1,6 @@
+// The card on a job's page that measures it against the real source: how fast
+// its rows are read and masked, writing nothing.
+
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, can } from '../api'
@@ -17,13 +20,16 @@ export interface BenchCheck {
     throttledSeconds?: number; readRowsPerSecond?: number | null; maskRowsPerSecond?: number | null; pace?: string | null; error: string | null }[] }
 }
 
+/** A rate in rows a second, or a dash for none. */
 function rate(value: number | null | undefined): string {
   return value ? `${count(Math.round(value))} rows/s` : '—'
 }
 
-// Measuring a job reads up to `rows` of its query from the real source and
-// masks them, as a run would, writing nothing: how fast reading and masking
-// go, and which would set a run's pace.
+/**
+ * Measuring a job reads up to `rows` of its query from the real source and
+ * masks them, as a run would, writing nothing: how fast reading and masking go,
+ * and which would set a run's pace.
+ */
 export function BenchCard({ job, bench }: { job: string; bench: BenchCheck | null }) {
   const user = useUser()
   const client = useQueryClient()

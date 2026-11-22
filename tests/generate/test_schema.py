@@ -21,6 +21,8 @@ SQLITE = DatabaseType.SQLITE
 
 
 def column(dataType, length=None, precision=None, scale=None, nullable=True, name='c'):
+    """A column definition, as the catalog would describe it."""
+
     return ColumnDefinition(name=name, dataType=dataType, length=length, precision=precision, scale=scale, nullable=nullable)
 
 
@@ -186,6 +188,8 @@ def test_an_unsigned_mysql_integer_maps_to_a_type_holding_its_whole_range(dataTy
 
 
 def table(name, columns, primaryKey=(), foreignKeys=()):
+    """A table definition of (name, type, nullable) columns."""
+
     return TableDefinition(name=name, columns=[column(dataType, name=columnName, nullable=nullable) for columnName, dataType, nullable in columns],
                            primaryKey=list(primaryKey), foreignKeys=list(foreignKeys))
 
@@ -366,6 +370,8 @@ def test_related_tables_follow_references_both_ways():
 
 @pytest.fixture
 def sqliteDatabase(tmp_path):
+    """A SQLite file with customers and orders, orders referencing customers."""
+
     connection = sqlite3.connect(str(tmp_path / 'schema.db'))
     connection.executescript('''
         CREATE TABLE customers (id INTEGER PRIMARY KEY, email VARCHAR(120) NOT NULL, balance DECIMAL(12, 2), active BOOLEAN, note);
@@ -530,6 +536,8 @@ def test_a_postgresql_array_keeps_its_type_between_postgresql_databases_and_is_t
 
 
 def _indexed():
+    """An orders table definition with plain indexes, one of them over the key."""
+
     return TableDefinition(name='orders', columns=[column('integer', name='id', nullable=False), column('integer', name='customer_id'),
                                                    column('date', name='placed'), column('text', name='notes')],
                            primaryKey=['id'], foreignKeys=[],

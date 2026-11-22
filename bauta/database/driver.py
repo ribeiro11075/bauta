@@ -24,6 +24,9 @@ from typing import Any, List, Optional, Protocol, Sequence
 
 
 class Cursor(Protocol):
+    """The DB-API 2.0 (PEP 249) cursor methods bauta calls, which every
+    driver's cursor has.
+    """
 
     @property
     def description(self) -> Any: ...
@@ -45,6 +48,7 @@ class Cursor(Protocol):
 
 
 class Connection(Protocol):
+    """The DB-API 2.0 (PEP 249) connection methods bauta calls."""
 
     def cursor(self) -> Any: ...
 

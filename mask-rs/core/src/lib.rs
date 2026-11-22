@@ -1,6 +1,6 @@
 //! Bauta's masking constructions, in Rust.
 //!
-//! The Python implementation in `bauta/masking.py` is the reference.
+//! The Python implementation in `bauta/masking/` is the reference.
 //! Everything here exists to produce exactly what it produces, faster; where
 //! the two could differ, Python wins and this is the bug.
 //!

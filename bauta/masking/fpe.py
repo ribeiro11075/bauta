@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from typing import List, Sequence
 
-# NIST SP 800-38G Rev. 1 requires radix ** minlen >= 1,000,000.
+# MINIMUM_DOMAIN_SIZE: NIST SP 800-38G Rev. 1 requires radix ** minlen to be
+#   at least this.
+# ROUNDS: the Feistel rounds FF1 specifies.
 MINIMUM_DOMAIN_SIZE = 1_000_000
-
 ROUNDS = 10
 
 
@@ -28,6 +29,10 @@ class FF1:
     """FF1 under one AES key, for numeral strings of one radix."""
 
     def __init__(self, key: bytes, radix: int) -> None:
+        """A cipher under `key`, an AES-128, -192 or -256 key, for numeral
+        strings of `radix`. Raises ImportError without `cryptography`, and
+        ValueError for a key or radix FF1 doesn't allow.
+        """
 
         try:
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -45,6 +50,7 @@ class FF1:
 
 
     def _block(self, data: bytes) -> bytes:
+        """One AES block encrypted: FF1's PRF is AES-CBC-MAC, built from these."""
 
         return self._encryptor.update(data)
 
@@ -63,6 +69,7 @@ class FF1:
 
 
     def _number(self, numerals: Sequence[int]) -> int:
+        """The numerals read as one number in the radix, most significant first."""
 
         value = 0
         for numeral in numerals:
@@ -72,6 +79,7 @@ class FF1:
 
 
     def _numerals(self, value: int, length: int) -> List[int]:
+        """`value` as exactly `length` numerals in the radix, most significant first."""
 
         numerals = [0] * length
         for position in range(length - 1, -1, -1):

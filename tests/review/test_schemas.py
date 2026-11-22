@@ -17,6 +17,8 @@ pytest.importorskip('duckdb')
 
 
 def _database(path, *statements):
+    """Runs `statements` on a DuckDB file, creating it."""
+
     with Database(connectionSettings=connectionConfig(type='duckdb', path=str(path)), create=True) as database:
         for statement in statements:
             database.alter(statement)
@@ -61,6 +63,10 @@ jobs:
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
+    """A configuration directory with prod and copy DuckDB files whose tables
+    are in a schema of their own.
+    """
+
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'configuration').mkdir()
     (tmp_path / 'configuration' / 'connections.yaml').write_text(
